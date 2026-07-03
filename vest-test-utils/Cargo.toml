@@ -1,0 +1,18 @@
+[package]
+name = "vest-test-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+rand = "0.8"
+uuid.workspace = true
+tokio = { workspace = true, features = ["time"] }
+
+vest-core = { workspace = true }
+
+[dev-dependencies]
+toml.workspace = true

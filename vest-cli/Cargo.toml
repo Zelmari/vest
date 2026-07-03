@@ -1,0 +1,28 @@
+[package]
+name = "vest-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vest"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+toml.workspace = true
+chrono.workspace = true
+
+vest-core = { workspace = true }
+vest-config = { workspace = true }
+vest-providers = { workspace = true }
+vest-agent = { workspace = true }
+vest-scanner = { workspace = true }
+vest-storage = { workspace = true }
+vest-report = { workspace = true }

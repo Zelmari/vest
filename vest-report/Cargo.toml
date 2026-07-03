@@ -1,0 +1,17 @@
+[package]
+name = "vest-report"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+
+vest-core = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }
+tokio = { workspace = true }

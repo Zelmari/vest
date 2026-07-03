@@ -1,0 +1,8 @@
+[package]
+name = "vest-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vest-core = { workspace = true }

@@ -1,0 +1,20 @@
+[package]
+name = "vest-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+vest-core = { workspace = true }
+
+[dev-dependencies]
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }

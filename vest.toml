@@ -1,0 +1,162 @@
+[general]
+workspace_dir = "~/.vest"
+auto_update_sinks = true
+log_level = "info"
+
+[providers.default]
+provider = "ollama"
+model = "llama3.2"
+
+[providers.openai]
+api_key_env = "OPENAI_API_KEY"
+api_base = "https://api.openai.com/v1"
+default_model = "gpt-4o"
+timeout_seconds = 120
+max_retries = 3
+retry_delay_ms = 1000
+
+[providers.anthropic]
+api_key_env = "ANTHROPIC_API_KEY"
+default_model = "claude-sonnet-4-20250514"
+max_tokens_default = 16384
+thinking_enabled = true
+
+[providers.deepseek]
+api_key_env = "DEEPSEEK_API_KEY"
+api_base = "https://api.deepseek.com/v1"
+default_model = "deepseek-v3"
+
+[providers.google]
+api_key_env = "GOOGLE_API_KEY"
+default_model = "gemini-2.5-pro"
+
+[providers.ollama]
+api_base = "http://localhost:11434/v1"
+default_model = "llama3.2"
+
+[providers.groq]
+api_key_env = "GROQ_API_KEY"
+default_model = "llama-3.3-70b-versatile"
+
+[providers.openrouter]
+api_key_env = "OPENROUTER_API_KEY"
+default_model = "openai/gpt-4o"
+
+[providers.fallback]
+enabled = true
+chain = ["openrouter", "deepseek", "groq", "ollama"]
+strategy = "next_on_failure"
+
+[agent]
+default_pattern = "pipeline"
+max_concurrent_agents = 8
+max_llm_iterations = 200
+token_budget_per_scan = 1_000_000
+thinking_enabled = false
+
+[agent.recon]
+model = "groq"
+temperature = 0.1
+
+[agent.hunter]
+model = "openrouter"
+model_override = "anthropic/claude-sonnet-4"
+temperature = 0.3
+
+[agent.validator]
+model = "deepseek"
+temperature = 0.0
+
+[agent.reporter]
+model = "groq"
+temperature = 0.1
+
+[scanner.memory]
+enabled = true
+max_memory_per_scan_mb = 4096
+pattern_scan_acceleration = true
+suspicious_regions = ["RWX", "PAGE_EXECUTE_READWRITE"]
+hook_detection = true
+
+[scanner.binary]
+enabled = true
+sink_catalogs = ["sinks/c.txt", "sinks/cpp.txt", "sinks/rust.txt"]
+disassembler = "capstone"
+check_mitigations = true
+find_rop_gadgets = false
+
+[scanner.web]
+enabled = true
+crawl_depth = 10
+crawl_max_urls = 10000
+respect_robots_txt = true
+user_agent = "VEST/0.1 Vulnerability Scanner"
+nuclei_enabled = true
+nuclei_severity = ["critical", "high", "medium"]
+nuclei_timeout = 300
+
+[scanner.browser]
+enabled = true
+browser_path = ""
+headless = true
+viewport_width = 1920
+viewport_height = 1080
+websocket_intercept = true
+local_storage_inspect = true
+indexeddb_inspect = true
+wasm_inspect = true
+
+[scanner.network]
+enabled = true
+interface = ""
+capture_filter = ""
+packet_capture_max_mb = 500
+protocol_analysis_llm = true
+
+[scanner.files]
+enabled = true
+max_file_size_mb = 500
+extract_archives = true
+fuzz_file_formats = false
+
+[safety]
+write_approval = true
+exploit_approval = true
+network_write_approval = true
+rate_limit_enabled = true
+rate_limit_requests_per_second = 10
+rate_limit_burst = 30
+sandbox_enabled = true
+sandbox_image = "vest-sandbox:latest"
+max_scan_duration_seconds = 3600
+max_concurrent_exploits = 1
+allowed_targets = []
+blocked_targets = []
+allowed_networks = []
+
+[profiles.quick]
+description = "Quick scan — 5 minute surface scan"
+pattern = "tool-use"
+max_llm_iterations = 20
+token_budget_per_scan = 100_000
+scanners = ["web", "binary"]
+
+[profiles.deep]
+description = "Deep scan — comprehensive multi-hour analysis"
+pattern = "pipeline"
+phases = ["recon", "analyze", "hunt", "validate", "report"]
+token_budget_per_scan = 5_000_000
+scanners = ["memory", "binary", "web", "network", "files", "browser"]
+
+[profiles.game]
+description = "Game-focused scan — memory + network + files"
+pattern = "swarm"
+agents = ["memory", "network", "files", "browser"]
+token_budget_per_scan = 3_000_000
+
+[profiles.bug_bounty]
+description = "Bug bounty submission scan — full with PoC"
+pattern = "pipeline"
+phases = ["recon", "analyze", "hunt", "exploit", "validate", "report"]
+token_budget_per_scan = 10_000_000
+scanners = ["web", "binary", "network"]

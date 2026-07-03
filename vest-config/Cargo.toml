@@ -1,0 +1,17 @@
+[package]
+name = "vest-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+url.workspace = true
+
+vest-core = { workspace = true }
+
+[dev-dependencies]
+rand = "0.8"
+toml = { workspace = true }

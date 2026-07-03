@@ -1,0 +1,124 @@
+# === Rust ===
+target/
+**/*.rs.bk
+*.pdb
+
+# === macOS ===
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# === Windows ===
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# === Linux ===
+*~
+.directory
+
+# === JetBrains (RustRover, IntelliJ, CLion) ===
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# === VSCode ===
+.vscode/
+*.code-workspace
+.history/
+
+# === Zed ===
+.zed/
+
+# === Neovim / Vim ===
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+.nvim/
+.vim/
+
+# === Environment & Secrets ===
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.cer
+secrets/
+
+# === Database & Storage ===
+*.db
+*.sqlite
+*.sqlite3
+vest.db
+~/.vest/
+
+# === Logs ===
+*.log
+logs/
+
+# === Temporary & Backup ===
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+*.orig
+
+# === Config Overrides ===
+vest.toml.local
+vest.toml.user
+config.local.toml
+
+# === Docker ===
+# Dockerfile is committed; ignore build contexts
+.docker/
+docker-compose.override.yml
+
+# === External Tools (future) ===
+nuclei-templates/
+frida-scripts/
+tools/
+
+# === Test Artifacts ===
+test-results/
+coverage/
+*.profraw
+*.profdata
+.tar.gz
+.zip
+*.dmp
+core
+core.*
+
+# === Package Managers ===
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# === CI/CD ===
+.github/workflows/*.local.yml
