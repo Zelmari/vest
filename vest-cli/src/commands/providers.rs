@@ -185,9 +185,24 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
             }
         }
         ProvidersArgs::Pull { model } => {
-            println!("Pulling model '{}' via Ollama...", model);
-            println!("  Make sure Ollama is running (ollama serve)");
-            println!("  Then run: ollama pull {}", model);
+            match std::process::Command::new("which").arg("ollama").output() {
+                Ok(output) if output.status.success() => {
+                    let mut child = std::process::Command::new("ollama")
+                        .arg("pull")
+                        .arg(&model)
+                        .spawn()?;
+                    let status = child.wait()?;
+                    if !status.success() {
+                        return Err(format!("ollama pull exited with {}", status).into());
+                    }
+                }
+                _ => {
+                    println!(
+                        "Ollama is not installed. Install from https://ollama.com/ then run: ollama pull {}",
+                        model
+                    );
+                }
+            }
         }
         ProvidersArgs::Status => {
             println!("Provider status check:");

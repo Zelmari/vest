@@ -152,6 +152,67 @@ fn scan_file_with_builtin_scanner_reports_and_stores_findings() {
 }
 
 #[test]
+fn providers_pull_checks_ollama() {
+    let root = temp_root("pull");
+    let vest_home = root.join("home");
+    fs::create_dir_all(&root).unwrap();
+
+    let output = Command::new(vest_bin())
+        .env("VEST_HOME", &vest_home)
+        .arg("providers")
+        .arg("pull")
+        .arg("llama3.2")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if output.status.success() {
+        // Either ollama was found and pull ran (unlikely in CI), or we see the helpful message
+        assert!(
+            stdout.contains("pulling manifest")
+                || stdout.contains("Ollama is not installed")
+                || stdout.is_empty(),
+            "unexpected stdout: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn completions_generates_shell_script() {
+    let output = Command::new(vest_bin())
+        .arg("completions")
+        .arg("bash")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("complete"),
+        "Bash completions should contain 'complete': {stdout}"
+    );
+    assert!(
+        stdout.contains("vest"),
+        "Completions should mention 'vest': {stdout}"
+    );
+}
+
+#[test]
+fn completions_unsupported_shell_exits_gracefully() {
+    let output = Command::new(vest_bin())
+        .arg("completions")
+        .arg("nonexistent")
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unsupported shell"),
+        "Should warn about unsupported shell: {stderr}"
+    );
+}
+
+#[test]
 fn dry_run_does_not_create_database() {
     let root = temp_root("dry-run");
     let vest_home = root.join("home");

@@ -1,7 +1,6 @@
 mod commands;
-mod tui;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Parser)]
@@ -281,8 +280,11 @@ pub enum ToolsArgs {
         #[arg(value_name = "TOOL")]
         tool: String,
     },
-    /// Update all external tools
-    Update,
+    /// Update external tool
+    Update {
+        #[arg(value_name = "TOOL")]
+        tool: String,
+    },
     /// List installed tools and versions
     List,
 }
@@ -292,8 +294,12 @@ pub enum SandboxArgs {
     /// Build sandbox Docker image
     Build,
     /// Start sandbox container
-    Start,
-    /// Clean up sandbox containers
+    #[command(allow_hyphen_values = true)]
+    Start {
+        /// Additional arguments to pass through to docker run
+        extra_args: Vec<String>,
+    },
+    /// Clean up sandbox containers and image
     Clean,
 }
 
@@ -336,7 +342,21 @@ async fn dispatch(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Report(args) => commands::report::run(args).await?,
         Commands::Tools(args) => commands::tools::run(args).await?,
         Commands::Sandbox(args) => commands::sandbox::run(args).await?,
-        Commands::Completions(_args) => println!("Shell completions not yet implemented"),
+        Commands::Completions(args) => {
+            let shell = match args.shell.as_str() {
+                "bash" => clap_complete::Shell::Bash,
+                "zsh" => clap_complete::Shell::Zsh,
+                "fish" => clap_complete::Shell::Fish,
+                _ => {
+                    eprintln!(
+                        "Unsupported shell: {}. Supported: bash, zsh, fish",
+                        args.shell
+                    );
+                    return Ok(());
+                }
+            };
+            clap_complete::generate(shell, &mut Cli::command(), "vest", &mut std::io::stdout());
+        }
     }
     Ok(())
 }

@@ -225,3 +225,31 @@ fn test_scan_demo_binary_extracts_symbols() {
         result.err()
     );
 }
+
+#[test]
+fn test_sink_catalog_files_exist_and_not_empty() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sinks_dir = manifest_dir.parent().unwrap().join("sinks");
+
+    let catalogs = ["c.txt", "cpp.txt", "rust.txt"];
+    for catalog in &catalogs {
+        let path = sinks_dir.join(catalog);
+        assert!(
+            path.exists(),
+            "Sink catalog file should exist: {}",
+            path.display()
+        );
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Failed to read sink catalog {}: {}", path.display(), e));
+        let non_empty_lines: Vec<&str> = content
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect();
+        assert!(
+            !non_empty_lines.is_empty(),
+            "Sink catalog {} should not be empty",
+            path.display()
+        );
+    }
+}
