@@ -72,6 +72,7 @@ secrets/
 credentials.toml
 credentials
 .credentials
+!examples/demo-target/vulnerable-files/.env
 
 # === Database & Storage ===
 *.db
