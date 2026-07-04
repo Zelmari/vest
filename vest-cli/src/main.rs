@@ -309,8 +309,37 @@ pub struct CompletionsArgs {
     pub shell: String,
 }
 
+fn load_dotenv() {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
+    let paths = [
+        std::path::PathBuf::from(".env"),
+        std::path::PathBuf::from(&home).join(".vest").join(".env"),
+    ];
+    for path in &paths {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = trimmed.split_once('=') {
+                    let key = key.trim();
+                    let value = value.trim().trim_matches('"').trim_matches('\'');
+                    if std::env::var(key).is_err() {
+                        std::env::set_var(key, value);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
+    load_dotenv();
+    load_dotenv();
     let cli = Cli::parse();
 
     let log_level = match cli.verbose {

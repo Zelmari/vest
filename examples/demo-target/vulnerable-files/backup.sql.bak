@@ -1,0 +1,38 @@
+-- PostgreSQL database backup
+-- Generated: 2025-12-15 03:42:17 UTC
+-- Server version: 15.4
+
+CREATE DATABASE app_production_backup;
+
+\c app_production_backup;
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(100) NOT NULL,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+INSERT INTO users (username, email, password_hash) VALUES
+('admin', 'admin@example.com', '$2b$12$LJ3m4n5o6p7q8r9s0t1u2v3w4x5y6z7A8B9C0D1E2F3G4H5I6J7K8'),
+('jdoe', 'jane.doe@example.com', '$2b$12$XyZaBcDeFgHiJkLmNoPqRsTuVwXyZ0a1b2c3d4e5f6g7h8i9j0k1l'),
+('svc_backup', 'backup-svc@example.com', '$2b$12$mN8oP0qR1sT2uV3wX4yA5bC6dE7fG8hI9jJ0kL1m');
+
+-- These credentials were used for the migration
+-- User: migrator
+-- Password: M1gr@t10n_S3cr3t_2024!
+
+CREATE TABLE sessions (
+    token VARCHAR(512) PRIMARY KEY,
+    user_id INT REFERENCES users(id),
+    expires_at TIMESTAMP
+);
+
+-- API tokens for service accounts
+-- api_token: vest_demo_svc_token_m1grat10n_2024
+INSERT INTO sessions (token, user_id, expires_at) VALUES
+('eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiYWRtaW4ifQ.fake-signature', 1, '2026-12-31');
+
+-- Stripe integration setup
+-- STRIPE_SECRET_KEY=sk_live_51BACKUPKEYNOTREALabcdefghijklmnopqrstuv

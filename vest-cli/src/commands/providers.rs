@@ -1,6 +1,5 @@
 use crate::ProvidersArgs;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use vest_core::error::VestError;
@@ -19,16 +18,7 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
                 }
             };
 
-            let credentials = load_credentials();
-            println!(
-                "Credentials: {}",
-                if credentials.is_empty() {
-                    "none stored".to_string()
-                } else {
-                    credentials_path().display().to_string()
-                }
-            );
-            println!();
+            println!("Keys are read from environment variables ({{PROVIDER}}_API_KEY).");
             println!(
                 "{:<15} {:<20} {:<12} {:<25}",
                 "Provider", "Model", "Key Set", "API Base"
@@ -72,45 +62,28 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
             }
         }
         ProvidersArgs::SetKey { provider, key } => {
-            let valid_providers = [
-                "openai",
-                "deepseek",
-                "anthropic",
-                "google",
-                "groq",
-                "openrouter",
-            ];
-            if !valid_providers.contains(&provider.as_str()) {
-                println!(
-                    "Unknown provider '{}'. Valid options: {}",
-                    provider,
-                    valid_providers.join(", ")
-                );
-                return Ok(());
-            }
-
-            let api_key = match key {
-                Some(k) => k,
-                None => {
-                    print!("Enter API key for {}: ", provider);
-                    let mut input = String::new();
-                    std::io::Write::flush(&mut std::io::stdout())?;
-                    std::io::stdin().read_line(&mut input)?;
-                    input.trim().to_string()
+            let env_var = format!("{}_API_KEY", provider.to_uppercase());
+            match key {
+                Some(k) => {
+                    println!("To set the key persistently, add this to your shell profile:");
+                    println!();
+                    println!("  export {}={}", env_var, k);
+                    println!();
+                    println!("Or set it for the current session only:");
+                    println!();
+                    println!("  export {}={}", env_var, k);
+                    println!();
+                    println!("Then run your scan as normal. VEST reads keys from environment variables only.");
                 }
-            };
-
-            if api_key.is_empty() {
-                println!("No key provided. Cancelled.");
-                return Ok(());
+                None => {
+                    println!("Set your API key via the {} environment variable:", env_var);
+                    println!();
+                    println!("  export {}={{your-key-here}}", env_var);
+                    println!();
+                    println!("Add the export to your shell profile (~/.zshrc, ~/.bashrc) to make it permanent.");
+                    println!("Keys are never stored on disk by VEST.");
+                }
             }
-
-            save_credential(&provider, &api_key)?;
-            println!(
-                "API key for '{}' saved to {}",
-                provider,
-                credentials_path().display()
-            );
         }
         ProvidersArgs::Test { provider } => {
             let config_path = find_vest_toml();
@@ -229,69 +202,9 @@ fn find_vest_toml() -> PathBuf {
     PathBuf::from(home).join(".vest").join("vest.toml")
 }
 
-fn credentials_path() -> PathBuf {
-    if let Ok(home) = std::env::var("VEST_HOME") {
-        return PathBuf::from(home).join("credentials.toml");
-    }
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".vest").join("credentials.toml")
-}
-
-fn legacy_credentials_path() -> PathBuf {
-    PathBuf::from("credentials.toml")
-}
-
-fn load_credentials() -> HashMap<String, String> {
-    let mut merged = HashMap::new();
-    for path in [legacy_credentials_path(), credentials_path()] {
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            if let Ok(creds) = toml::from_str::<HashMap<String, String>>(&contents) {
-                merged.extend(creds);
-            }
-        }
-    }
-    merged
-}
-
-fn save_credential(provider: &str, key: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut creds = load_credentials();
-    creds.insert(provider.to_string(), key.to_string());
-    let contents = toml::to_string(&creds)?;
-    let path = credentials_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&path, contents)?;
-    restrict_file_permissions(&path)?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn restrict_file_permissions(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(path)?.permissions();
-    perms.set_mode(0o600);
-    std::fs::set_permissions(path, perms)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn restrict_file_permissions(_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    Ok(())
-}
-
 pub fn get_api_key(provider: &str) -> Option<String> {
-    // Try env var first
     let env_var = format!("{}_API_KEY", provider.to_uppercase());
-    if let Ok(key) = std::env::var(&env_var) {
-        if !key.is_empty() {
-            return Some(key);
-        }
-    }
-    // Fall back to credentials file
-    load_credentials().get(provider).cloned()
+    std::env::var(&env_var).ok().filter(|k| !k.is_empty())
 }
 
 pub(crate) fn create_provider(
@@ -307,7 +220,7 @@ pub(crate) fn create_provider(
         "openai" => {
             let key = get_key().ok_or_else(|| {
                 VestError::Config(
-                    "OPENAI_API_KEY not set. Use 'vest providers set-key openai'".into(),
+                    "OPENAI_API_KEY not set. Run: vest providers set-key openai".into(),
                 )
             })?;
             Ok(vest_providers::openai::create_openai_provider(
@@ -319,7 +232,7 @@ pub(crate) fn create_provider(
         "deepseek" => {
             let key = get_key().ok_or_else(|| {
                 VestError::Config(
-                    "DEEPSEEK_API_KEY not set. Use 'vest providers set-key deepseek'".into(),
+                    "DEEPSEEK_API_KEY not set. Run: vest providers set-key deepseek".into(),
                 )
             })?;
             Ok(vest_providers::deepseek::create_deepseek_provider(
@@ -330,7 +243,7 @@ pub(crate) fn create_provider(
         "anthropic" => {
             let key = get_key().ok_or_else(|| {
                 VestError::Config(
-                    "ANTHROPIC_API_KEY not set. Use 'vest providers set-key anthropic'".into(),
+                    "ANTHROPIC_API_KEY not set. Run: vest providers set-key anthropic".into(),
                 )
             })?;
             Ok(vest_providers::anthropic::create_anthropic_provider(
@@ -341,7 +254,7 @@ pub(crate) fn create_provider(
         "google" => {
             let key = get_key().ok_or_else(|| {
                 VestError::Config(
-                    "GOOGLE_API_KEY not set. Use 'vest providers set-key google'".into(),
+                    "GOOGLE_API_KEY not set. Run: vest providers set-key google".into(),
                 )
             })?;
             Ok(vest_providers::google::create_google_provider(
@@ -355,7 +268,7 @@ pub(crate) fn create_provider(
         )),
         "groq" => {
             let key = get_key().ok_or_else(|| {
-                VestError::Config("GROQ_API_KEY not set. Use 'vest providers set-key groq'".into())
+                VestError::Config("GROQ_API_KEY not set. Run: vest providers set-key groq".into())
             })?;
             Ok(vest_providers::groq::create_groq_provider(
                 Some(key),
@@ -365,7 +278,7 @@ pub(crate) fn create_provider(
         "openrouter" => {
             let key = get_key().ok_or_else(|| {
                 VestError::Config(
-                    "OPENROUTER_API_KEY not set. Use 'vest providers set-key openrouter'".into(),
+                    "OPENROUTER_API_KEY not set. Run: vest providers set-key openrouter".into(),
                 )
             })?;
             Ok(vest_providers::openrouter::create_openrouter_provider(
