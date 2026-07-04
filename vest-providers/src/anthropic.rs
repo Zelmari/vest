@@ -135,10 +135,7 @@ impl LlmProvider for AnthropicProvider {
             let err = if status.as_u16() == 429 {
                 VestError::RateLimited("Anthropic: rate limited".into())
             } else {
-                VestError::Provider(format!(
-                    "Anthropic: HTTP {}: {}",
-                    status, body
-                ))
+                VestError::Provider(format!("Anthropic: HTTP {}: {}", status, body))
             };
             return Err(err);
         }

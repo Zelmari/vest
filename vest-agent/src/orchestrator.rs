@@ -24,6 +24,7 @@ pub struct Orchestrator {
     validator: Arc<Validator>,
     max_iterations: u32,
     include_exploit: bool,
+    initial_findings: Vec<Finding>,
 }
 
 impl Orchestrator {
@@ -45,6 +46,7 @@ impl Orchestrator {
             validator: Arc::new(Validator::new()),
             max_iterations: 200,
             include_exploit: false,
+            initial_findings: Vec::new(),
         }
     }
 
@@ -65,6 +67,11 @@ impl Orchestrator {
 
     pub fn with_include_exploit(mut self, exploit: bool) -> Self {
         self.include_exploit = exploit;
+        self
+    }
+
+    pub fn with_initial_findings(mut self, findings: Vec<Finding>) -> Self {
+        self.initial_findings = findings;
         self
     }
 
@@ -94,10 +101,19 @@ impl Orchestrator {
             ScanMode::Hierarchical => self.run_hierarchical(target).await?,
         };
 
+        // Combine agent findings with initial (scanner) findings.
+        // For Pipeline mode, the PipelineRunner already includes enriched initial_findings.
+        let mut combined = raw_findings;
+
+        // For other modes, initial_findings are appended and validated separately.
+        if self.mode != ScanMode::Pipeline && !self.initial_findings.is_empty() {
+            combined.extend(self.initial_findings.clone());
+        }
+
         // Filter out known false positives
         let memory = self.memory.read().await;
-        let raw_count = raw_findings.len();
-        let filtered: Vec<Finding> = raw_findings
+        let raw_count = combined.len();
+        let filtered: Vec<Finding> = combined
             .into_iter()
             .filter(|f| memory.is_known_false_positive(f).is_none())
             .collect();
@@ -107,7 +123,7 @@ impl Orchestrator {
         }
         drop(memory);
 
-        // Validate findings
+        // Validate findings (this will also enrich them heuristically)
         let validated = self.validator.validate(&filtered).await?;
         tracing::info!(
             "Validated {} findings ({} filtered out)",
@@ -155,7 +171,8 @@ impl Orchestrator {
             Arc::clone(&self.safety),
             self.include_exploit,
         )
-        .with_max_iterations_per_phase(self.max_iterations / 5);
+        .with_max_iterations_per_phase(self.max_iterations / 5)
+        .with_initial_findings(self.initial_findings.clone());
 
         runner.run(target).await
     }

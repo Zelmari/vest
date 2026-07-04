@@ -1,0 +1,35 @@
+{
+  "auths": {
+    "https://index.docker.io/v1/": {
+      "auth": "ZG9ja2VyX3VzZXI6ZG9ja2VyX3Bhc3N3b3JkX2RlbW9fb25seQ=="
+    },
+    "registry.example.com": {
+      "auth": "Y29ycG9yYXRlX3JlZ2lzdHJ5OnNlY3VyZTEyM0Ah"
+    }
+  },
+  "api": {
+    "base_url": "https://api.example.com/v2",
+    "api_key": "ak_prod_eW91IGZvdW5kIGEgZGVtbyBzZWNyZXQh",
+    "api_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZXJ2aWNlX2FjY291bnQifQ.mock-token",
+    "api_secret": "prod-secret-key-abcdefghijklmnopqrstuvwxyz012345"
+  },
+  "database": {
+    "host": "db-primary.example.com",
+    "name": "production_db",
+    "username": "prod_svc_account",
+    "password": "Pr0duct1on_DB_P@ss!"
+  },
+  "integrations": {
+    "slack": {
+      "webhook_url": "https://hooks.slack.com/services/T00000000/B00000000/xxxxxxxxxxxxxxxxxxxxxxxx",
+      "bot_token": "xoxb-987654321098-123456789012-AbCdEfGhIjKlMnOpQrStUvWxYz"
+    },
+    "github": {
+      "personal_access_token": "ghp_1aB2cD3eF4gH5iJ6kL7mN8oP9qR0sT1uV2wX3"
+    }
+  },
+  "secrets": {
+    "encryption_key": "AES256-GCM-KEY-abcdefghijklmnopqrstuvwxyz0123456789",
+    "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA0J9yQ7e4H8jK7L1mN8pVxR3wB6tS2aF4eU9vL7jM5kR1cA7\ndG8hI2J3K5L6mN8oP0qR1sT4uV6wX9yA0bC2dE3fG5hI7iJ8kL9mN0oP1qR2sT3\nuV5wX9yA1bC3dE4fG6hI8jJ9kL0mN1oP2qR3sT4uV6wX9yA2bC4dE5fG7hI9jJ0k\nL1mN2oP3qR4sT5uV7wX0yA3bC5dE6fG8hI0jJ1kL2mN3oP4qR5sT6uV8wX1yA4b\nC6dE7fG9hI1jJ2kL3mN4oP5qR6sT7uV9wX2yA5bC7dE8fG0hI2jJ3kL4mN5oP6qR\n7sT8uV0wX3yA6bC8dE9fG1hI3jJ4kL5mN6oP7qR8sT9uV1wX4yA7bC9dE\n-----END RSA PRIVATE KEY-----"
+  }
+}

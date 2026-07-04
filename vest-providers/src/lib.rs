@@ -13,6 +13,6 @@ pub mod openai;
 pub mod openrouter;
 
 pub use fallback::FallbackChain;
-pub use vest_core::types::FallbackStrategy;
 pub use provider::*;
 pub use registry::ProviderRegistry;
+pub use vest_core::types::FallbackStrategy;

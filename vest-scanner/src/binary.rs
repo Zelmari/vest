@@ -599,7 +599,7 @@ impl BinaryInfo {
                                         .map(|&b| b as char)
                                         .collect::<String>(),
                                     offset: item.0.offset as u64,
-                                    size: item.0.size as u64,
+                                    size: item.0.size,
                                     is_executable: true,
                                     is_writable: (item.0.flags & 0x00000002) != 0,
                                 })

@@ -64,7 +64,7 @@ fn test_swarm_agent_configs_are_distinct() {
     let binary = SwarmAgentConfig::binary_hunter();
     let auth = SwarmAgentConfig::auth_logic_hunter();
 
-    let names = vec![memory.name, web.name, binary.name, auth.name];
+    let names = [memory.name, web.name, binary.name, auth.name];
     let dedup: std::collections::HashSet<&String> = names.iter().collect();
     assert_eq!(dedup.len(), 4, "All agents should have unique names");
 
@@ -135,7 +135,7 @@ fn test_validator_heuristic_all_severities() {
             updated_at: now,
         };
 
-        let result = validator.heuristic_validate(&finding);
+        let (result, _enriched) = validator.heuristic_validate(&finding);
         assert!(result.confidence >= 0.0 && result.confidence <= 1.0);
     }
 }

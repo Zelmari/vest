@@ -1,21 +1,10 @@
+use crate::commands::db;
 use crate::FindingsArgs;
 use vest_core::types::FindingStatus;
-use vest_storage::{findings, schema, ConnectionPool};
-
-fn db_path() -> std::path::PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    std::path::PathBuf::from(home).join(".vest").join("vest.db")
-}
+use vest_storage::{findings, ConnectionPool};
 
 pub async fn run(args: FindingsArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let dir = db_path();
-    if let Some(parent) = dir.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let pool = ConnectionPool::new(dir.to_str().unwrap_or(":memory:"))?;
-    schema::run_migrations(pool.conn()).ok();
+    let pool = db::open_pool()?;
 
     match args {
         FindingsArgs::List {

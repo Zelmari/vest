@@ -96,6 +96,7 @@ pub enum VulnerabilityClass {
     EngineExploit,
     WebSocketTamper,
     ClientPredictionExploit,
+    HardcodedCredentials,
     Unknown,
 }
 
@@ -832,7 +833,10 @@ mod tests {
 
     #[test]
     fn test_fallback_strategy_display() {
-        assert_eq!(FallbackStrategy::NextOnFailure.to_string(), "next_on_failure");
+        assert_eq!(
+            FallbackStrategy::NextOnFailure.to_string(),
+            "next_on_failure"
+        );
         assert_eq!(
             FallbackStrategy::NextOnRateLimit.to_string(),
             "next_on_rate_limit"
@@ -869,7 +873,10 @@ mod tests {
     fn test_tool_call_type_display_and_parse() {
         assert_eq!(ToolCallType::ToolCall.to_string(), "tool_call");
         assert_eq!(ToolCallType::LlmResponse.to_string(), "llm_response");
-        assert_eq!(ToolCallType::ApprovalRequest.to_string(), "approval_request");
+        assert_eq!(
+            ToolCallType::ApprovalRequest.to_string(),
+            "approval_request"
+        );
         assert_eq!(
             ToolCallType::ApprovalResponse.to_string(),
             "approval_response"

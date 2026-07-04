@@ -1,3 +1,5 @@
+#![cfg(feature = "browser")]
+
 use async_trait::async_trait;
 use std::path::Path;
 use vest_core::error::VestError;
@@ -52,7 +54,9 @@ impl BrowserScanner {
             .await
             .map_err(|e| format!("Failed to connect to Chrome: {}", e))?;
 
-        let page = browser.new_page(url).await
+        let page = browser
+            .new_page(url)
+            .await
             .map_err(|e| format!("Failed to navigate to {}: {}", url, e))?;
 
         // Wait for page to load
@@ -64,7 +68,10 @@ impl BrowserScanner {
         });
 
         // Extract localStorage
-        if let Ok(entries) = page.evaluate("JSON.stringify(Object.entries(localStorage))").await {
+        if let Ok(entries) = page
+            .evaluate("JSON.stringify(Object.entries(localStorage))")
+            .await
+        {
             if let Ok(val) = entries.into_value::<serde_json::Value>() {
                 if let Some(storage) = val.as_str() {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(storage) {
@@ -75,7 +82,10 @@ impl BrowserScanner {
         }
 
         // Extract sessionStorage
-        if let Ok(entries) = page.evaluate("JSON.stringify(Object.entries(sessionStorage))").await {
+        if let Ok(entries) = page
+            .evaluate("JSON.stringify(Object.entries(sessionStorage))")
+            .await
+        {
             if let Ok(val) = entries.into_value::<serde_json::Value>() {
                 if let Some(storage) = val.as_str() {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(storage) {
@@ -86,15 +96,19 @@ impl BrowserScanner {
         }
 
         // Check for IndexedDB usage
-        if let Ok(count) = page.evaluate("indexedDB.databases ? indexedDB.databases().then(dbs => dbs.length) : -1").await {
+        if let Ok(count) = page
+            .evaluate("indexedDB.databases ? indexedDB.databases().then(dbs => dbs.length) : -1")
+            .await
+        {
             if let Ok(val) = count.into_value::<i32>() {
                 result["indexedDB_databases"] = serde_json::json!(val);
             }
         }
 
         // Extract WebSocket URLs from page JS context
-        if let Ok(ws_urls) = page.evaluate(
-            r#"(function() {
+        if let Ok(ws_urls) = page
+            .evaluate(
+                r#"(function() {
                 let urls = [];
                 try {
                     let entries = performance.getEntriesByType('resource');
@@ -106,7 +120,9 @@ impl BrowserScanner {
                 } catch(e) {}
                 return JSON.stringify(urls);
             })()"#,
-        ).await {
+            )
+            .await
+        {
             if let Ok(val) = ws_urls.into_value::<serde_json::Value>() {
                 if let Some(urls) = val.as_str() {
                     if let Ok(parsed) = serde_json::from_str::<Vec<String>>(urls) {
@@ -117,8 +133,9 @@ impl BrowserScanner {
         }
 
         // Extract WASM module URLs the page is using
-        if let Ok(wasm_urls) = page.evaluate(
-            r#"(function() {
+        if let Ok(wasm_urls) = page
+            .evaluate(
+                r#"(function() {
                 let urls = [];
                 try {
                     let entries = performance.getEntriesByType('resource');
@@ -130,7 +147,9 @@ impl BrowserScanner {
                 } catch(e) {}
                 return JSON.stringify(urls);
             })()"#,
-        ).await {
+            )
+            .await
+        {
             if let Ok(val) = wasm_urls.into_value::<serde_json::Value>() {
                 if let Some(urls) = val.as_str() {
                     if let Ok(parsed) = serde_json::from_str::<Vec<String>>(urls) {
@@ -167,12 +186,15 @@ impl BrowserScanner {
         }
 
         // Extract inline script content for analysis
-        if let Ok(scripts) = page.evaluate(
-            r#"(function() {
+        if let Ok(scripts) = page
+            .evaluate(
+                r#"(function() {
                 let scripts = document.querySelectorAll('script:not([src])');
                 return Array.from(scripts).map(s => s.textContent).join('\n').substring(0, 10000);
             })()"#,
-        ).await {
+            )
+            .await
+        {
             if let Ok(val) = scripts.into_value::<serde_json::Value>() {
                 if let Some(js) = val.as_str() {
                     result["inline_scripts"] = serde_json::json!({
@@ -193,8 +215,8 @@ impl BrowserScanner {
         Ok(result)
     }
 
-async fn get_chrome_ws_url() -> Result<String, String> {
-    let body = tokio::task::spawn_blocking(|| {
+    async fn get_chrome_ws_url() -> Result<String, String> {
+        let body = tokio::task::spawn_blocking(|| {
         ureq::get("http://localhost:9222/json/version")
             .call()
             .map_err(|e| format!("Cannot reach Chrome DevTools on port 9222: {}. Start Chrome with: chrome --remote-debugging-port=9222", e))
@@ -204,13 +226,13 @@ async fn get_chrome_ws_url() -> Result<String, String> {
             })
     }).await.map_err(|e| format!("Task join error: {}", e))??;
 
-    let json: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| format!("Invalid JSON: {}", e))?;
-    json.get("webSocketDebuggerUrl")
+        let json: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {}", e))?;
+        json.get("webSocketDebuggerUrl")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| "No webSocketDebuggerUrl in Chrome response. Is Chrome running with --remote-debugging-port=9222?".into())
-}
+    }
 
     fn read_target_files(path: &Path) -> Result<Vec<(String, String)>, VestError> {
         let mut files = Vec::new();
@@ -603,7 +625,11 @@ async fn get_chrome_ws_url() -> Result<String, String> {
         findings
     }
 
-    fn scan_files(&self, target: &Target, files: &[(String, String)]) -> Result<Vec<Finding>, VestError> {
+    fn scan_files(
+        &self,
+        target: &Target,
+        files: &[(String, String)],
+    ) -> Result<Vec<Finding>, VestError> {
         let mut all_findings = Vec::new();
 
         let set_target = |mut findings: Vec<Finding>, tid: &str| -> Vec<Finding> {
@@ -635,7 +661,8 @@ async fn get_chrome_ws_url() -> Result<String, String> {
     async fn scan_url(&self, url: &str) -> Result<Vec<Finding>, VestError> {
         tracing::info!("Starting CDP browser scan of: {}", url);
 
-        let page_data = Self::inspect_page(url).await
+        let page_data = Self::inspect_page(url)
+            .await
             .map_err(|e| VestError::Provider(format!("Browser CDP error: {}", e)))?;
 
         let mut findings = Vec::new();
@@ -647,7 +674,17 @@ async fn get_chrome_ws_url() -> Result<String, String> {
                 for entry in entries {
                     if let Some(key) = entry.get(0).and_then(|v| v.as_str()) {
                         let key_lower = key.to_lowercase();
-                        let sensitive = ["token", "key", "secret", "password", "jwt", "auth", "api", "private", "credential"];
+                        let sensitive = [
+                            "token",
+                            "key",
+                            "secret",
+                            "password",
+                            "jwt",
+                            "auth",
+                            "api",
+                            "private",
+                            "credential",
+                        ];
                         if sensitive.iter().any(|s| key_lower.contains(s)) {
                             findings.push(Finding {
                                 id: new_id(), scan_id: "browser-scan".into(), target_id: String::new(),
@@ -748,10 +785,19 @@ async fn get_chrome_ws_url() -> Result<String, String> {
 
         // Check inline script content
         if let Some(scripts) = page_data.get("inline_scripts") {
-            let js = scripts.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let js = scripts
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if !js.is_empty() {
-                let _has_ws = scripts.get("has_websocket").and_then(|v| v.as_bool()).unwrap_or(false);
-                let has_ls = scripts.get("has_localstorage").and_then(|v| v.as_bool()).unwrap_or(false);
+                let _has_ws = scripts
+                    .get("has_websocket")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let has_ls = scripts
+                    .get("has_localstorage")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if has_ls {
                     findings.push(Finding {
                         id: new_id(), scan_id: "browser-scan".into(), target_id: String::new(),

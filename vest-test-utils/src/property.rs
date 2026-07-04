@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn test_assert_deterministic_works() {
         assert_deterministic(|x: &i32| x % 2 == 0, 4);
-        assert_deterministic(|x: &String| x.len() > 0, "hello".to_string());
+        assert_deterministic(|x: &String| !x.is_empty(), "hello".to_string());
     }
 
     #[test]

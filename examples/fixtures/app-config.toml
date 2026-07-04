@@ -1,0 +1,9 @@
+[service]
+name = "demo-api"
+environment = "local"
+
+[database]
+host = "localhost"
+port = 5432
+username = "demo"
+password = "demo-only-password"

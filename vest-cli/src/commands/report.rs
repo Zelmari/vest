@@ -1,24 +1,17 @@
+use crate::commands::db;
 use crate::ReportArgs;
 use vest_core::Reporter;
-use vest_storage::{findings, scans, schema, ConnectionPool};
-
-fn db_path() -> std::path::PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    std::path::PathBuf::from(home).join(".vest").join("vest.db")
-}
+use vest_storage::{findings, scans, ConnectionPool};
 
 pub async fn run(args: ReportArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let dir = db_path();
-    if let Some(parent) = dir.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let pool = ConnectionPool::new(dir.to_str().unwrap_or(":memory:"))?;
-    schema::run_migrations(pool.conn()).ok();
+    let pool = db::open_pool()?;
 
     match args {
-        ReportArgs::Generate { scan_id } => generate_report(&pool, scan_id).await,
+        ReportArgs::Generate {
+            scan_id,
+            format,
+            output,
+        } => generate_report(&pool, scan_id, format, output).await,
         ReportArgs::Summary => scan_summary(&pool),
         ReportArgs::Compare { scan_a, scan_b } => compare_scans(&pool, scan_a, scan_b),
     }
@@ -27,26 +20,59 @@ pub async fn run(args: ReportArgs) -> Result<(), Box<dyn std::error::Error>> {
 async fn generate_report(
     pool: &ConnectionPool,
     scan_id: String,
+    format: String,
+    output: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let conn = pool.conn();
     match scans::get_scan(conn, &scan_id) {
         Ok(scan) => {
             let finding_list = findings::list_findings_by_scan(conn, &scan_id).unwrap_or_default();
-            let reporter = vest_report::TerminalReporter;
-            let report = reporter.generate_report(&scan, &finding_list).await?;
+            let report = match format.as_str() {
+                "json" => {
+                    vest_report::JsonReporter
+                        .generate_report(&scan, &finding_list)
+                        .await?
+                }
+                "markdown" | "md" => {
+                    vest_report::MarkdownReporter
+                        .generate_report(&scan, &finding_list)
+                        .await?
+                }
+                "terminal" | "text" => {
+                    vest_report::TerminalReporter
+                        .generate_report(&scan, &finding_list)
+                        .await?
+                }
+                other => {
+                    return Err(format!(
+                        "Unknown report format '{}'. Use terminal, json, or markdown.",
+                        other
+                    )
+                    .into())
+                }
+            };
             println!("{}", report);
 
-            let json_reporter = vest_report::JsonReporter;
-            let json_report = json_reporter.generate_report(&scan, &finding_list).await?;
-            let report_path = std::path::PathBuf::from(
-                std::env::var("HOME")
-                    .or_else(|_| std::env::var("USERPROFILE"))
-                    .unwrap_or_else(|_| ".".into()),
-            )
-            .join(".vest")
-            .join(format!("report-{}.json", &scan_id[..scan_id.len().min(8)]));
-            std::fs::write(&report_path, json_report)?;
-            println!("\n  JSON report saved to: {}", report_path.display());
+            let report_path = output.map(std::path::PathBuf::from).unwrap_or_else(|| {
+                let ext = match format.as_str() {
+                    "json" => "json",
+                    "markdown" | "md" => "md",
+                    _ => "txt",
+                };
+                db::db_path()
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join(format!(
+                        "report-{}.{}",
+                        &scan_id[..scan_id.len().min(8)],
+                        ext
+                    ))
+            });
+            if let Some(parent) = report_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&report_path, report)?;
+            println!("\n  Report saved to: {}", report_path.display());
         }
         Err(e) => println!("Scan '{}' not found: {}", scan_id, e),
     }

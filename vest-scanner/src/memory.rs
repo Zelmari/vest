@@ -209,9 +209,7 @@ impl MemoryScanner {
         findings
     }
 
-    pub fn detect_hooks(
-        region_data: &[(&MemoryRegion, Vec<u8>)],
-    ) -> Vec<Finding> {
+    pub fn detect_hooks(region_data: &[(&MemoryRegion, Vec<u8>)]) -> Vec<Finding> {
         let mut findings = Vec::new();
         let now = chrono::Utc::now();
 
@@ -683,7 +681,7 @@ mod tests {
 
     #[test]
     fn test_detect_hooks() {
-        let regions = vec![MemoryRegion {
+        let regions = [MemoryRegion {
             name: "game.exe".into(),
             base_address: 0x1000,
             size: 4096,

@@ -112,6 +112,7 @@ pub struct PipelineRunner {
     safety: Arc<SafetyChecker>,
     phases: Vec<PipelinePhase>,
     max_iterations_per_phase: u32,
+    initial_findings: Vec<Finding>,
     status: RwLock<AgentStatus>,
 }
 
@@ -130,6 +131,7 @@ impl PipelineRunner {
             safety,
             phases: PipelinePhase::phases(include_exploit),
             max_iterations_per_phase: 40,
+            initial_findings: Vec::new(),
             status: RwLock::new(AgentStatus::Idle),
         }
     }
@@ -141,6 +143,11 @@ impl PipelineRunner {
 
     pub fn with_phases(mut self, phases: Vec<PipelinePhase>) -> Self {
         self.phases = phases;
+        self
+    }
+
+    pub fn with_initial_findings(mut self, findings: Vec<Finding>) -> Self {
+        self.initial_findings = findings;
         self
     }
 
@@ -187,6 +194,18 @@ impl PipelineRunner {
             }
         }
 
+        // Include initial (scanner) findings, enriching them
+        for mut finding in self.initial_findings.clone() {
+            crate::validator::enrich_finding_heuristic(&mut finding);
+            // Only add if not already present (avoid duplication)
+            let is_duplicate = all_findings
+                .iter()
+                .any(|f| f.title == finding.title && f.location == finding.location);
+            if !is_duplicate {
+                all_findings.push(finding);
+            }
+        }
+
         self.set_status(AgentStatus::Completed).await;
         Ok(all_findings)
     }
@@ -213,6 +232,22 @@ impl PipelineRunner {
                     f.severity,
                     f.title,
                     &f.description[..f.description.len().min(100)]
+                ));
+            }
+        }
+
+        // Include initial scanner findings for validation and reporting phases
+        if !self.initial_findings.is_empty()
+            && (phase == &PipelinePhase::Validation || phase == &PipelinePhase::Reporting)
+        {
+            prompt.push_str(&format!(
+                "\n\nPre-existing scanner findings to validate and enrich ({}):",
+                self.initial_findings.len()
+            ));
+            for f in &self.initial_findings {
+                prompt.push_str(&format!(
+                    "\n  [{:?}] {} - Class: {:?}, CVSS: {:?}",
+                    f.severity, f.title, f.vulnerability_class, f.cvss_score
                 ));
             }
         }

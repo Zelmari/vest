@@ -3,7 +3,7 @@ use vest_config::{load_config, VestConfig};
 #[test]
 fn test_load_config_with_binary_data() {
     let tmp = std::env::temp_dir().join("binary_config.toml");
-    std::fs::write(&tmp, &[0x00u8, 0x01, 0xFF, 0xFE]).unwrap();
+    std::fs::write(&tmp, [0x00u8, 0x01, 0xFF, 0xFE]).unwrap();
     let result = load_config(&tmp);
     assert!(result.is_err());
     std::fs::remove_file(&tmp).ok();

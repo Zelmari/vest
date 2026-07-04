@@ -1,3 +1,4 @@
+use crate::target::target_display;
 use async_trait::async_trait;
 use vest_core::error::VestError;
 use vest_core::traits::{ReportFormat, Reporter};
@@ -22,7 +23,7 @@ impl Reporter for TerminalReporter {
         output.push_str(&format!("\u{2502} {:^63} \u{2502}\n", "VEST Scan Report"));
         output.push_str(&format!(
             "\u{2502}  Target: {:<54} \u{2502}\n",
-            truncate(&scan.target_id, 54)
+            truncate(&target_display(scan), 54)
         ));
         output.push_str(&format!(
             "\u{2502}  Duration: {:<49} \u{2502}\n",
@@ -109,6 +110,13 @@ impl Reporter for TerminalReporter {
                 output.push_str(&format!(
                     "\u{2502}    {:<59} \u{2502}\n",
                     truncate(&loc, 59)
+                ));
+            }
+
+            if let Some(source) = f.metadata.get("source").and_then(|value| value.as_str()) {
+                output.push_str(&format!(
+                    "\u{2502}    source: {:<51} \u{2502}\n",
+                    truncate(source, 51)
                 ));
             }
         }
@@ -265,5 +273,21 @@ mod tests {
         assert_eq!(format_duration(Some(65000)), "1m 5s");
         assert_eq!(format_duration(Some(3600000)), "60m 0s");
         assert_eq!(format_duration(None), "N/A");
+    }
+
+    #[test]
+    fn test_terminal_report_uses_target_metadata() {
+        let reporter = TerminalReporter;
+        let mut scan = make_scan();
+        scan.metadata = serde_json::json!({
+            "target": {
+                "name": "fixture.txt",
+                "type": "file"
+            }
+        });
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let output = rt.block_on(reporter.generate_report(&scan, &[])).unwrap();
+        assert!(output.contains("fixture.txt (file)"));
     }
 }

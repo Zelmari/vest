@@ -61,11 +61,14 @@ mod tests {
 
     #[test]
     fn test_chaos_default_disabled() {
+        disable_chaos();
         assert!(!is_chaos());
     }
 
     #[test]
     fn test_chaos_toggle() {
+        disable_chaos();
+        assert!(!is_chaos());
         enable_chaos();
         assert!(is_chaos());
         disable_chaos();

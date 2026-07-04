@@ -6,7 +6,7 @@ pub fn fuzz_toml_config() -> String {
     let patterns = ["pipeline", "swarm", "tool-use", "hierarchical"];
     let levels = ["info", "debug", "trace", "warn", "error"];
     let providers = ["openai", "deepseek", "ollama", "groq"];
-    let models = ["gpt-4o", "deepseek-v3", "llama3.2", "claude-sonnet-4"];
+    let models = ["gpt-4o", "deepseek-v4-flash", "llama3.2", "claude-sonnet-4"];
 
     let p = patterns[rng.gen_range(0..patterns.len())];
     let l = levels[rng.gen_range(0..levels.len())];

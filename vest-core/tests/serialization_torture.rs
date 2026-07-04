@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use serde_json;
 use vest_core::types::*;
 
 #[test]

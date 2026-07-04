@@ -171,7 +171,7 @@ fn test_fast_vs_slow_pattern_scan_consistency() {
         rand::thread_rng().fill_bytes(&mut data);
 
         let pat_len = 1 + (rng.next_u32() as usize % 8);
-        let has_leading_wc = rng.next_u32() % 4 == 0;
+        let has_leading_wc = rng.next_u32().is_multiple_of(4);
         let pattern: String = {
             let mut parts: Vec<String> = Vec::new();
             if has_leading_wc {

@@ -15,4 +15,4 @@ pub use orchestrator::Orchestrator;
 pub use planner::Planner;
 pub use safety::SafetyChecker;
 pub use tool_registry::ToolRegistry;
-pub use validator::Validator;
+pub use validator::{enrich_finding_heuristic, ValidationDecision, Validator};

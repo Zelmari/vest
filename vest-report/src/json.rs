@@ -1,3 +1,4 @@
+use crate::target::report_target;
 use async_trait::async_trait;
 use serde::Serialize;
 use vest_core::error::VestError;
@@ -58,6 +59,9 @@ struct JsonFinding {
     location: serde_json::Value,
     poc: Option<String>,
     remediation: Option<String>,
+    source: Option<String>,
+    tags: Vec<String>,
+    metadata: serde_json::Value,
 }
 
 pub struct JsonReporter;
@@ -70,6 +74,7 @@ impl Reporter for JsonReporter {
         findings: &[Finding],
     ) -> Result<String, VestError> {
         let (critical, high, medium, low, info) = count_by_severity(findings);
+        let target = report_target(scan);
         let false_positives = findings
             .iter()
             .filter(|f| f.status == FindingStatus::FalsePositive)
@@ -80,11 +85,11 @@ impl Reporter for JsonReporter {
             generated_at: chrono::Utc::now().to_rfc3339(),
             scan_id: scan.id.clone(),
             target: JsonTarget {
-                id: scan.target_id.clone(),
-                name: scan.target_id.clone(),
-                target_type: "unknown".into(),
-                platform: None,
-                metadata: serde_json::json!({}),
+                id: target.id,
+                name: target.name,
+                target_type: target.target_type,
+                platform: target.platform,
+                metadata: target.metadata,
             },
             scan_config: JsonScanConfig {
                 mode: scan.mode.to_string(),
@@ -116,6 +121,13 @@ impl Reporter for JsonReporter {
                     location: f.location.clone(),
                     poc: f.poc.clone(),
                     remediation: f.remediation.clone(),
+                    source: f
+                        .metadata
+                        .get("source")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string),
+                    tags: f.tags.clone(),
+                    metadata: f.metadata.clone(),
                 })
                 .collect(),
         };
@@ -181,7 +193,7 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             scan_id: "scan-1".into(),
             target_id: "target-1".into(),
-            title: format!("{} vulnerability", vuln_class.to_string()),
+            title: format!("{} vulnerability", vuln_class),
             description: "Test description".into(),
             vulnerability_class: vuln_class,
             severity,
@@ -239,5 +251,33 @@ mod tests {
         let json = rt.block_on(reporter.generate_report(&scan, &[])).unwrap();
         assert!(json.contains("\"total\": 0"));
         assert!(json.contains("\"false_positives\": 0"));
+    }
+
+    #[test]
+    fn test_json_report_uses_target_metadata() {
+        let reporter = JsonReporter;
+        let mut scan = make_scan();
+        scan.metadata = serde_json::json!({
+            "target": {
+                "id": "target-file-1",
+                "name": "fixture.txt",
+                "type": "file",
+                "path": "/tmp/fixture.txt",
+                "metadata": {
+                    "platform": "darwin",
+                    "kind": "fixture"
+                }
+            }
+        });
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let json = rt.block_on(reporter.generate_report(&scan, &[])).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["target"]["id"], "target-file-1");
+        assert_eq!(parsed["target"]["name"], "fixture.txt");
+        assert_eq!(parsed["target"]["type"], "file");
+        assert_eq!(parsed["target"]["platform"], "darwin");
+        assert_eq!(parsed["target"]["metadata"]["kind"], "fixture");
     }
 }

@@ -119,10 +119,7 @@ impl LlmProvider for OpenAiCompatProvider {
             let err = if status.as_u16() == 429 {
                 VestError::RateLimited(format!("{}: rate limited", self.name))
             } else {
-                VestError::Provider(format!(
-                    "{}: HTTP {}: {}",
-                    self.name, status, body
-                ))
+                VestError::Provider(format!("{}: HTTP {}: {}", self.name, status, body))
             };
             return Err(err);
         }
@@ -164,10 +161,7 @@ impl LlmProvider for OpenAiCompatProvider {
             let err = if status.as_u16() == 429 {
                 VestError::RateLimited(format!("{}: rate limited", self.name))
             } else {
-                VestError::Provider(format!(
-                    "{}: HTTP {}: {}",
-                    self.name, status, body
-                ))
+                VestError::Provider(format!("{}: HTTP {}: {}", self.name, status, body))
             };
             return Err(err);
         }
@@ -214,10 +208,7 @@ impl LlmProvider for OpenAiCompatProvider {
             let err = if status.as_u16() == 429 {
                 VestError::RateLimited(format!("{}: rate limited", self.name))
             } else {
-                VestError::Provider(format!(
-                    "{}: HTTP {}: {}",
-                    self.name, status, body
-                ))
+                VestError::Provider(format!("{}: HTTP {}: {}", self.name, status, body))
             };
             return Err(err);
         }
@@ -257,10 +248,7 @@ impl LlmProvider for OpenAiCompatProvider {
             let err = if status.as_u16() == 429 {
                 VestError::RateLimited(format!("{}: rate limited", self.name))
             } else {
-                VestError::Provider(format!(
-                    "{}: HTTP {}: {}",
-                    self.name, status, body
-                ))
+                VestError::Provider(format!("{}: HTTP {}: {}", self.name, status, body))
             };
             return Err(err);
         }

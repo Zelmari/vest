@@ -1,3 +1,4 @@
+use crate::target::target_display;
 use async_trait::async_trait;
 use vest_core::error::VestError;
 use vest_core::traits::{ReportFormat, Reporter};
@@ -17,7 +18,7 @@ impl Reporter for MarkdownReporter {
         let mut md = String::new();
 
         md.push_str("# VEST Scan Report\n\n");
-        md.push_str(&format!("**Target:** {}\n\n", scan.target_id));
+        md.push_str(&format!("**Target:** {}\n\n", target_display(scan)));
         md.push_str(&format!("**Scan ID:** {}\n\n", scan.id));
         md.push_str(&format!("**Mode:** {}\n\n", scan.mode));
         md.push_str(&format!(
@@ -70,6 +71,10 @@ impl Reporter for MarkdownReporter {
                 f.vulnerability_class
             ));
             md.push_str(&format!("**Confidence:** {:.0}%\n\n", f.confidence * 100.0));
+
+            if let Some(source) = f.metadata.get("source").and_then(|value| value.as_str()) {
+                md.push_str(&format!("**Source:** {}\n\n", source));
+            }
 
             if let Some(cvss) = f.cvss_score {
                 md.push_str(&format!("**CVSS Score:** {:.1}\n\n", cvss));
@@ -234,6 +239,22 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let md = rt.block_on(reporter.generate_report(&scan, &[])).unwrap();
         assert!(md.contains("**Total** | **0**"));
+    }
+
+    #[test]
+    fn test_markdown_report_uses_target_metadata() {
+        let reporter = MarkdownReporter;
+        let mut scan = make_scan();
+        scan.metadata = serde_json::json!({
+            "target": {
+                "name": "fixture.txt",
+                "type": "file"
+            }
+        });
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let md = rt.block_on(reporter.generate_report(&scan, &[])).unwrap();
+        assert!(md.contains("**Target:** fixture.txt (file)"));
     }
 
     #[test]

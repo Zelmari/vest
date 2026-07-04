@@ -144,7 +144,9 @@ pub struct MemoryScannerConfig {
     pub hook_detection: bool,
 }
 
-fn default_max_memory_mb() -> u64 { 4096 }
+fn default_max_memory_mb() -> u64 {
+    4096
+}
 
 impl Default for MemoryScannerConfig {
     fn default() -> Self {
@@ -172,13 +174,19 @@ pub struct BinaryScannerConfig {
     pub find_rop_gadgets: bool,
 }
 
-fn default_disassembler() -> String { "capstone".into() }
+fn default_disassembler() -> String {
+    "capstone".into()
+}
 
 impl Default for BinaryScannerConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            sink_catalogs: vec!["sinks/c.txt".into(), "sinks/cpp.txt".into(), "sinks/rust.txt".into()],
+            sink_catalogs: vec![
+                "sinks/c.txt".into(),
+                "sinks/cpp.txt".into(),
+                "sinks/rust.txt".into(),
+            ],
             disassembler: "capstone".into(),
             check_mitigations: true,
             find_rop_gadgets: false,
@@ -206,10 +214,18 @@ pub struct WebScannerConfig {
     pub nuclei_timeout: u32,
 }
 
-fn default_crawl_depth() -> u32 { 10 }
-fn default_crawl_max_urls() -> u32 { 10000 }
-fn default_user_agent() -> String { "VEST/0.1 Vulnerability Scanner".into() }
-fn default_nuclei_timeout() -> u32 { 300 }
+fn default_crawl_depth() -> u32 {
+    10
+}
+fn default_crawl_max_urls() -> u32 {
+    10000
+}
+fn default_user_agent() -> String {
+    "VEST/0.1 Vulnerability Scanner".into()
+}
+fn default_nuclei_timeout() -> u32 {
+    300
+}
 
 impl Default for WebScannerConfig {
     fn default() -> Self {
@@ -248,8 +264,12 @@ pub struct BrowserScannerConfig {
     pub wasm_inspect: bool,
 }
 
-fn default_viewport_width() -> u32 { 1920 }
-fn default_viewport_height() -> u32 { 1080 }
+fn default_viewport_width() -> u32 {
+    1920
+}
+fn default_viewport_height() -> u32 {
+    1080
+}
 
 impl Default for BrowserScannerConfig {
     fn default() -> Self {
@@ -281,7 +301,9 @@ pub struct NetworkScannerConfig {
     pub protocol_analysis_llm: bool,
 }
 
-fn default_packet_capture_mb() -> u32 { 500 }
+fn default_packet_capture_mb() -> u32 {
+    500
+}
 
 impl Default for NetworkScannerConfig {
     fn default() -> Self {
@@ -307,7 +329,9 @@ pub struct FileScannerConfig {
     pub fuzz_file_formats: bool,
 }
 
-fn default_max_file_size_mb() -> u32 { 500 }
+fn default_max_file_size_mb() -> u32 {
+    500
+}
 
 impl Default for FileScannerConfig {
     fn default() -> Self {
@@ -603,7 +627,7 @@ temperature = 0.1
 [agent.validator]
 model = "deepseek"
 temperature = 0.0
-model_override = "deepseek-v3"
+model_override = "deepseek-v4-flash"
 "#;
         let config: VestConfig = toml::from_str(toml_str).unwrap();
         let recon = config.agent.recon.unwrap();
@@ -611,7 +635,7 @@ model_override = "deepseek-v3"
         assert_eq!(recon.temperature.unwrap(), 0.1);
 
         let validator = config.agent.validator.unwrap();
-        assert_eq!(validator.model_override.unwrap(), "deepseek-v3");
+        assert_eq!(validator.model_override.unwrap(), "deepseek-v4-flash");
         assert_eq!(validator.temperature.unwrap(), 0.0);
     }
 

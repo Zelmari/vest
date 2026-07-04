@@ -189,16 +189,30 @@ impl WebScanner {
 
     pub fn parse_forms(&self, html: &str, base_url: &str) -> Vec<FormInfo> {
         let mut forms = Vec::new();
-        let form_re =
-            regex::Regex::new(r#"<form[^>]*action\s*=\s*["']([^"']*)["'][^>]*>"#).unwrap();
-        let input_re = regex::Regex::new(
-            r#"<input[^>]*name\s*=\s*["']([^"']*)["'][^>]*type\s*=\s*["']([^"']*)["']"#,
-        )
-        .unwrap();
+        let form_re = regex::Regex::new(r#"<form\b[^>]*>"#).unwrap();
+        let action_re = regex::Regex::new(r#"action\s*=\s*["']([^"']*)["']"#).unwrap();
+        let method_re = regex::Regex::new(r#"method\s*=\s*["']([^"']*)["']"#).unwrap();
+        let input_tag_re = regex::Regex::new(r#"<input\b[^>]*>"#).unwrap();
+        let name_re = regex::Regex::new(r#"name\s*=\s*["']([^"']*)["']"#).unwrap();
+        let type_re = regex::Regex::new(r#"type\s*=\s*["']([^"']*)["']"#).unwrap();
 
         for cap in form_re.captures_iter(html) {
-            let action = cap[1].to_string();
-            let action_url = if action.starts_with('/') {
+            let form_tag = cap.get(0).unwrap();
+            let form_start = form_tag.start();
+            let remaining = &html[form_start..];
+            let form_html = remaining
+                .find("</form>")
+                .map(|end| &remaining[..end])
+                .unwrap_or(remaining);
+
+            let action = action_re
+                .captures(form_tag.as_str())
+                .map(|c| c[1].to_string())
+                .unwrap_or_else(|| base_url.to_string());
+
+            let action_url = if action == base_url {
+                action
+            } else if action.starts_with('/') {
                 format!("{}{}", base_url.trim_end_matches('/'), action)
             } else if action.starts_with("http") {
                 action.clone()
@@ -206,21 +220,27 @@ impl WebScanner {
                 format!("{}/{}", base_url.trim_end_matches('/'), action)
             };
 
-            let form_start = cap.get(0).unwrap().start();
-            let remaining = &html[form_start..];
-            let form_html = remaining
-                .find("</form>")
-                .map(|end| &remaining[..end])
-                .unwrap_or(remaining);
+            let method = method_re
+                .captures(form_tag.as_str())
+                .map(|c| c[1].to_string().to_uppercase())
+                .unwrap_or_else(|| "POST".into());
 
-            let inputs: Vec<(String, String)> = input_re
-                .captures_iter(form_html)
-                .map(|c| (c[1].to_string(), c[2].to_string()))
-                .collect();
+            let mut inputs: Vec<(String, String)> = Vec::new();
+            for icap in input_tag_re.captures_iter(form_html) {
+                let input_tag = icap.get(0).unwrap().as_str();
+                if let Some(ncap) = name_re.captures(input_tag) {
+                    let name = ncap[1].to_string();
+                    let input_type = type_re
+                        .captures(input_tag)
+                        .map(|c| c[1].to_string())
+                        .unwrap_or_else(|| "text".into());
+                    inputs.push((name, input_type));
+                }
+            }
 
             forms.push(FormInfo {
                 action: action_url,
-                method: "POST".into(),
+                method,
                 inputs,
             });
         }
@@ -294,6 +314,55 @@ impl WebScanner {
                                 Some("CWE-79".into()),
                             ));
                         }
+                    }
+                }
+            }
+        }
+
+        let base_part = if let Some(pos) = page.url.find('?') {
+            &page.url[..pos]
+        } else {
+            page.url.as_str()
+        };
+        let path_lower = base_part.to_lowercase();
+        let mut candidate_params: Vec<String> = Vec::new();
+
+        if path_lower.contains("search") || path_lower.contains("query") {
+            for p in &["q", "query", "search"] {
+                candidate_params.push(p.to_string());
+            }
+        }
+
+        for form in &page.forms {
+            for (param_name, _) in &form.inputs {
+                candidate_params.push(param_name.clone());
+            }
+        }
+
+        {
+            let mut seen = HashSet::new();
+            let test_payload = "<script>alert(1)</script>";
+            for param_name in candidate_params {
+                if !seen.insert(param_name.clone()) {
+                    continue;
+                }
+                let test_url = format!("{}?{}={}", base_part, param_name, test_payload);
+                if let Ok((_status, _body, reflected)) =
+                    self.fetch_page_for_xss(&test_url, test_payload).await
+                {
+                    if reflected {
+                        findings.push(self.make_finding(
+                            format!("Reflected XSS in URL parameter '{}'", param_name),
+                            VulnerabilityClass::XSS,
+                            Severity::High,
+                            0.75,
+                            serde_json::json!({
+                                "url": page.url,
+                                "parameter": param_name,
+                                "payload": test_payload,
+                            }),
+                            Some("CWE-79".into()),
+                        ));
                     }
                 }
             }
@@ -403,12 +472,23 @@ impl WebScanner {
         let mut findings = Vec::new();
         let payloads = vec![
             "../../../etc/passwd",
+            "../../../../etc/passwd",
+            "../../../../../etc/passwd",
+            "../../../../../../etc/passwd",
+            "/etc/passwd",
+            "/etc/hosts",
             "..\\..\\..\\windows\\win.ini",
             "....//....//....//etc/passwd",
             "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
         ];
 
-        let signatures = vec!["root:", "[boot loader]", "[extensions]"];
+        let signatures = vec![
+            "root:",
+            "[boot loader]",
+            "[extensions]",
+            "User Database",
+            "Host Database",
+        ];
 
         for form in &page.forms {
             for (param_name, _) in &form.inputs {
@@ -440,6 +520,85 @@ impl WebScanner {
                                     ));
                                     break;
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let base_part = if let Some(pos) = page.url.find('?') {
+            &page.url[..pos]
+        } else {
+            page.url.as_str()
+        };
+
+        {
+            let mut url_param_names: Vec<String> = Vec::new();
+
+            if let Some(query_start) = page.url.find('?') {
+                let query = &page.url[query_start + 1..];
+                for param in query.split('&') {
+                    if let Some((name, _)) = param.split_once('=') {
+                        url_param_names.push(name.to_string());
+                    }
+                }
+            }
+
+            for form in &page.forms {
+                for (name, _) in &form.inputs {
+                    url_param_names.push(name.clone());
+                }
+            }
+
+            let mut seen = HashSet::new();
+            for param_name in url_param_names {
+                if !seen.insert(param_name.clone()) {
+                    continue;
+                }
+                if param_name.contains("file")
+                    || param_name.contains("path")
+                    || param_name.contains("include")
+                {
+                    for payload in &payloads {
+                        let test_url = format!("{}?{}={}", base_part, param_name, payload);
+                        match self
+                            .client
+                            .get(&test_url)
+                            .header("User-Agent", &self.user_agent)
+                            .send()
+                            .await
+                        {
+                            Ok(resp) => {
+                                if let Ok(body) = resp.text().await {
+                                    for sig in &signatures {
+                                        if body.contains(sig) {
+                                            findings.push(self.make_finding(
+                                                format!(
+                                                    "Path traversal in URL parameter '{}' at {}",
+                                                    param_name, page.url
+                                                ),
+                                                VulnerabilityClass::PathTraversal,
+                                                Severity::Critical,
+                                                0.9,
+                                                serde_json::json!({
+                                                    "url": page.url,
+                                                    "parameter": param_name,
+                                                    "payload": payload,
+                                                }),
+                                                Some("CWE-22".into()),
+                                            ));
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    "Path traversal URL check failed for {}: {}",
+                                    test_url,
+                                    e
+                                );
                             }
                         }
                     }
@@ -688,8 +847,7 @@ impl WebScanner {
             title,
             description: format!(
                 "Detected {} vulnerability with confidence {:.2}",
-                vuln_class,
-                confidence
+                vuln_class, confidence
             ),
             vulnerability_class: vuln_class,
             severity,
@@ -868,5 +1026,81 @@ mod tests {
         assert!(scanner.enabled);
         assert_eq!(scanner.crawl_depth, 10);
         assert_eq!(scanner.crawl_max_urls, 10000);
+    }
+
+    #[test]
+    fn test_parse_forms_without_action() {
+        let scanner = WebScanner::new();
+        let html = r#"<form method="post">
+            <input name="username" type="text" placeholder="Username">
+            <input name="password" type="password" placeholder="Password">
+        </form>"#;
+        let forms = scanner.parse_forms(html, "http://localhost:5555/login");
+        assert_eq!(forms.len(), 1);
+        assert!(forms[0].action.contains("login"));
+        assert_eq!(forms[0].inputs.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_forms_input_without_type() {
+        let scanner = WebScanner::new();
+        let html = r#"<form action="/search" method="get">
+            <input name="q" placeholder="Search...">
+            <button type="submit">Search</button>
+        </form>"#;
+        let forms = scanner.parse_forms(html, "http://localhost:5555");
+        assert_eq!(forms.len(), 1);
+        assert_eq!(forms[0].inputs.len(), 1);
+        assert_eq!(forms[0].inputs[0].0, "q");
+        assert_eq!(forms[0].inputs[0].1, "text");
+    }
+
+    #[test]
+    fn test_parse_forms_login_form() {
+        let scanner = WebScanner::new();
+        let html = r#"<form method="post">
+        <input name="username" placeholder="Username"><br>
+        <input name="password" placeholder="Password" type="password"><br>
+        <button type="submit">Login</button>
+    </form>"#;
+        let forms = scanner.parse_forms(html, "http://localhost:5555/login");
+        assert_eq!(forms.len(), 1);
+        assert!(forms[0].action.contains("login"));
+        let input_names: Vec<&str> = forms[0].inputs.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(input_names.contains(&"username"));
+        assert!(input_names.contains(&"password"));
+        assert_eq!(forms[0].method, "POST");
+    }
+
+    #[test]
+    fn test_scan_xss_url_param() {
+        let scanner = WebScanner::new();
+        let page = CrawledPage {
+            url: "http://test.com/search?q=test".into(),
+            status: 200,
+            body: None,
+            headers: vec![],
+            links: vec![],
+            forms: vec![],
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let findings = rt.block_on(scanner.scan_xss(&page));
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_scan_path_traversal_url_param() {
+        let scanner = WebScanner::new();
+        let page = CrawledPage {
+            url: "http://test.com/files?filename=test".into(),
+            status: 200,
+            body: None,
+            headers: vec![],
+            links: vec![],
+            forms: vec![],
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let findings = rt.block_on(scanner.scan_path_traversal(&page));
+        assert!(findings.is_empty());
     }
 }

@@ -455,7 +455,7 @@ fn test_finding_with_special_characters_in_strings() {
     };
     scans::insert_scan(&conn, &s).unwrap();
 
-    let special_strings = vec!["", "' OR 1=1 --", "\\", "\"quoted\"", "日本語", "a\0b"];
+    let special_strings = ["", "' OR 1=1 --", "\\", "\"quoted\"", "日本語", "a\0b"];
 
     for (i, evil_title) in special_strings.iter().enumerate() {
         let f = Finding {

@@ -16,10 +16,14 @@ iced-x86.workspace = true
 reqwest.workspace = true
 tracing.workspace = true
 regex = "1"
-chromiumoxide = { workspace = true, features = ["tokio-runtime"] }
+chromiumoxide = { workspace = true, features = ["tokio-runtime"], optional = true }
 ureq = { workspace = true }
 
 vest-core = { workspace = true }
+
+[features]
+browser = ["dep:chromiumoxide"]
+default = ["browser"]
 
 [dev-dependencies]
 rand = "0.8"

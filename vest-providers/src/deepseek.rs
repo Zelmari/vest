@@ -11,6 +11,6 @@ pub fn create_deepseek_provider(
         "deepseek".to_string(),
         api_key,
         "https://api.deepseek.com/v1".to_string(),
-        default_model.unwrap_or_else(|| "deepseek-chat".to_string()),
+        default_model.unwrap_or_else(|| "deepseek-v4-flash".to_string()),
     ))
 }

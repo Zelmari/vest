@@ -90,10 +90,22 @@ impl AgentMemory {
         // Fuzzy match: same target + same vuln class + similar content
         self.false_positives.values().find(|entry| {
             entry.target_hash.as_deref() == Some(&finding.target_id)
-                && (finding.title.to_lowercase().contains(&entry.reason.to_lowercase())
-                    || entry.reason.to_lowercase().contains(&finding.title.to_lowercase())
-                    || finding.description.to_lowercase().contains(&entry.reason.to_lowercase())
-                    || entry.reason.to_lowercase().contains(&finding.description.to_lowercase()))
+                && (finding
+                    .title
+                    .to_lowercase()
+                    .contains(&entry.reason.to_lowercase())
+                    || entry
+                        .reason
+                        .to_lowercase()
+                        .contains(&finding.title.to_lowercase())
+                    || finding
+                        .description
+                        .to_lowercase()
+                        .contains(&entry.reason.to_lowercase())
+                    || entry
+                        .reason
+                        .to_lowercase()
+                        .contains(&finding.description.to_lowercase()))
         })
     }
 

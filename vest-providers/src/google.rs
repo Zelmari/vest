@@ -141,10 +141,7 @@ impl LlmProvider for GoogleProvider {
             let err = if status.as_u16() == 429 {
                 VestError::RateLimited("Google: rate limited".into())
             } else {
-                VestError::Provider(format!(
-                    "Google: HTTP {}: {}",
-                    status, body
-                ))
+                VestError::Provider(format!("Google: HTTP {}: {}", status, body))
             };
             return Err(err);
         }

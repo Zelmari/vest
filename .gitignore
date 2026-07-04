@@ -92,6 +92,9 @@ logs/
 *.old
 *.orig
 
+# === Planning (local only) ===
+.plan/
+
 # === Config Overrides ===
 vest.toml.local
 vest.toml.user
@@ -110,6 +113,9 @@ tools/
 # === Test Artifacts ===
 test-results/
 coverage/
+examples/.vest-demo/
+examples/reports/generated/
+examples/demo-target/vulnerable-binary/vuln
 *.profraw
 *.profdata
 .tar.gz

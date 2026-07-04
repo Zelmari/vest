@@ -25,5 +25,10 @@ vest-config = { workspace = true }
 vest-providers = { workspace = true }
 vest-agent = { workspace = true }
 vest-scanner = { workspace = true }
+
 vest-storage = { workspace = true }
 vest-report = { workspace = true }
+
+[features]
+browser = []
+default = ["browser"]

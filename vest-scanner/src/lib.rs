@@ -1,4 +1,5 @@
 pub mod binary;
+#[cfg(feature = "browser")]
 pub mod browser;
 pub mod files;
 pub mod memory;

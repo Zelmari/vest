@@ -1,15 +1,10 @@
+use crate::commands::db;
 use crate::TargetsArgs;
 use vest_core::types::{Target, TargetType};
-use vest_storage::{schema, targets, ConnectionPool};
+use vest_storage::targets;
 
 pub async fn run(args: TargetsArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let db_path = get_db_path();
-    let dir = std::path::Path::new(&db_path)
-        .parent()
-        .unwrap_or(std::path::Path::new("."));
-    std::fs::create_dir_all(dir)?;
-    let pool = ConnectionPool::new(&db_path)?;
-    schema::run_migrations(pool.conn()).ok();
+    let pool = db::open_pool()?;
 
     match args {
         TargetsArgs::List => {
@@ -129,11 +124,4 @@ fn detect_target_type(name: &str) -> TargetType {
     } else {
         TargetType::File
     }
-}
-
-fn get_db_path() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let dir = format!("{}/.vest", home);
-    std::fs::create_dir_all(&dir).ok();
-    format!("{}/vest.db", dir)
 }

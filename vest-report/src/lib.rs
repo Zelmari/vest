@@ -1,5 +1,6 @@
 pub mod json;
 pub mod markdown;
+pub(crate) mod target;
 pub mod terminal;
 
 pub use json::JsonReporter;

@@ -478,10 +478,7 @@ impl NetworkScanner {
                     let rtype = record.get("type").and_then(|v| v.as_str()).unwrap_or("");
                     let value = record.get("value").and_then(|v| v.as_str()).unwrap_or("");
 
-                    if rtype == "TXT"
-                        && value.contains("v=spf1")
-                        && value.contains("+all")
-                    {
+                    if rtype == "TXT" && value.contains("v=spf1") && value.contains("+all") {
                         findings.push(Finding {
                             id: new_id(),
                             scan_id: String::new(),

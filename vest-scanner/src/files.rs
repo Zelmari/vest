@@ -480,10 +480,7 @@ impl FileScanner {
             .to_string_lossy()
             .to_lowercase();
 
-        if parent_dir == ".git"
-            && filename_lower != "head"
-            && filename_lower != "config"
-        {
+        if parent_dir == ".git" && filename_lower != "head" && filename_lower != "config" {
             findings.push(Finding {
                 id: new_id(),
                 scan_id: String::new(),
@@ -705,7 +702,10 @@ mod tests {
     #[test]
     fn test_secret_scanning_aws_key() {
         let scanner = FileScanner::new();
-        let path = write_temp_file("config.js", r#"AWS_ACCESS_KEY_ID = "AWSTESTFAKEEXAMPLEKEY12""#);
+        let path = write_temp_file(
+            "config.js",
+            r#"AWS_ACCESS_KEY_ID = "AWSTESTFAKEEXAMPLEKEY12""#,
+        );
         let findings =
             scanner.scan_for_secrets(&path, r#"AWS_ACCESS_KEY_ID = "AWSTESTFAKEEXAMPLEKEY12""#);
         assert!(!findings.is_empty());

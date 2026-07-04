@@ -20,6 +20,67 @@ const VALIDATION_QUESTIONS: &[&str] = &[
     "Is the attack vector actually reachable by an attacker?",
 ];
 
+/// Heuristically enrich a finding with vulnerability class and CVSS score
+/// when the LLM hasn't provided them.
+pub fn enrich_finding_heuristic(finding: &mut Finding) {
+    let title_lower = finding.title.to_lowercase();
+
+    // Guess vulnerability class from title patterns
+    // Order matters: check specific patterns before generic ones
+    if finding.vulnerability_class == VulnerabilityClass::Unknown {
+        let guessed = if title_lower.contains("xss")
+            || title_lower.contains("cross-site")
+            || title_lower.contains("script")
+        {
+            VulnerabilityClass::XSS
+        } else if title_lower.contains("command injection") {
+            VulnerabilityClass::CommandInjection
+        } else if title_lower.contains("sql") {
+            VulnerabilityClass::SQLInjection
+        } else if title_lower.contains("ssrf") {
+            VulnerabilityClass::SSRF
+        } else if title_lower.contains("path traversal")
+            || title_lower.contains("directory traversal")
+        {
+            VulnerabilityClass::PathTraversal
+        } else if title_lower.contains("password")
+            || title_lower.contains("credential")
+            || title_lower.contains("secret")
+            || title_lower.contains("key")
+            || title_lower.contains("token")
+            || title_lower.contains("api key")
+        {
+            VulnerabilityClass::HardcodedCredentials
+        } else if title_lower.contains("buffer overflow")
+            || title_lower.contains("stack") && title_lower.contains("overflow")
+        {
+            VulnerabilityClass::BufferOverflow
+        } else if title_lower.contains("cors") {
+            VulnerabilityClass::CORS
+        } else if title_lower.contains("injection") {
+            VulnerabilityClass::SQLInjection
+        } else {
+            VulnerabilityClass::Unknown
+        };
+
+        if guessed != VulnerabilityClass::Unknown {
+            finding.vulnerability_class = guessed;
+        }
+    }
+
+    // Assign CVSS score based on severity if not already set
+    if finding.cvss_score.is_none() {
+        let score = match finding.severity {
+            Severity::Critical => 9.0,
+            Severity::High => 7.5,
+            Severity::Medium => 5.0,
+            Severity::Low => 3.0,
+            Severity::Info => 1.0,
+        };
+        finding.cvss_score = Some(score);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ValidationResult {
     pub finding_id: String,
@@ -62,7 +123,7 @@ impl Validator {
         self
     }
 
-    /// Validate a batch of findings. Returns validated findings (FPs removed).
+    /// Validate a batch of findings. Returns validated findings (FPs removed), enriched.
     pub async fn validate(&self, findings: &[Finding]) -> Result<Vec<Finding>, VestError> {
         let mut validated = Vec::new();
 
@@ -76,6 +137,7 @@ impl Validator {
                         if let Some(sev) = result.validated_severity {
                             confirmed.severity = sev;
                         }
+                        confirmed = self.apply_llm_enrichment(confirmed, &result);
                         validated.push(confirmed);
                     }
                     ValidationDecision::Downgraded => {
@@ -84,6 +146,7 @@ impl Validator {
                         if let Some(sev) = result.validated_severity {
                             downgraded.severity = sev;
                         }
+                        downgraded = self.apply_llm_enrichment(downgraded, &result);
                         validated.push(downgraded);
                     }
                     ValidationDecision::FalsePositive => {
@@ -92,23 +155,25 @@ impl Validator {
                     ValidationDecision::Uncertain => {
                         // In strict mode, reject uncertain findings
                         if !self.strict_mode {
-                            validated.push(finding.clone());
+                            let mut enriched = finding.clone();
+                            enrich_finding_heuristic(&mut enriched);
+                            validated.push(enriched);
                         }
                     }
                 }
             } else {
                 // No LLM for validation - apply heuristic rules
-                let result = self.heuristic_validate(finding);
+                let (result, enriched) = self.heuristic_validate(finding);
                 match result.status {
                     ValidationDecision::Confirmed | ValidationDecision::Downgraded => {
-                        validated.push(finding.clone());
+                        validated.push(enriched);
                     }
                     ValidationDecision::FalsePositive => {
                         // Skip
                     }
                     ValidationDecision::Uncertain => {
                         if !self.strict_mode {
-                            validated.push(finding.clone());
+                            validated.push(enriched);
                         }
                     }
                 }
@@ -116,6 +181,11 @@ impl Validator {
         }
 
         Ok(validated)
+    }
+
+    fn apply_llm_enrichment(&self, mut finding: Finding, _result: &ValidationResult) -> Finding {
+        enrich_finding_heuristic(&mut finding);
+        finding
     }
 
     /// LLM-based skeptical validation
@@ -198,7 +268,8 @@ impl Validator {
 
         tracing::warn!(
             "Failed to parse LLM validator response for finding {}: {:?}",
-            finding.id, response
+            finding.id,
+            response
         );
         Ok(ValidationResult {
             finding_id: finding.id.clone(),
@@ -210,12 +281,15 @@ impl Validator {
         })
     }
 
-    /// Heuristic validation (no LLM needed)
-    pub fn heuristic_validate(&self, finding: &Finding) -> ValidationResult {
-        let mut confidence = finding.confidence;
+    /// Heuristic validation (no LLM needed). Returns (result, enriched_finding).
+    pub fn heuristic_validate(&self, finding: &Finding) -> (ValidationResult, Finding) {
+        let mut enriched = finding.clone();
+        enrich_finding_heuristic(&mut enriched);
+
+        let mut confidence = enriched.confidence;
         let mut reasons: Vec<String> = Vec::new();
         let mut decision = ValidationDecision::Confirmed;
-        let mut severity = finding.severity;
+        let mut severity = enriched.severity;
 
         // Rule 1: Very low confidence findings are suspect
         if confidence < 0.3 {
@@ -224,37 +298,47 @@ impl Validator {
         }
 
         // Rule 2: Info severity with no evidence is likely noise
-        if finding.severity == Severity::Info && finding.evidence == serde_json::json!({}) {
+        if enriched.severity == Severity::Info && enriched.evidence == serde_json::json!({}) {
             reasons.push("Info severity with empty evidence".into());
             confidence -= 0.3;
         }
 
         // Rule 3: Critical severity with low confidence should be downgraded
-        if finding.severity == Severity::Critical && confidence < 0.5 {
+        if enriched.severity == Severity::Critical && confidence < 0.5 {
             reasons.push("Critical severity with low confidence downgraded to High".into());
             severity = Severity::High;
             decision = ValidationDecision::Downgraded;
         }
 
         // Rule 4: Unknown vulnerability class is suspect
-        if finding.vulnerability_class == VulnerabilityClass::Unknown {
+        if enriched.vulnerability_class == VulnerabilityClass::Unknown {
             reasons.push("Unknown vulnerability class".into());
             confidence -= 0.2;
         }
 
         // Rule 5: Very low confidence after heuristic checks -> false positive
+        // Don't override Uncertain from Rule 1 unless confidence is truly negligible
         if confidence < 0.1 {
-            decision = ValidationDecision::FalsePositive;
+            if decision == ValidationDecision::Uncertain {
+                // Only escalate to FalsePositive if initial confidence was already < 0.1
+                if finding.confidence < 0.1 {
+                    decision = ValidationDecision::FalsePositive;
+                }
+            } else {
+                decision = ValidationDecision::FalsePositive;
+            }
         }
 
-        ValidationResult {
-            finding_id: finding.id.clone(),
-            original_severity: finding.severity,
+        let result = ValidationResult {
+            finding_id: enriched.id.clone(),
+            original_severity: enriched.severity,
             validated_severity: Some(severity),
             status: decision,
             reasoning: reasons.join("; "),
             confidence: confidence.max(0.0),
-        }
+        };
+
+        (result, enriched)
     }
 
     fn extract_json_object(&self, text: &str) -> Option<String> {
@@ -320,7 +404,7 @@ mod tests {
     fn test_heuristic_validate_low_confidence_uncertain() {
         let validator = Validator::new();
         let finding = make_finding(Severity::Medium, 0.2, VulnerabilityClass::XSS);
-        let result = validator.heuristic_validate(&finding);
+        let (result, _enriched) = validator.heuristic_validate(&finding);
         assert_eq!(result.status, ValidationDecision::Uncertain);
     }
 
@@ -328,7 +412,7 @@ mod tests {
     fn test_heuristic_validate_critical_low_confidence_downgraded() {
         let validator = Validator::new();
         let finding = make_finding(Severity::Critical, 0.4, VulnerabilityClass::BufferOverflow);
-        let result = validator.heuristic_validate(&finding);
+        let (result, _enriched) = validator.heuristic_validate(&finding);
         assert_eq!(result.status, ValidationDecision::Downgraded);
         assert_eq!(result.validated_severity, Some(Severity::High));
     }
@@ -337,7 +421,7 @@ mod tests {
     fn test_heuristic_validate_high_confidence_confirmed() {
         let validator = Validator::new();
         let finding = make_finding(Severity::High, 0.9, VulnerabilityClass::SQLInjection);
-        let result = validator.heuristic_validate(&finding);
+        let (result, _enriched) = validator.heuristic_validate(&finding);
         assert_eq!(result.status, ValidationDecision::Confirmed);
     }
 
@@ -345,7 +429,7 @@ mod tests {
     fn test_heuristic_validate_unknown_class_reduces_confidence() {
         let validator = Validator::new();
         let finding = make_finding(Severity::Medium, 0.5, VulnerabilityClass::Unknown);
-        let result = validator.heuristic_validate(&finding);
+        let (result, _enriched) = validator.heuristic_validate(&finding);
         assert!(result.confidence < 0.5);
     }
 
@@ -353,7 +437,39 @@ mod tests {
     fn test_strict_mode_false_positive_very_low_confidence() {
         let validator = Validator::new().strict(true);
         let finding = make_finding(Severity::Low, 0.05, VulnerabilityClass::Unknown);
-        let result = validator.heuristic_validate(&finding);
+        let (result, _enriched) = validator.heuristic_validate(&finding);
         assert_eq!(result.status, ValidationDecision::FalsePositive);
+    }
+
+    #[test]
+    fn test_enrich_finding_xss() {
+        let mut finding = make_finding(Severity::High, 0.8, VulnerabilityClass::Unknown);
+        finding.title = "Reflected XSS in query parameter".into();
+        enrich_finding_heuristic(&mut finding);
+        assert_eq!(finding.vulnerability_class, VulnerabilityClass::XSS);
+        assert!(finding.cvss_score.is_some());
+    }
+
+    #[test]
+    fn test_enrich_finding_unknown_stays_unknown() {
+        let mut finding = make_finding(Severity::Low, 0.5, VulnerabilityClass::Unknown);
+        finding.title = "some generic observation".into();
+        enrich_finding_heuristic(&mut finding);
+        // No pattern match, should remain Unknown
+        assert_eq!(finding.vulnerability_class, VulnerabilityClass::Unknown);
+        // CVSS still assigned based on severity
+        assert!(finding.cvss_score.is_some());
+    }
+
+    #[test]
+    fn test_enrich_finding_already_has_class() {
+        let mut finding = make_finding(Severity::Medium, 0.7, VulnerabilityClass::BufferOverflow);
+        finding.title = "XSS in parameter".into();
+        enrich_finding_heuristic(&mut finding);
+        // Should keep original class, not guess from title
+        assert_eq!(
+            finding.vulnerability_class,
+            VulnerabilityClass::BufferOverflow
+        );
     }
 }

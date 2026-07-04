@@ -34,6 +34,9 @@ pub enum Commands {
     /// Target management
     #[command(subcommand)]
     Targets(TargetsArgs),
+    /// Scan history management
+    #[command(subcommand)]
+    Scans(ScansArgs),
     /// Finding management
     #[command(subcommand)]
     Findings(FindingsArgs),
@@ -144,7 +147,11 @@ pub enum ProvidersArgs {
     /// List configured providers
     List,
     /// Test all configured providers
-    Test,
+    Test {
+        /// Test one provider instead of all configured providers
+        #[arg(short, long)]
+        provider: Option<String>,
+    },
     /// List available models for a provider
     Models {
         #[arg(short, long)]
@@ -184,6 +191,29 @@ pub enum TargetsArgs {
     },
     /// Remove a target
     Remove {
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ScansArgs {
+    /// List stored scans
+    List {
+        /// Filter by target id
+        #[arg(long)]
+        target_id: Option<String>,
+        /// Maximum rows to show
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Show scan details and top findings
+    Show {
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    /// Delete a stored scan
+    Delete {
         #[arg(value_name = "ID")]
         id: String,
     },
@@ -231,6 +261,12 @@ pub enum ReportArgs {
     Generate {
         #[arg(value_name = "SCAN_ID")]
         scan_id: String,
+        /// Output format (terminal, json, markdown)
+        #[arg(short = 'f', long, default_value = "terminal")]
+        format: String,
+        /// Output report path
+        #[arg(short = 'o', long)]
+        output: Option<String>,
     },
     /// Summary of all scans
     Summary,
@@ -295,6 +331,7 @@ async fn dispatch(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Config(args) => commands::config::run(args).await?,
         Commands::Providers(args) => commands::providers::run(args).await?,
         Commands::Targets(args) => commands::targets::run(args).await?,
+        Commands::Scans(args) => commands::scans::run(args).await?,
         Commands::Findings(args) => commands::findings::run(args).await?,
         Commands::Report(args) => commands::report::run(args).await?,
         Commands::Tools(args) => commands::tools::run(args).await?,

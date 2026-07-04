@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use vest_core::error::VestError;
-use vest_core::traits::{LlmProvider, Reporter, Scanner};
+use vest_core::traits::{Reporter, Scanner};
 use vest_core::types::{Finding, ScanMode, ScanStatus, Severity, Target, TargetType};
 
 pub async fn run(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -110,56 +110,81 @@ pub async fn run(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     let start = std::time::Instant::now();
     let mut findings = run_builtin_scanners(&scanner_names, &target, &config).await?;
 
-    match create_provider(&provider_name, &model, &config) {
-        Ok(provider) => {
-            println!(
-                "\u{2502} {:^48} \u{2502}",
-                "Provider connected; running agent"
-            );
-            let max_iterations = profile
-                .and_then(|p| p.max_llm_iterations)
-                .unwrap_or(config.agent.max_llm_iterations);
-            let orchestrator = vest_agent::Orchestrator::new(
-                provider,
-                Arc::new(registry),
-                model.clone(),
-                scan_mode,
-                safety,
-            )
-            .with_max_iterations(max_iterations);
+    if provider_name == "none" {
+        println!(
+            "\u{2502} {:^48} \u{2502}",
+            "Agent disabled; scanner-only scan"
+        );
+        // Enrich scanner findings heuristically since no agent available
+        for finding in &mut findings {
+            vest_agent::enrich_finding_heuristic(finding);
+        }
+    } else {
+        match crate::commands::providers::create_provider(&provider_name, &model, &config) {
+            Ok(provider) => {
+                println!(
+                    "\u{2502} {:^48} \u{2502}",
+                    "Provider configured; running agent"
+                );
+                let max_iterations = profile
+                    .and_then(|p| p.max_llm_iterations)
+                    .unwrap_or(config.agent.max_llm_iterations);
+                let orchestrator = vest_agent::Orchestrator::new(
+                    provider,
+                    Arc::new(registry),
+                    model.clone(),
+                    scan_mode,
+                    safety,
+                )
+                .with_max_iterations(max_iterations)
+                .with_initial_findings(findings.clone());
 
-            match orchestrator.run(&target).await {
-                Ok(mut agent_findings) => findings.append(&mut agent_findings),
-                Err(e) => println!(
+                match orchestrator.run(&target).await {
+                    Ok(mut agent_findings) => {
+                        for finding in &mut agent_findings {
+                            mark_finding_source(finding, "agent", None);
+                        }
+                        // Replace scanner findings with the enriched set from orchestrator
+                        // to avoid duplication of unenriched originals
+                        findings = agent_findings;
+                    }
+                    Err(e) => {
+                        println!(
+                            "\u{2502} Agent skipped: {:<35} \u{2502}",
+                            truncate_for_box(&format!("{}", e), 35)
+                        );
+                        // Enrich scanner findings heuristically since agent failed
+                        for finding in &mut findings {
+                            vest_agent::enrich_finding_heuristic(finding);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                println!(
                     "\u{2502} Agent skipped: {:<35} \u{2502}",
                     truncate_for_box(&format!("{}", e), 35)
-                ),
+                );
+                println!(
+                    "\u{2502} {:^48} \u{2502}",
+                    "Scanner findings will still be reported"
+                );
             }
-        }
-        Err(e) => {
-            println!(
-                "\u{2502} Agent skipped: {:<35} \u{2502}",
-                truncate_for_box(&format!("{}", e), 35)
-            );
-            println!(
-                "\u{2502} {:^48} \u{2502}",
-                "Scanner findings will still be reported"
-            );
         }
     }
 
     dedupe_findings(&mut findings);
 
-    match finalize_scan(
-        &args,
-        &target,
+    match finalize_scan(FinalizeScanInput {
+        args: &args,
+        target: &target,
         scan_mode,
-        &provider_name,
-        &model,
-        &scanner_names,
+        provider_name: &provider_name,
+        model: &model,
+        scanner_names: &scanner_names,
         findings,
         start,
-    )
+    })
     .await
     {
         Ok(findings) => {
@@ -175,16 +200,28 @@ pub async fn run(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn finalize_scan(
-    args: &ScanArgs,
-    target: &Target,
+struct FinalizeScanInput<'a> {
+    args: &'a ScanArgs,
+    target: &'a Target,
     scan_mode: ScanMode,
-    provider_name: &str,
-    model: &str,
-    scanner_names: &[String],
+    provider_name: &'a str,
+    model: &'a str,
+    scanner_names: &'a [String],
     findings: Vec<Finding>,
     start: std::time::Instant,
-) -> Result<usize, Box<dyn std::error::Error>> {
+}
+
+async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, Box<dyn std::error::Error>> {
+    let FinalizeScanInput {
+        args,
+        target,
+        scan_mode,
+        provider_name,
+        model,
+        scanner_names,
+        findings,
+        start,
+    } = input;
     let elapsed = start.elapsed();
     println!(
         "\u{2502} Duration:    {:<35} \u{2502}",
@@ -203,7 +240,7 @@ async fn finalize_scan(
             "scanners": scanner_names,
         }),
         status: ScanStatus::Completed,
-        agent_model: Some(format!("{}/{}", provider_name, model)),
+        agent_model: (provider_name != "none").then(|| format!("{}/{}", provider_name, model)),
         started_at: Some(
             chrono::Utc::now() - chrono::Duration::from_std(elapsed).unwrap_or_default(),
         ),
@@ -215,7 +252,18 @@ async fn finalize_scan(
         medium_count: medium as u64,
         low_count: low as u64,
         info_count: info as u64,
-        metadata: serde_json::json!({}),
+        metadata: serde_json::json!({
+            "target": {
+                "id": target.id,
+                "name": target.name,
+                "type": target.target_type.to_string(),
+                "path": target.path,
+                "url": target.url_str,
+                "pid": target.pid,
+                "host": target.host,
+                "metadata": target.metadata,
+            }
+        }),
         created_at: chrono::Utc::now(),
     };
 
@@ -278,6 +326,7 @@ async fn run_builtin_scanners(
                 let scanner = vest_scanner::network::NetworkScanner::new();
                 run_scanner("network", scanner, target).await
             }
+            #[cfg(feature = "browser")]
             "browser" if config.scanner.browser.enabled => {
                 let scanner = vest_scanner::browser::BrowserScanner::new()
                     .with_storage(config.scanner.browser.local_storage_inspect)
@@ -301,6 +350,9 @@ async fn run_builtin_scanners(
 
         match result {
             Ok(mut findings) => {
+                for finding in &mut findings {
+                    mark_finding_source(finding, "scanner", Some(scanner_name));
+                }
                 println!(
                     "\u{2502} {:<12} {:<28} \u{2502}",
                     scanner_name,
@@ -319,6 +371,29 @@ async fn run_builtin_scanners(
     }
 
     Ok(all_findings)
+}
+
+fn mark_finding_source(finding: &mut Finding, source: &str, scanner: Option<&str>) {
+    if !finding.tags.iter().any(|tag| tag == source) {
+        finding.tags.push(source.to_string());
+    }
+    if let Some(scanner) = scanner {
+        let scanner_tag = format!("scanner:{}", scanner);
+        if !finding.tags.iter().any(|tag| tag == &scanner_tag) {
+            finding.tags.push(scanner_tag);
+        }
+    }
+
+    let mut metadata = finding
+        .metadata
+        .as_object()
+        .cloned()
+        .unwrap_or_else(serde_json::Map::new);
+    metadata.insert("source".into(), serde_json::json!(source));
+    if let Some(scanner) = scanner {
+        metadata.insert("scanner".into(), serde_json::json!(scanner));
+    }
+    finding.metadata = serde_json::Value::Object(metadata);
 }
 
 async fn run_scanner<S: Scanner>(
@@ -356,7 +431,10 @@ fn selected_scanners(
         TargetType::Binary => vec!["binary".into()],
         TargetType::Process => vec!["memory".into()],
         TargetType::Network => vec!["network".into()],
+        #[cfg(feature = "browser")]
         TargetType::Browser => vec!["browser".into()],
+        #[cfg(not(feature = "browser"))]
+        TargetType::Browser => vec![],
         TargetType::File => vec!["files".into()],
     }
 }
@@ -376,10 +454,11 @@ fn normalize_scanner_names<'a>(names: impl Iterator<Item = &'a str>) -> Vec<Stri
 }
 
 fn known_scanner(name: &str) -> bool {
-    matches!(
-        name,
-        "web" | "binary" | "memory" | "network" | "browser" | "files"
-    )
+    #[cfg(feature = "browser")]
+    if name == "browser" {
+        return true;
+    }
+    matches!(name, "web" | "binary" | "memory" | "network" | "files")
 }
 
 fn dedupe_findings(findings: &mut Vec<Finding>) {
@@ -443,87 +522,6 @@ async fn render_report(
 
 fn truncate_for_box(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
-}
-
-fn create_provider(
-    name: &str,
-    model: &str,
-    _config: &vest_config::VestConfig,
-) -> Result<Arc<dyn LlmProvider>, VestError> {
-    let get_key = || crate::commands::providers::get_api_key(name);
-
-    match name {
-        "openai" => {
-            let key = get_key().ok_or_else(|| {
-                VestError::Config(
-                    "OPENAI_API_KEY not set. Use 'vest providers set-key openai'".into(),
-                )
-            })?;
-            Ok(vest_providers::openai::create_openai_provider(
-                Some(key),
-                None,
-                Some(model.to_string()),
-            ))
-        }
-        "deepseek" => {
-            let key = get_key().ok_or_else(|| {
-                VestError::Config(
-                    "DEEPSEEK_API_KEY not set. Use 'vest providers set-key deepseek'".into(),
-                )
-            })?;
-            Ok(vest_providers::deepseek::create_deepseek_provider(
-                Some(key),
-                Some(model.to_string()),
-            ))
-        }
-        "anthropic" => {
-            let key = get_key().ok_or_else(|| {
-                VestError::Config(
-                    "ANTHROPIC_API_KEY not set. Use 'vest providers set-key anthropic'".into(),
-                )
-            })?;
-            Ok(vest_providers::anthropic::create_anthropic_provider(
-                key,
-                Some(model.to_string()),
-            ))
-        }
-        "google" => {
-            let key = get_key().ok_or_else(|| {
-                VestError::Config(
-                    "GOOGLE_API_KEY not set. Use 'vest providers set-key google'".into(),
-                )
-            })?;
-            Ok(vest_providers::google::create_google_provider(
-                key,
-                Some(model.to_string()),
-            ))
-        }
-        "ollama" => Ok(vest_providers::ollama::create_ollama_provider(
-            None,
-            Some(model.to_string()),
-        )),
-        "groq" => {
-            let key = get_key().ok_or_else(|| {
-                VestError::Config("GROQ_API_KEY not set. Use 'vest providers set-key groq'".into())
-            })?;
-            Ok(vest_providers::groq::create_groq_provider(
-                Some(key),
-                Some(model.to_string()),
-            ))
-        }
-        "openrouter" => {
-            let key = get_key().ok_or_else(|| {
-                VestError::Config(
-                    "OPENROUTER_API_KEY not set. Use 'vest providers set-key openrouter'".into(),
-                )
-            })?;
-            Ok(vest_providers::openrouter::create_openrouter_provider(
-                Some(key),
-                Some(model.to_string()),
-            ))
-        }
-        _ => Err(VestError::Config(format!("Unknown provider: {}", name))),
-    }
 }
 
 fn build_tool_registry() -> vest_agent::ToolRegistry {
@@ -857,6 +855,7 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
         },
     );
 
+    #[cfg(feature = "browser")]
     registry.register(
         vest_agent::ToolDefinition {
             name: "browser_inspect".into(),
