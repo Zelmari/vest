@@ -203,3 +203,8 @@ pub fn update_scan_status(
     )?;
     Ok(())
 }
+
+pub fn delete_scan(conn: &Connection, id: &str) -> Result<(), StorageError> {
+    conn.execute("DELETE FROM scans WHERE id = ?1", rusqlite::params![id])?;
+    Ok(())
+}

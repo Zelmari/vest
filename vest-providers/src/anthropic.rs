@@ -132,10 +132,15 @@ impl LlmProvider for AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(VestError::Provider(format!(
-                "Anthropic: HTTP {}: {}",
-                status, body
-            )));
+            let err = if status.as_u16() == 429 {
+                VestError::RateLimited("Anthropic: rate limited".into())
+            } else {
+                VestError::Provider(format!(
+                    "Anthropic: HTTP {}: {}",
+                    status, body
+                ))
+            };
+            return Err(err);
         }
 
         let completion: AnthropicResponse = resp.json().await.map_err(|e| {

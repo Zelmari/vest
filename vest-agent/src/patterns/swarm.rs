@@ -189,26 +189,15 @@ impl SwarmRunner {
         let mut seen: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
 
         for f in findings {
-            let key = format!(
-                "{}:{}",
-                &f.title[..f.title.len().min(50)],
-                f.vulnerability_class
-            );
+            let key = make_finding_key(f);
             *seen.entry(key).or_insert(0) += 1;
         }
 
-        let threshold = if self.agent_configs.len().max(1) == 1 {
-            1
-        } else {
-            2
-        };
+        let total_agents = (self.agent_configs.len() * self.diversity_seeds).max(1);
+        let threshold = ((total_agents as f64) * 0.4).ceil().max(1.0) as u32;
 
         for f in findings {
-            let key = format!(
-                "{}:{}",
-                &f.title[..f.title.len().min(50)],
-                f.vulnerability_class
-            );
+            let key = make_finding_key(f);
             if let Some(&count) = seen.get(&key) {
                 if count >= threshold
                     && !dedup.iter().any(|d| {
@@ -240,23 +229,15 @@ impl SwarmRunner {
         let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
 
         for f in findings {
-            let key = format!(
-                "{}:{}",
-                &f.title[..f.title.len().min(50)],
-                f.vulnerability_class
-            );
+            let key = make_finding_key(f);
             *counts.entry(key).or_insert(0) += 1;
         }
 
-        let total_agents = self.agent_configs.len() * self.diversity_seeds;
-        let threshold = total_agents.max(1) as u32;
+        let total_agents = (self.agent_configs.len() * self.diversity_seeds).max(1);
+        let threshold = ((total_agents as f64) * 0.7).ceil().max(2.0) as u32;
 
         for f in findings {
-            let key = format!(
-                "{}:{}",
-                &f.title[..f.title.len().min(50)],
-                f.vulnerability_class
-            );
+            let key = make_finding_key(f);
             if counts.get(&key).copied().unwrap_or(0) >= threshold
                 && !dedup
                     .iter()
@@ -276,6 +257,11 @@ impl SwarmRunner {
         let mut status = self.status.write().await;
         *status = s;
     }
+}
+
+fn make_finding_key(f: &vest_core::types::Finding) -> String {
+    let title_part = &f.title[..f.title.len().min(50)];
+    format!("{}:{}", title_part, f.vulnerability_class)
 }
 
 #[cfg(test)]

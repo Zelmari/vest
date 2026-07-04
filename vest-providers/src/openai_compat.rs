@@ -116,10 +116,15 @@ impl LlmProvider for OpenAiCompatProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(VestError::Provider(format!(
-                "{}: HTTP {}: {}",
-                self.name, status, body
-            )));
+            let err = if status.as_u16() == 429 {
+                VestError::RateLimited(format!("{}: rate limited", self.name))
+            } else {
+                VestError::Provider(format!(
+                    "{}: HTTP {}: {}",
+                    self.name, status, body
+                ))
+            };
+            return Err(err);
         }
 
         let completion: ChatCompletionResponse = resp.json().await.map_err(|e| {
@@ -156,10 +161,15 @@ impl LlmProvider for OpenAiCompatProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(VestError::Provider(format!(
-                "{}: HTTP {}: {}",
-                self.name, status, body
-            )));
+            let err = if status.as_u16() == 429 {
+                VestError::RateLimited(format!("{}: rate limited", self.name))
+            } else {
+                VestError::Provider(format!(
+                    "{}: HTTP {}: {}",
+                    self.name, status, body
+                ))
+            };
+            return Err(err);
         }
 
         let full_body = resp.text().await.map_err(|e| {
@@ -201,10 +211,15 @@ impl LlmProvider for OpenAiCompatProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(VestError::Provider(format!(
-                "{}: HTTP {}: {}",
-                self.name, status, body
-            )));
+            let err = if status.as_u16() == 429 {
+                VestError::RateLimited(format!("{}: rate limited", self.name))
+            } else {
+                VestError::Provider(format!(
+                    "{}: HTTP {}: {}",
+                    self.name, status, body
+                ))
+            };
+            return Err(err);
         }
 
         let model_list: ModelListResponse = resp.json().await.map_err(|e| {
@@ -239,10 +254,15 @@ impl LlmProvider for OpenAiCompatProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(VestError::Provider(format!(
-                "{}: HTTP {}: {}",
-                self.name, status, body
-            )));
+            let err = if status.as_u16() == 429 {
+                VestError::RateLimited(format!("{}: rate limited", self.name))
+            } else {
+                VestError::Provider(format!(
+                    "{}: HTTP {}: {}",
+                    self.name, status, body
+                ))
+            };
+            return Err(err);
         }
 
         let emb_resp: EmbeddingResponse = resp.json().await.map_err(|e| {

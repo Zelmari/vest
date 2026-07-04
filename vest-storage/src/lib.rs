@@ -1,3 +1,4 @@
+pub mod agent_actions;
 pub mod artifacts;
 pub mod connection;
 pub mod error;

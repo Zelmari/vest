@@ -93,8 +93,8 @@ pub fn list_artifacts_by_finding(
 ) -> Result<Vec<Artifact>, StorageError> {
     let mut stmt = conn.prepare(
         "SELECT id, scan_id, finding_id, type, mime_type, filename, size_bytes,
-         content_path, metadata, created_at
-         FROM artifacts WHERE finding_id = ?1 ORDER BY created_at",
+          content_path, metadata, created_at
+          FROM artifacts WHERE finding_id = ?1 ORDER BY created_at",
     )?;
     let artifacts = stmt
         .query_map(rusqlite::params![finding_id], |row| {
@@ -116,4 +116,9 @@ pub fn list_artifacts_by_finding(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(artifacts)
+}
+
+pub fn delete_artifact(conn: &Connection, id: &str) -> Result<(), StorageError> {
+    conn.execute("DELETE FROM artifacts WHERE id = ?1", rusqlite::params![id])?;
+    Ok(())
 }

@@ -1,4 +1,10 @@
 use crate::ScanArgs;
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+use std::sync::Arc;
+use vest_core::error::VestError;
+use vest_core::traits::{LlmProvider, Reporter, Scanner};
+use vest_core::types::{Finding, ScanMode, ScanStatus, Severity, Target, TargetType};
 
 pub async fn run(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("\u{250c}{}\u{2510}", "\u{2500}".repeat(50));
@@ -24,55 +30,1040 @@ pub async fn run(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
         "\u{2502} Model:       {:<35} \u{2502}",
         args.model.as_deref().unwrap_or("from config")
     );
-    println!(
-        "\u{2502} Output:      {:<35} \u{2502}",
-        args.output.as_deref().unwrap_or("terminal")
-    );
-    println!("\u{2502} Format:      {:<35} \u{2502}", args.format);
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     if args.dry_run {
-        println!("\u{2502} {:^48} \u{2502}", "DRY RUN - No actions taken");
+        println!("\u{2502} {:^48} \u{2502}", "DRY RUN - no actions taken");
         println!(
             "\u{2502} {:^48} \u{2502}",
-            "Would run scan with above config"
+            format!(
+                "Would scan {} in {} mode",
+                &args.target[..args.target.len().min(25)],
+                args.mode.as_deref().unwrap_or("pipeline")
+            )
         );
-    } else {
-        println!(
-            "\u{2502} {:^48} \u{2502}",
-            "Scan engine requires LLM provider"
-        );
-        println!(
-            "\u{2502} {:^48} \u{2502}",
-            "Configure a provider in vest.toml"
-        );
+        println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+        return Ok(());
     }
 
+    let config_path = find_config_path();
+    let config =
+        vest_config::load_config(&config_path).unwrap_or_else(|_| vest_config::default_config());
+
+    let profile = args
+        .profile
+        .as_ref()
+        .and_then(|name| config.profiles.get(name));
+
+    let provider_name = args
+        .provider
+        .clone()
+        .or_else(|| {
+            config
+                .providers
+                .as_ref()
+                .map(|p| p.default.provider.clone())
+        })
+        .unwrap_or_else(|| "ollama".to_string());
+
+    let model = args
+        .model
+        .clone()
+        .or_else(|| config.providers.as_ref().map(|p| p.default.model.clone()))
+        .unwrap_or_else(|| "llama3.2".to_string());
+
+    let scan_mode: ScanMode = args
+        .mode
+        .clone()
+        .or_else(|| profile.and_then(|p| p.pattern.clone()))
+        .unwrap_or_else(|| config.agent.default_pattern.clone())
+        .parse()
+        .unwrap_or(ScanMode::Pipeline);
+
+    println!("\u{2502} Provider:    {:<35} \u{2502}", provider_name);
+    println!("\u{2502} Model:       {:<35} \u{2502}", model);
     println!(
-        "\u{2502} {:^48} \u{2502}",
-        format!(
-            "Scanners: {}",
-            if args.scanner.is_empty() {
-                "all enabled".to_string()
-            } else {
-                args.scanner.join(", ")
-            }
-        )
+        "\u{2502} Mode:        {:<35} \u{2502}",
+        scan_mode.to_string()
+    );
+    println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+
+    let target = detect_target(&args);
+    println!(
+        "\u{2502} Type:        {:<35} \u{2502}",
+        target.target_type.to_string()
     );
 
-    if args.no_approval {
-        println!("\u{2502} {:^48} \u{2502}", "ALL SAFETY GATES DISABLED");
-    }
-    if args.approve_writes {
-        println!("\u{2502} {:^48} \u{2502}", "Write operations pre-approved");
-    }
-    if args.approve_exploits {
-        println!("\u{2502} {:^48} \u{2502}", "Exploit attempts pre-approved");
-    }
-    if let Some(timeout) = args.timeout {
-        println!("\u{2502} Timeout:      {}s{:<25} \u{2502}", timeout, "");
+    let scanner_names = selected_scanners(&args, &config, &target);
+    println!(
+        "\u{2502} Scanners:    {:<35} \u{2502}",
+        truncate_for_box(&scanner_names.join(", "), 35)
+    );
+    println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+
+    let registry = build_tool_registry();
+    let safety = build_safety(&args, &config);
+
+    println!("\u{2502} {:^48} \u{2502}", "Running scan...");
+    println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+
+    let start = std::time::Instant::now();
+    let mut findings = run_builtin_scanners(&scanner_names, &target, &config).await?;
+
+    match create_provider(&provider_name, &model, &config) {
+        Ok(provider) => {
+            println!(
+                "\u{2502} {:^48} \u{2502}",
+                "Provider connected; running agent"
+            );
+            let max_iterations = profile
+                .and_then(|p| p.max_llm_iterations)
+                .unwrap_or(config.agent.max_llm_iterations);
+            let orchestrator = vest_agent::Orchestrator::new(
+                provider,
+                Arc::new(registry),
+                model.clone(),
+                scan_mode,
+                safety,
+            )
+            .with_max_iterations(max_iterations);
+
+            match orchestrator.run(&target).await {
+                Ok(mut agent_findings) => findings.append(&mut agent_findings),
+                Err(e) => println!(
+                    "\u{2502} Agent skipped: {:<35} \u{2502}",
+                    truncate_for_box(&format!("{}", e), 35)
+                ),
+            }
+        }
+        Err(e) => {
+            println!(
+                "\u{2502} Agent skipped: {:<35} \u{2502}",
+                truncate_for_box(&format!("{}", e), 35)
+            );
+            println!(
+                "\u{2502} {:^48} \u{2502}",
+                "Scanner findings will still be reported"
+            );
+        }
     }
 
-    println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+    dedupe_findings(&mut findings);
+
+    match finalize_scan(
+        &args,
+        &target,
+        scan_mode,
+        &provider_name,
+        &model,
+        &scanner_names,
+        findings,
+        start,
+    )
+    .await
+    {
+        Ok(findings) => {
+            println!("\u{2502} Stored:      {:<35} \u{2502}", findings);
+        }
+        Err(e) => {
+            println!("\u{2502} Error: {:<41} \u{2502}", format!("{}", e));
+            println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+            return Ok(());
+        }
+    }
+
     Ok(())
+}
+
+async fn finalize_scan(
+    args: &ScanArgs,
+    target: &Target,
+    scan_mode: ScanMode,
+    provider_name: &str,
+    model: &str,
+    scanner_names: &[String],
+    findings: Vec<Finding>,
+    start: std::time::Instant,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let elapsed = start.elapsed();
+    println!(
+        "\u{2502} Duration:    {:<35} \u{2502}",
+        format!("{:.1}s", elapsed.as_secs_f64())
+    );
+    println!("\u{2502} Findings:    {:<35} \u{2502}", findings.len());
+
+    let (critical, high, medium, low, info) = severity_counts(&findings);
+    let scan_session = vest_core::types::ScanSession {
+        id: vest_core::ids::new_id(),
+        target_id: target.id.clone(),
+        mode: scan_mode,
+        config: serde_json::json!({
+            "provider": provider_name,
+            "model": model,
+            "scanners": scanner_names,
+        }),
+        status: ScanStatus::Completed,
+        agent_model: Some(format!("{}/{}", provider_name, model)),
+        started_at: Some(
+            chrono::Utc::now() - chrono::Duration::from_std(elapsed).unwrap_or_default(),
+        ),
+        completed_at: Some(chrono::Utc::now()),
+        duration_ms: Some(elapsed.as_millis() as i64),
+        total_findings: findings.len() as u64,
+        critical_count: critical as u64,
+        high_count: high as u64,
+        medium_count: medium as u64,
+        low_count: low as u64,
+        info_count: info as u64,
+        metadata: serde_json::json!({}),
+        created_at: chrono::Utc::now(),
+    };
+
+    let report = render_report(&args.format, &scan_session, &findings).await?;
+    println!("{}", report);
+
+    if let Some(ref output_path) = args.output {
+        std::fs::write(
+            output_path,
+            render_report(&args.format, &scan_session, &findings).await?,
+        )?;
+        println!("\nReport saved to: {}", output_path);
+    }
+
+    let db_path = get_db_path();
+    let pool = vest_storage::ConnectionPool::new(&db_path)?;
+    vest_storage::schema::run_migrations(pool.conn())?;
+    vest_storage::targets::insert_target(pool.conn(), target)?;
+    vest_storage::scans::insert_scan(pool.conn(), &scan_session)?;
+    for finding in &findings {
+        let mut f = finding.clone();
+        f.scan_id = scan_session.id.clone();
+        f.target_id = target.id.clone();
+        vest_storage::findings::insert_finding(pool.conn(), &f)?;
+    }
+
+    Ok(findings.len())
+}
+
+async fn run_builtin_scanners(
+    scanner_names: &[String],
+    target: &Target,
+    config: &vest_config::VestConfig,
+) -> Result<Vec<Finding>, Box<dyn std::error::Error>> {
+    let mut all_findings = Vec::new();
+
+    for scanner_name in scanner_names {
+        let result = match scanner_name.as_str() {
+            "web" if config.scanner.web.enabled => {
+                let scanner = vest_scanner::web::WebScanner::new()
+                    .with_crawl_depth(config.scanner.web.crawl_depth)
+                    .with_max_urls(config.scanner.web.crawl_max_urls as usize)
+                    .with_user_agent(config.scanner.web.user_agent.clone());
+                run_scanner("web", scanner, target).await
+            }
+            "binary" if config.scanner.binary.enabled => {
+                let scanner = vest_scanner::binary::BinaryScanner::new()
+                    .with_sink_catalogs(config.scanner.binary.sink_catalogs.clone())
+                    .with_mitigations(config.scanner.binary.check_mitigations)
+                    .with_rop(config.scanner.binary.find_rop_gadgets);
+                run_scanner("binary", scanner, target).await
+            }
+            "memory" if config.scanner.memory.enabled => {
+                let scanner = vest_scanner::memory::MemoryScanner::new()
+                    .with_max_memory(config.scanner.memory.max_memory_per_scan_mb)
+                    .with_hook_detection(config.scanner.memory.hook_detection);
+                run_scanner("memory", scanner, target).await
+            }
+            "network" if config.scanner.network.enabled => {
+                let scanner = vest_scanner::network::NetworkScanner::new();
+                run_scanner("network", scanner, target).await
+            }
+            "browser" if config.scanner.browser.enabled => {
+                let scanner = vest_scanner::browser::BrowserScanner::new()
+                    .with_storage(config.scanner.browser.local_storage_inspect)
+                    .with_websockets(config.scanner.browser.websocket_intercept)
+                    .with_wasm(config.scanner.browser.wasm_inspect);
+                run_scanner("browser", scanner, target).await
+            }
+            "files" if config.scanner.files.enabled => {
+                let scanner = vest_scanner::files::FileScanner::new();
+                run_scanner("files", scanner, target).await
+            }
+            disabled if known_scanner(disabled) => {
+                println!(
+                    "\u{2502} Scanner off: {:<35} \u{2502}",
+                    truncate_for_box(disabled, 35)
+                );
+                Ok(Vec::new())
+            }
+            unknown => Err(VestError::Config(format!("Unknown scanner: {}", unknown))),
+        };
+
+        match result {
+            Ok(mut findings) => {
+                println!(
+                    "\u{2502} {:<12} {:<28} \u{2502}",
+                    scanner_name,
+                    format!("{} finding(s)", findings.len())
+                );
+                all_findings.append(&mut findings);
+            }
+            Err(e) => {
+                println!(
+                    "\u{2502} {:<12} {:<28} \u{2502}",
+                    scanner_name,
+                    truncate_for_box(&format!("skipped: {}", e), 28)
+                );
+            }
+        }
+    }
+
+    Ok(all_findings)
+}
+
+async fn run_scanner<S: Scanner>(
+    _name: &str,
+    scanner: S,
+    target: &Target,
+) -> Result<Vec<Finding>, VestError> {
+    scanner.scan(target).await
+}
+
+fn selected_scanners(
+    args: &ScanArgs,
+    config: &vest_config::VestConfig,
+    target: &Target,
+) -> Vec<String> {
+    let from_args = normalize_scanner_names(args.scanner.iter().map(String::as_str));
+    if !from_args.is_empty() {
+        return from_args;
+    }
+
+    if let Some(profile) = args
+        .profile
+        .as_ref()
+        .and_then(|name| config.profiles.get(name))
+        .and_then(|p| p.scanners.as_ref())
+    {
+        let from_profile = normalize_scanner_names(profile.iter().map(String::as_str));
+        if !from_profile.is_empty() {
+            return from_profile;
+        }
+    }
+
+    match target.target_type {
+        TargetType::Web => vec!["web".into()],
+        TargetType::Binary => vec!["binary".into()],
+        TargetType::Process => vec!["memory".into()],
+        TargetType::Network => vec!["network".into()],
+        TargetType::Browser => vec!["browser".into()],
+        TargetType::File => vec!["files".into()],
+    }
+}
+
+fn normalize_scanner_names<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    for name in names {
+        let normalized = match name.trim().to_ascii_lowercase().as_str() {
+            "" => continue,
+            "file" => "files".to_string(),
+            "fs" => "files".to_string(),
+            other => other.to_string(),
+        };
+        seen.insert(normalized);
+    }
+    seen.into_iter().collect()
+}
+
+fn known_scanner(name: &str) -> bool {
+    matches!(
+        name,
+        "web" | "binary" | "memory" | "network" | "browser" | "files"
+    )
+}
+
+fn dedupe_findings(findings: &mut Vec<Finding>) {
+    let mut seen = BTreeSet::new();
+    findings.retain(|f| {
+        let key = format!(
+            "{}:{}:{}:{}",
+            f.title, f.vulnerability_class, f.location, f.evidence
+        );
+        seen.insert(key)
+    });
+}
+
+fn severity_counts(findings: &[Finding]) -> (usize, usize, usize, usize, usize) {
+    let mut critical = 0;
+    let mut high = 0;
+    let mut medium = 0;
+    let mut low = 0;
+    let mut info = 0;
+
+    for finding in findings {
+        match finding.severity {
+            Severity::Critical => critical += 1,
+            Severity::High => high += 1,
+            Severity::Medium => medium += 1,
+            Severity::Low => low += 1,
+            Severity::Info => info += 1,
+        }
+    }
+
+    (critical, high, medium, low, info)
+}
+
+async fn render_report(
+    format: &str,
+    scan: &vest_core::types::ScanSession,
+    findings: &[Finding],
+) -> Result<String, VestError> {
+    match format {
+        "json" => {
+            vest_report::JsonReporter
+                .generate_report(scan, findings)
+                .await
+        }
+        "markdown" | "md" => {
+            vest_report::MarkdownReporter
+                .generate_report(scan, findings)
+                .await
+        }
+        "terminal" | "text" => {
+            vest_report::TerminalReporter
+                .generate_report(scan, findings)
+                .await
+        }
+        other => Err(VestError::Config(format!(
+            "Unknown report format '{}'. Use json, markdown, or terminal.",
+            other
+        ))),
+    }
+}
+
+fn truncate_for_box(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+fn create_provider(
+    name: &str,
+    model: &str,
+    _config: &vest_config::VestConfig,
+) -> Result<Arc<dyn LlmProvider>, VestError> {
+    let get_key = || crate::commands::providers::get_api_key(name);
+
+    match name {
+        "openai" => {
+            let key = get_key().ok_or_else(|| {
+                VestError::Config(
+                    "OPENAI_API_KEY not set. Use 'vest providers set-key openai'".into(),
+                )
+            })?;
+            Ok(vest_providers::openai::create_openai_provider(
+                Some(key),
+                None,
+                Some(model.to_string()),
+            ))
+        }
+        "deepseek" => {
+            let key = get_key().ok_or_else(|| {
+                VestError::Config(
+                    "DEEPSEEK_API_KEY not set. Use 'vest providers set-key deepseek'".into(),
+                )
+            })?;
+            Ok(vest_providers::deepseek::create_deepseek_provider(
+                Some(key),
+                Some(model.to_string()),
+            ))
+        }
+        "anthropic" => {
+            let key = get_key().ok_or_else(|| {
+                VestError::Config(
+                    "ANTHROPIC_API_KEY not set. Use 'vest providers set-key anthropic'".into(),
+                )
+            })?;
+            Ok(vest_providers::anthropic::create_anthropic_provider(
+                key,
+                Some(model.to_string()),
+            ))
+        }
+        "google" => {
+            let key = get_key().ok_or_else(|| {
+                VestError::Config(
+                    "GOOGLE_API_KEY not set. Use 'vest providers set-key google'".into(),
+                )
+            })?;
+            Ok(vest_providers::google::create_google_provider(
+                key,
+                Some(model.to_string()),
+            ))
+        }
+        "ollama" => Ok(vest_providers::ollama::create_ollama_provider(
+            None,
+            Some(model.to_string()),
+        )),
+        "groq" => {
+            let key = get_key().ok_or_else(|| {
+                VestError::Config("GROQ_API_KEY not set. Use 'vest providers set-key groq'".into())
+            })?;
+            Ok(vest_providers::groq::create_groq_provider(
+                Some(key),
+                Some(model.to_string()),
+            ))
+        }
+        "openrouter" => {
+            let key = get_key().ok_or_else(|| {
+                VestError::Config(
+                    "OPENROUTER_API_KEY not set. Use 'vest providers set-key openrouter'".into(),
+                )
+            })?;
+            Ok(vest_providers::openrouter::create_openrouter_provider(
+                Some(key),
+                Some(model.to_string()),
+            ))
+        }
+        _ => Err(VestError::Config(format!("Unknown provider: {}", name))),
+    }
+}
+
+fn build_tool_registry() -> vest_agent::ToolRegistry {
+    let mut registry = vest_agent::ToolRegistry::new();
+    let ro = vest_agent::context::RiskLevel::ReadOnly;
+
+    registry.register(
+        vest_agent::ToolDefinition {
+            name: "web_scan".into(),
+            description: "Perform a comprehensive web vulnerability scan against a URL. Fetches the page, parses links and forms, checks for exposed resources (.env, .git, admin panels, backups), and runs misconfiguration detection (missing security headers, CORS, .git/.env exposure). Returns structured findings.".into(),
+            parameters: serde_json::json!({"url": "string"}),
+            requires_approval: false,
+            risk_level: ro,
+        },
+        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+            let url = args.get("url")
+                .and_then(|v| v.as_str())
+                .ok_or("url parameter required")?;
+
+            let scanner = vest_scanner::web::WebScanner::new()
+                .with_crawl_depth(5)
+                .with_max_urls(100);
+
+            let resp = ureq::get(url)
+                .header("User-Agent", "VEST/0.1")
+                .call()
+                .map_err(|e| format!("Failed to fetch page: {}", e))?;
+            let status = resp.status().as_u16();
+            let body = resp.into_body().read_to_string()
+                .map_err(|e| format!("Failed to read body: {}", e))?;
+
+            let links = scanner.parse_links(&body, url);
+            let forms = scanner.parse_forms(&body, url);
+
+            let page = vest_scanner::web::CrawledPage {
+                url: url.to_string(),
+                status,
+                body: Some(body.clone()),
+                headers: vec![],
+                links: links.clone(),
+                forms: forms.clone(),
+            };
+
+            let handle = tokio::runtime::Handle::current();
+            let config_findings = tokio::task::block_in_place(|| {
+                handle.block_on(async { scanner.scan_misconfigurations(&page).await })
+            });
+
+            let mut exposed = Vec::new();
+            for check in &[".env", ".git/HEAD", "admin", "backup"] {
+                let check_url = format!("{}/{}", url.trim_end_matches('/'), check);
+                if let Ok(r) = ureq::get(&check_url).header("User-Agent", "VEST/0.1").call() {
+                    let s = r.status().as_u16();
+                    if s < 400 && s != 404 {
+                        exposed.push(format!("{} ({})", check_url, s));
+                    }
+                }
+            }
+
+            let finding_summaries: Vec<String> = config_findings.iter()
+                .map(|f| format!("[{}] {}", f.severity.to_string().to_uppercase(), f.title))
+                .collect();
+
+            Ok(serde_json::json!({
+                "url": url,
+                "status": status,
+                "links_found": links.len(),
+                "forms_found": forms.len(),
+                "forms": forms.iter().map(|f| serde_json::json!({
+                    "action": f.action,
+                    "inputs": f.inputs.iter().map(|(n, t)| format!("{}:{}", n, t)).collect::<Vec<_>>()
+                })).collect::<Vec<_>>(),
+                "exposed_resources": exposed,
+                "security_issues": finding_summaries,
+                "findings_count": config_findings.len(),
+                "links": links.iter().take(30).collect::<Vec<_>>(),
+            }))
+        },
+    );
+
+    registry.register(
+        vest_agent::ToolDefinition {
+            name: "file_scan".into(),
+            description: "Scan a file path or directory for security issues. Checks for hardcoded secrets (API keys, passwords, tokens, private keys), backup/debug files, sensitive file exposure (.env, SSH keys, Docker configs, git internals), and suspicious file formats (executables, scripts). Returns detailed findings.".into(),
+            parameters: serde_json::json!({"path": "string"}),
+            requires_approval: false,
+            risk_level: ro,
+        },
+        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+            let path_str = args.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("path parameter required")?;
+            let path = std::path::Path::new(path_str);
+            if !path.exists() {
+                return Err(format!("Path not found: {}", path_str));
+            }
+
+            let scanner = vest_scanner::files::FileScanner::new();
+            let files = vest_scanner::files::FileScanner::collect_files(path)
+                .map_err(|e| format!("Failed to collect files: {}", e))?;
+
+            let mut all_findings = Vec::new();
+            let mut scanned = 0usize;
+            for file_path in &files {
+                match scanner.scan_file(file_path) {
+                    Ok(findings) => {
+                        scanned += 1;
+                        all_findings.extend(findings);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to scan {}: {}", file_path.display(), e);
+                    }
+                }
+            }
+
+            let secrets_count = all_findings.iter().filter(|f| f.tags.iter().any(|t| t == "secret")).count();
+            let backup_count = all_findings.iter().filter(|f| f.tags.iter().any(|t| t == "backup")).count();
+            let sensitive_count = all_findings.iter().filter(|f| f.tags.iter().any(|t| t == "sensitive-file")).count();
+            let format_count = all_findings.iter().filter(|f| f.tags.iter().any(|t| t == "file-type")).count();
+
+            let summaries: Vec<serde_json::Value> = all_findings.iter().take(50).map(|f| {
+                serde_json::json!({
+                    "title": f.title,
+                    "severity": f.severity.to_string(),
+                    "confidence": f.confidence,
+                })
+            }).collect();
+
+            Ok(serde_json::json!({
+                "path": path_str,
+                "files_scanned": scanned,
+                "total_files": files.len(),
+                "total_findings": all_findings.len(),
+                "secrets_found": secrets_count,
+                "backup_files_found": backup_count,
+                "sensitive_files_found": sensitive_count,
+                "format_issues_found": format_count,
+                "findings": summaries,
+            }))
+        },
+    );
+
+    registry.register(
+        vest_agent::ToolDefinition {
+            name: "memory_scan".into(),
+            description: "Scan a process's memory regions for security vulnerabilities. Checks for RWX (writable+executable) regions, suspicious unnamed writable allocations, inline hooks (JMP, PUSH/RET, MOV RAX/RET), and shellcode patterns (socket/connect, CreateProcess, VirtualAlloc, URLDownloadToFile). Returns detailed findings with addresses.".into(),
+            parameters: serde_json::json!({"pid": "integer"}),
+            requires_approval: false,
+            risk_level: ro,
+        },
+        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+            let pid: u32 = args.get("pid")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+
+            let platform = vest_scanner::memory::MemoryScanner::detect_platform();
+            let regions = vest_scanner::memory::MemoryScanner::get_simulated_regions(platform);
+
+            let suspicious_findings = vest_scanner::memory::MemoryScanner::check_suspicious_regions(&regions);
+
+            let mut region_data: Vec<(&vest_scanner::memory::MemoryRegion, Vec<u8>)> = Vec::new();
+            for region in &regions {
+                if region.is_executable() {
+                    let data = vest_scanner::memory::MemoryScanner::read_memory(
+                        region.base_address,
+                        region.size.min(4096) as usize,
+                    );
+                    region_data.push((region, data));
+                }
+            }
+            let hook_findings = vest_scanner::memory::MemoryScanner::detect_hooks(&region_data);
+
+            let rwx_count = suspicious_findings.iter()
+                .filter(|f| f.title.contains("Suspicious memory region")).count();
+            let hook_count = hook_findings.iter()
+                .filter(|f| f.tags.iter().any(|t| t == "hook")).count();
+            let shellcode_count = hook_findings.iter()
+                .filter(|f| f.tags.iter().any(|t| t == "shellcode")).count();
+
+            let suspicious_summaries: Vec<serde_json::Value> = suspicious_findings.iter().map(|f| {
+                serde_json::json!({"title": f.title, "severity": f.severity.to_string()})
+            }).collect();
+            let hook_summaries: Vec<serde_json::Value> = hook_findings.iter().map(|f| {
+                serde_json::json!({"title": f.title, "severity": f.severity.to_string()})
+            }).collect();
+
+            let region_list: Vec<serde_json::Value> = regions.iter().map(|r| {
+                serde_json::json!({
+                    "name": r.name,
+                    "base_address": format!("0x{:x}", r.base_address),
+                    "size": r.size,
+                    "permissions": r.permissions,
+                    "module": r.module_name,
+                    "is_executable": r.is_executable(),
+                    "is_writable": r.is_writable(),
+                    "is_rwx": r.is_rwx(),
+                })
+            }).collect();
+
+            Ok(serde_json::json!({
+                "platform": platform,
+                "pid": pid,
+                "total_regions": regions.len(),
+                "total_findings": suspicious_findings.len() + hook_findings.len(),
+                "rwx_region_count": rwx_count,
+                "hook_detection_count": hook_count,
+                "shellcode_detection_count": shellcode_count,
+                "regions": region_list,
+                "suspicious_region_findings": suspicious_summaries,
+                "hook_and_shellcode_findings": hook_summaries,
+            }))
+        },
+    );
+
+    registry.register(
+        vest_agent::ToolDefinition {
+            name: "http_get".into(),
+            description: "Make an HTTP GET request to a URL. Returns status code and response body (truncated at 8KB). Use as fallback for raw HTTP requests when web_scan doesn't cover your needs.".into(),
+            parameters: serde_json::json!({"url": "string"}),
+            requires_approval: false,
+            risk_level: ro,
+        },
+        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+            let url = args.get("url")
+                .and_then(|v| v.as_str())
+                .ok_or("url parameter required")?;
+            let resp = ureq::get(url)
+                .header("User-Agent", "VEST/0.1")
+                .call()
+                .map_err(|e| format!("HTTP request failed: {}", e))?;
+            let status = resp.status().as_u16();
+            let body = resp.into_body().read_to_string()
+                .map_err(|e| format!("Failed to read body: {}", e))?;
+            let truncated = &body[..body.len().min(8000)];
+            Ok(serde_json::json!({
+                "status": status,
+                "url": url,
+                "body": truncated,
+                "body_size": body.len(),
+            }))
+        },
+    );
+
+    registry.register(
+        vest_agent::ToolDefinition {
+            name: "http_post".into(),
+            description: "Make an HTTP POST request with JSON data. Returns status code and response body (truncated at 4KB).".into(),
+            parameters: serde_json::json!({"url": "string", "data": "object"}),
+            requires_approval: false,
+            risk_level: ro,
+        },
+        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+            let url = args
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or("url parameter required")?;
+            let data = args.get("data").cloned().unwrap_or(serde_json::json!({}));
+            let body_str =
+                serde_json::to_string(&data).map_err(|e| format!("Failed to serialize: {}", e))?;
+            let resp = ureq::post(url)
+                .header("User-Agent", "VEST/0.1")
+                .header("Content-Type", "application/json")
+                .send(&body_str)
+                .map_err(|e| format!("HTTP request failed: {}", e))?;
+            let status = resp.status().as_u16();
+            let body = resp
+                .into_body()
+                .read_to_string()
+                .map_err(|e| format!("Failed to read body: {}", e))?;
+            let truncated = &body[..body.len().min(4000)];
+            Ok(serde_json::json!({
+                "status": status,
+                "url": url,
+                "body": truncated,
+                "body_size": body.len(),
+            }))
+        },
+    );
+
+    registry.register(
+        vest_agent::ToolDefinition {
+            name: "read_file".into(),
+            description: "Read a file from disk. Returns contents up to 10KB.".into(),
+            parameters: serde_json::json!({"path": "string"}),
+            requires_approval: false,
+            risk_level: ro,
+        },
+        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("path parameter required")?;
+            let data = std::fs::read(path).map_err(|e| format!("Cannot read file: {}", e))?;
+            let text = String::from_utf8_lossy(&data[..data.len().min(10240)]);
+            Ok(serde_json::json!({
+                "path": path,
+                "size": data.len(),
+                "content": text,
+            }))
+        },
+    );
+
+    registry.register(
+        vest_agent::ToolDefinition {
+            name: "list_files".into(),
+            description: "List files in a directory".into(),
+            parameters: serde_json::json!({"path": "string"}),
+            requires_approval: false,
+            risk_level: ro,
+        },
+        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            let entries: Vec<String> = std::fs::read_dir(path)
+                .map_err(|e| format!("Cannot read directory: {}", e))?
+                .filter_map(|e| e.ok())
+                .map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                    if is_dir {
+                        format!("{}/", name)
+                    } else {
+                        name
+                    }
+                })
+                .collect();
+            Ok(serde_json::json!({
+                "path": path,
+                "entries": entries,
+                "count": entries.len(),
+            }))
+        },
+    );
+
+    registry.register(
+        vest_agent::ToolDefinition {
+            name: "browser_inspect".into(),
+            description: "Inspect a web page using Chrome DevTools Protocol. Extracts localStorage, sessionStorage, WebSocket URLs, WASM modules, security headers, and inline scripts. Requires Chrome running with --remote-debugging-port=9222.".into(),
+            parameters: serde_json::json!({"url": "string"}),
+            requires_approval: false,
+            risk_level: ro,
+        },
+        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+            let url = args.get("url")
+                .and_then(|v| v.as_str())
+                .ok_or("url parameter required")?;
+            let handle = tokio::runtime::Handle::current();
+            tokio::task::block_in_place(|| {
+                handle.block_on(vest_scanner::browser::BrowserScanner::inspect_page(url))
+            })
+        },
+    );
+
+    registry.register(
+        vest_agent::ToolDefinition {
+            name: "scan_for_secrets".into(),
+            description: "Scan a file or text content for hardcoded secrets (API keys, passwords, tokens, private keys).".into(),
+            parameters: serde_json::json!({"content": "string", "source": "string"}),
+            requires_approval: false,
+            risk_level: ro,
+        },
+        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+            let content = args.get("content")
+                .and_then(|v| v.as_str())
+                .ok_or("content parameter required")?;
+            let source = args.get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("inline");
+            let path = std::path::Path::new(source);
+            let scanner = vest_scanner::files::FileScanner::new();
+            let findings = scanner.scan_for_secrets(path, content);
+            let result: Vec<serde_json::Value> = findings.iter().map(|f| {
+                serde_json::json!({
+                    "title": f.title,
+                    "severity": f.severity.to_string(),
+                    "confidence": f.confidence,
+                    "location": serde_json::to_string(&f.location).unwrap_or_default(),
+                })
+            }).collect();
+            Ok(serde_json::json!({
+                "source": source,
+                "findings_count": result.len(),
+                "findings": result,
+            }))
+        },
+    );
+
+    registry
+}
+
+fn build_safety(
+    args: &ScanArgs,
+    config: &vest_config::VestConfig,
+) -> Arc<vest_agent::SafetyChecker> {
+    use vest_agent::safety::SafetyConfig;
+
+    if args.no_approval {
+        return Arc::new(vest_agent::SafetyChecker::permissive());
+    }
+
+    let mut safety_config = SafetyConfig {
+        write_approval: !args.approve_writes && config.safety.write_approval,
+        exploit_approval: !args.approve_exploits && config.safety.exploit_approval,
+        network_write_approval: config.safety.network_write_approval,
+        rate_limit_enabled: !args.no_rate_limit && config.safety.rate_limit_enabled,
+        rate_limit_requests_per_second: args
+            .rate
+            .unwrap_or(config.safety.rate_limit_requests_per_second),
+        rate_limit_burst: config.safety.rate_limit_burst,
+        sandbox_enabled: config.safety.sandbox_enabled,
+        sandbox_image: config.safety.sandbox_image.clone(),
+        max_scan_duration_seconds: args
+            .timeout
+            .unwrap_or(config.safety.max_scan_duration_seconds),
+        max_concurrent_exploits: config.safety.max_concurrent_exploits,
+        allowed_targets: config.safety.allowed_targets.clone(),
+        blocked_targets: config.safety.blocked_targets.clone(),
+        allowed_networks: config.safety.allowed_networks.clone(),
+    };
+
+    if args.approve_writes {
+        safety_config.write_approval = false;
+    }
+    if args.approve_exploits {
+        safety_config.exploit_approval = false;
+    }
+
+    Arc::new(vest_agent::SafetyChecker::new(safety_config))
+}
+
+fn detect_target(args: &ScanArgs) -> Target {
+    let name = &args.target;
+    let now = chrono::Utc::now();
+
+    let target_type = if let Some(ref tt) = args.target_type {
+        match tt.parse::<TargetType>() {
+            Ok(t) => t,
+            Err(_) => guess_type(name),
+        }
+    } else {
+        guess_type(name)
+    };
+
+    let (path, url_str, pid, host) = match target_type {
+        TargetType::Process => {
+            let pid_val = args.pid.or_else(|| name.parse().ok());
+            (None, None, pid_val, None)
+        }
+        TargetType::Binary => (Some(name.clone()), None, None, None),
+        TargetType::Web => {
+            if name.starts_with("http") {
+                (None, Some(name.clone()), None, None)
+            } else {
+                (
+                    None,
+                    Some(format!("https://{}", name)),
+                    None,
+                    Some(name.clone()),
+                )
+            }
+        }
+        TargetType::Network => (None, None, None, Some(name.clone())),
+        TargetType::Browser => {
+            if name.starts_with("http") {
+                (None, Some(name.clone()), None, None)
+            } else {
+                (None, Some(format!("https://{}", name)), None, None)
+            }
+        }
+        TargetType::File => (Some(name.clone()), None, None, None),
+    };
+
+    Target {
+        id: vest_core::ids::new_id(),
+        name: name.clone(),
+        target_type,
+        path,
+        url_str,
+        pid,
+        host,
+        metadata: serde_json::json!({}),
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn guess_type(name: &str) -> TargetType {
+    let path = std::path::Path::new(name);
+    if path.exists() {
+        if name.ends_with(".exe")
+            || name.ends_with(".dll")
+            || name.ends_with(".so")
+            || name.ends_with(".elf")
+            || name.ends_with(".mach")
+        {
+            TargetType::Binary
+        } else {
+            TargetType::File
+        }
+    } else if name.contains("://")
+        || (name.contains('.')
+            && !name.contains('/')
+            && !name.contains('\\')
+            && !name.contains(' '))
+    {
+        TargetType::Web
+    } else if name.ends_with(".exe")
+        || name.ends_with(".dll")
+        || name.ends_with(".so")
+        || name.ends_with(".elf")
+        || name.ends_with(".mach")
+    {
+        TargetType::Binary
+    } else if name.parse::<u32>().is_ok() {
+        TargetType::Process
+    } else if name.contains(':') {
+        TargetType::Network
+    } else {
+        TargetType::File
+    }
+}
+
+fn find_config_path() -> PathBuf {
+    let local = PathBuf::from("vest.toml");
+    if local.exists() {
+        return local;
+    }
+    let home = std::env::var("HOME").ok().unwrap_or_else(|| ".".into());
+    PathBuf::from(home).join(".vest").join("vest.toml")
+}
+
+fn get_db_path() -> String {
+    if let Ok(path) = std::env::var("VEST_DB_PATH") {
+        return path;
+    }
+    if let Ok(dir) = std::env::var("VEST_HOME") {
+        std::fs::create_dir_all(&dir).ok();
+        return format!("{}/vest.db", dir);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let dir = format!("{}/.vest", home);
+    std::fs::create_dir_all(&dir).ok();
+    format!("{}/vest.db", dir)
 }

@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString};
 
+/// Severity of a vulnerability finding, ordered from most to least critical.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
@@ -111,6 +112,7 @@ pub enum FindingStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ToolCallType {
     ToolCall,
     LlmResponse,
@@ -130,6 +132,7 @@ pub enum PatternType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum MergeStrategy {
     Voting,
     Union,
@@ -138,12 +141,17 @@ pub enum MergeStrategy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum FallbackStrategy {
     NextOnFailure,
     NextOnRateLimit,
     TryAllParallel,
 }
 
+/// A vulnerability finding discovered during a scan.
+///
+/// Contains the full details of a vulnerability including its classification,
+/// severity, confidence score, evidence, and optional proof-of-concept.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
     pub id: String,
@@ -169,6 +177,7 @@ pub struct Finding {
     pub updated_at: DateTime<Utc>,
 }
 
+/// A scan target (process, binary, web app, network service, browser, or file).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Target {
     pub id: String,
@@ -183,6 +192,7 @@ pub struct Target {
     pub updated_at: DateTime<Utc>,
 }
 
+/// A single scan session with its configuration, status, and result counts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanSession {
     pub id: String,
@@ -792,97 +802,97 @@ mod tests {
 
     #[test]
     fn test_merge_strategy_display() {
-        assert_eq!(MergeStrategy::Voting.to_string(), "Voting");
-        assert_eq!(MergeStrategy::Union.to_string(), "Union");
-        assert_eq!(MergeStrategy::Strict.to_string(), "Strict");
+        assert_eq!(MergeStrategy::Voting.to_string(), "voting");
+        assert_eq!(MergeStrategy::Union.to_string(), "union");
+        assert_eq!(MergeStrategy::Strict.to_string(), "strict");
     }
 
     #[test]
     fn test_merge_strategy_parse() {
         assert_eq!(
-            "Voting".parse::<MergeStrategy>().unwrap(),
+            "voting".parse::<MergeStrategy>().unwrap(),
             MergeStrategy::Voting
         );
         assert_eq!(
-            "Union".parse::<MergeStrategy>().unwrap(),
+            "union".parse::<MergeStrategy>().unwrap(),
             MergeStrategy::Union
         );
         assert_eq!(
-            "Strict".parse::<MergeStrategy>().unwrap(),
+            "strict".parse::<MergeStrategy>().unwrap(),
             MergeStrategy::Strict
         );
     }
 
     #[test]
     fn test_merge_strategy_parse_invalid_fails() {
-        assert!("voting".parse::<MergeStrategy>().is_err());
+        assert!("Voting".parse::<MergeStrategy>().is_err());
         assert!("consensus".parse::<MergeStrategy>().is_err());
         assert!("".parse::<MergeStrategy>().is_err());
     }
 
     #[test]
     fn test_fallback_strategy_display() {
-        assert_eq!(FallbackStrategy::NextOnFailure.to_string(), "NextOnFailure");
+        assert_eq!(FallbackStrategy::NextOnFailure.to_string(), "next_on_failure");
         assert_eq!(
             FallbackStrategy::NextOnRateLimit.to_string(),
-            "NextOnRateLimit"
+            "next_on_rate_limit"
         );
         assert_eq!(
             FallbackStrategy::TryAllParallel.to_string(),
-            "TryAllParallel"
+            "try_all_parallel"
         );
     }
 
     #[test]
     fn test_fallback_strategy_parse() {
         assert_eq!(
-            "NextOnFailure".parse::<FallbackStrategy>().unwrap(),
+            "next_on_failure".parse::<FallbackStrategy>().unwrap(),
             FallbackStrategy::NextOnFailure
         );
         assert_eq!(
-            "NextOnRateLimit".parse::<FallbackStrategy>().unwrap(),
+            "next_on_rate_limit".parse::<FallbackStrategy>().unwrap(),
             FallbackStrategy::NextOnRateLimit
         );
         assert_eq!(
-            "TryAllParallel".parse::<FallbackStrategy>().unwrap(),
+            "try_all_parallel".parse::<FallbackStrategy>().unwrap(),
             FallbackStrategy::TryAllParallel
         );
     }
 
     #[test]
     fn test_fallback_strategy_parse_invalid_fails() {
-        assert!("next_on_failure".parse::<FallbackStrategy>().is_err());
+        assert!("NextOnFailure".parse::<FallbackStrategy>().is_err());
         assert!("none".parse::<FallbackStrategy>().is_err());
     }
 
     #[test]
     fn test_tool_call_type_display_and_parse() {
-        assert_eq!(ToolCallType::ToolCall.to_string(), "ToolCall");
-        assert_eq!(ToolCallType::LlmResponse.to_string(), "LlmResponse");
-        assert_eq!(ToolCallType::ApprovalRequest.to_string(), "ApprovalRequest");
+        assert_eq!(ToolCallType::ToolCall.to_string(), "tool_call");
+        assert_eq!(ToolCallType::LlmResponse.to_string(), "llm_response");
+        assert_eq!(ToolCallType::ApprovalRequest.to_string(), "approval_request");
         assert_eq!(
             ToolCallType::ApprovalResponse.to_string(),
-            "ApprovalResponse"
+            "approval_response"
         );
-        assert_eq!(ToolCallType::Error.to_string(), "Error");
+        assert_eq!(ToolCallType::Error.to_string(), "error");
 
         assert_eq!(
-            "ToolCall".parse::<ToolCallType>().unwrap(),
+            "tool_call".parse::<ToolCallType>().unwrap(),
             ToolCallType::ToolCall
         );
         assert_eq!(
-            "LlmResponse".parse::<ToolCallType>().unwrap(),
+            "llm_response".parse::<ToolCallType>().unwrap(),
             ToolCallType::LlmResponse
         );
         assert_eq!(
-            "Error".parse::<ToolCallType>().unwrap(),
+            "error".parse::<ToolCallType>().unwrap(),
             ToolCallType::Error
         );
     }
 
     #[test]
     fn test_tool_call_type_parse_invalid() {
-        assert!("tool_call".parse::<ToolCallType>().is_err());
+        assert!("ToolCall".parse::<ToolCallType>().is_err());
     }
 
     // Property-based and edge-case tests

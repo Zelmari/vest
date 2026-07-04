@@ -64,13 +64,13 @@ impl BinaryScanner {
         let data = std::fs::read(path).map_err(VestError::Io)?;
 
         if let Ok(elf) = goblin::elf::Elf::parse(&data) {
-            return Ok(BinaryInfo::from_elf(&elf, path));
+            return Ok(BinaryInfo::from_elf(&elf, &data, path));
         }
         if let Ok(pe) = goblin::pe::PE::parse(&data) {
             return Ok(BinaryInfo::from_pe(&pe, &data, path));
         }
         if let Ok(macho) = goblin::mach::Mach::parse(&data) {
-            return Ok(BinaryInfo::from_mach(&macho, path));
+            return Ok(BinaryInfo::from_mach(&macho, &data, path));
         }
 
         Err(VestError::UnsupportedFormat(format!(
@@ -409,14 +409,20 @@ struct MitigationInfo {
 }
 
 impl BinaryInfo {
-    fn from_elf(elf: &goblin::elf::Elf, path: &Path) -> Self {
+    fn from_elf(elf: &goblin::elf::Elf, data: &[u8], path: &Path) -> Self {
         let symbols: Vec<String> = elf
             .syms
             .iter()
-            .filter_map(|sym| elf.strtab.get_at(sym.st_name).map(|s| s.to_string()))
+            .filter_map(|sym| {
+                if sym.st_name == 0 {
+                    None
+                } else {
+                    elf.strtab.get_at(sym.st_name).map(|s| s.to_string())
+                }
+            })
             .collect();
 
-        let strings: Vec<String> = Vec::new();
+        let strings: Vec<String> = extract_strings(data);
 
         let executable_sections: Vec<SectionInfo> = elf
             .section_headers
@@ -555,22 +561,102 @@ impl BinaryInfo {
         }
     }
 
-    fn from_mach(_mach: &goblin::mach::Mach, path: &Path) -> Self {
-        Self {
-            path: path.to_path_buf(),
-            format: "macho".into(),
-            architecture: "unknown".into(),
-            symbols: vec![],
-            strings: vec![],
-            executable_sections: vec![],
-            mitigations: MitigationInfo {
-                nx_enabled: true,
-                aslr_enabled: true,
-                stack_canaries: true,
-                safe_seh: true,
+    fn from_mach(mach: &goblin::mach::Mach, data: &[u8], path: &Path) -> Self {
+        use goblin::mach::Mach;
+        match mach {
+            Mach::Binary(macho) => {
+                let symbols: Vec<String> = macho
+                    .symbols
+                    .as_ref()
+                    .map(|syms| {
+                        syms.iter()
+                            .filter_map(|result| {
+                                if let Ok((name, _nl)) = result {
+                                    if !name.is_empty() {
+                                        return Some(name.to_string());
+                                    }
+                                }
+                                None
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let strings: Vec<String> = extract_strings(data);
+
+                let executable_sections: Vec<SectionInfo> = macho
+                    .segments
+                    .iter()
+                    .flat_map(|seg| {
+                        let seg_sections: Vec<SectionInfo> = match seg.sections() {
+                            Ok(sections) => sections
+                                .iter()
+                                .filter(|item| (item.0.flags & 0x00000004) != 0)
+                                .map(|item| SectionInfo {
+                                    name: item.0.sectname[..]
+                                        .iter()
+                                        .take_while(|&&b| b != 0)
+                                        .map(|&b| b as char)
+                                        .collect::<String>(),
+                                    offset: item.0.offset as u64,
+                                    size: item.0.size as u64,
+                                    is_executable: true,
+                                    is_writable: (item.0.flags & 0x00000002) != 0,
+                                })
+                                .collect(),
+                            Err(_) => vec![],
+                        };
+                        seg_sections
+                    })
+                    .collect();
+
+                let arch = match macho.header.cputype {
+                    goblin::mach::cputype::CPU_TYPE_X86_64 => "x86_64",
+                    goblin::mach::cputype::CPU_TYPE_X86 => "x86",
+                    goblin::mach::cputype::CPU_TYPE_ARM64 => "aarch64",
+                    goblin::mach::cputype::CPU_TYPE_ARM => "arm",
+                    _ => "unknown",
+                };
+
+                let is_pie = (macho.header.flags & 0x0020_0000) != 0;
+
+                let stack_canaries = symbols
+                    .iter()
+                    .any(|s| s.contains("__stack_chk") || s.contains("___stack_chk"));
+
+                Self {
+                    path: path.to_path_buf(),
+                    format: "macho".into(),
+                    architecture: arch.into(),
+                    symbols,
+                    strings,
+                    executable_sections,
+                    mitigations: MitigationInfo {
+                        nx_enabled: true,
+                        aslr_enabled: is_pie,
+                        stack_canaries,
+                        safe_seh: true,
+                    },
+                    entry_point: Some(macho.entry),
+                    is_pie,
+                }
+            }
+            _ => Self {
+                path: path.to_path_buf(),
+                format: "macho".into(),
+                architecture: "fat".into(),
+                symbols: vec![],
+                strings: extract_strings(data),
+                executable_sections: vec![],
+                mitigations: MitigationInfo {
+                    nx_enabled: true,
+                    aslr_enabled: true,
+                    stack_canaries: true,
+                    safe_seh: true,
+                },
+                entry_point: None,
+                is_pie: true,
             },
-            entry_point: Some(0),
-            is_pie: true,
         }
     }
 }

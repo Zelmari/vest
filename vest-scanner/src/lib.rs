@@ -7,4 +7,5 @@ pub mod registry;
 pub mod scanner;
 pub mod web;
 
+pub use registry::ScannerRegistry;
 pub use scanner::ScanResult;

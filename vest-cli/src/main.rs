@@ -157,6 +157,15 @@ pub enum ProvidersArgs {
     },
     /// Check provider health
     Status,
+    /// Store an API key for a provider
+    SetKey {
+        /// Provider name (openai, deepseek, anthropic, google, groq, openrouter)
+        #[arg(value_name = "PROVIDER")]
+        provider: String,
+        /// API key (if not provided, will prompt interactively)
+        #[arg(short, long)]
+        key: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

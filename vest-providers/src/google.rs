@@ -138,10 +138,15 @@ impl LlmProvider for GoogleProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(VestError::Provider(format!(
-                "Google: HTTP {}: {}",
-                status, body
-            )));
+            let err = if status.as_u16() == 429 {
+                VestError::RateLimited("Google: rate limited".into())
+            } else {
+                VestError::Provider(format!(
+                    "Google: HTTP {}: {}",
+                    status, body
+                ))
+            };
+            return Err(err);
         }
 
         let completion: GeminiResponse = resp

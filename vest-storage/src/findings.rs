@@ -152,6 +152,11 @@ pub fn update_finding(conn: &Connection, finding: &Finding) -> Result<(), Storag
     Ok(())
 }
 
+pub fn delete_finding(conn: &Connection, id: &str) -> Result<(), StorageError> {
+    conn.execute("DELETE FROM findings WHERE id = ?1", rusqlite::params![id])?;
+    Ok(())
+}
+
 fn row_to_finding(row: &rusqlite::Row) -> rusqlite::Result<Finding> {
     let evidence_str: String = row.get(12)?;
     let location_str: String = row.get(15)?;

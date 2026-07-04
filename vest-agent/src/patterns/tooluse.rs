@@ -74,24 +74,55 @@ impl ToolUseRunner {
 
                         let tool_def = self.registry.get_tool(tool_name);
                         if let Some(def) = tool_def {
-                            if def.definition.requires_approval
-                                && !self
+                            if def.definition.requires_approval {
+                                match self
                                     .safety
-                                    .approve_tool_call(tool_name, &tool_call.arguments)?
-                            {
-                                ctx.add_message(
-                                    "assistant",
-                                    format!("Tool call rejected by safety gate: {}", tool_name),
-                                );
-                                ctx.add_message(
-                                    "user",
-                                    format!(
-                                        "The tool call '{}' was rejected by the safety system. Try a different approach.",
-                                        tool_name
-                                    ),
-                                );
-                                continue;
+                                    .approve_tool_call(tool_name, &tool_call.arguments)
+                                {
+                                    Ok(true) => {}
+                                    Ok(false) => {
+                                        ctx.add_message(
+                                            "assistant",
+                                            format!("Tool call rejected by safety gate: {}", tool_name),
+                                        );
+                                        ctx.add_message(
+                                            "user",
+                                            format!(
+                                                "The tool call '{}' was rejected by the safety system. Try a different approach.",
+                                                tool_name
+                                            ),
+                                        );
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        ctx.add_observation(format!(
+                                            "Safety check error for '{}': {}",
+                                            tool_name, e
+                                        ));
+                                        ctx.add_message(
+                                            "user",
+                                            format!(
+                                                "Safety check failed for '{}': {}. Try a different approach.",
+                                                tool_name, e
+                                            ),
+                                        );
+                                        continue;
+                                    }
+                                }
                             }
+                        }
+
+                        // Rate limit check before execution
+                        if let Err(e) = self.safety.check_rate_limit().await {
+                            ctx.add_observation(format!("Rate limited: {}", e));
+                            ctx.add_message(
+                                "user",
+                                format!(
+                                    "Rate limit reached: {}. Slow down and retry.",
+                                    e
+                                ),
+                            );
+                            continue;
                         }
 
                         ctx.add_message(
@@ -135,9 +166,11 @@ impl ToolUseRunner {
                             &response[..response.len().min(200)]
                         ));
 
-                        if response.to_lowercase().contains("scan complete")
-                            || response.to_lowercase().contains("finished scanning")
-                            || response.to_lowercase().contains("final report")
+                        let lower = response.to_lowercase();
+                        if lower.contains("scan complete")
+                            || lower.contains("finished scanning")
+                            || lower.contains("final report")
+                            || lower.contains("no findings")
                         {
                             break;
                         }

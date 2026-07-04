@@ -21,8 +21,9 @@ pub struct WebScanner {
 
 impl WebScanner {
     pub fn new() -> Self {
+        let timeout = Duration::from_secs(30);
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(timeout)
             .redirect(reqwest::redirect::Policy::limited(10))
             .danger_accept_invalid_certs(false)
             .build()
@@ -36,7 +37,7 @@ impl WebScanner {
             crawl_max_urls: 10000,
             respect_robots_txt: true,
             user_agent: "VEST/0.1 Vulnerability Scanner".into(),
-            timeout_seconds: 30,
+            timeout_seconds: timeout.as_secs(),
             client,
         }
     }
@@ -59,30 +60,30 @@ impl WebScanner {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct CrawledPage {
-    url: String,
-    status: u16,
-    body: Option<String>,
-    headers: Vec<(String, String)>,
-    links: Vec<String>,
-    forms: Vec<FormInfo>,
+pub struct CrawledPage {
+    pub url: String,
+    pub status: u16,
+    pub body: Option<String>,
+    pub headers: Vec<(String, String)>,
+    pub links: Vec<String>,
+    pub forms: Vec<FormInfo>,
 }
 
 #[derive(Debug, Clone)]
-struct FormInfo {
-    action: String,
-    method: String,
-    inputs: Vec<(String, String)>,
+pub struct FormInfo {
+    pub action: String,
+    pub method: String,
+    pub inputs: Vec<(String, String)>,
 }
 
 impl WebScanner {
     async fn crawl(&self, base_url: &str) -> Result<Vec<CrawledPage>, VestError> {
         let mut pages = Vec::new();
         let mut visited = HashSet::new();
-        let mut queue = Vec::new();
-        queue.push(base_url.to_string());
+        let mut queue: Vec<(String, u32)> = Vec::new();
+        queue.push((base_url.to_string(), 0));
 
-        while let Some(url) = queue.pop() {
+        while let Some((url, depth)) = queue.pop() {
             if visited.len() >= self.crawl_max_urls {
                 break;
             }
@@ -95,10 +96,12 @@ impl WebScanner {
 
             match self.fetch_page(&url).await {
                 Ok(page) => {
-                    let links = self.extract_links(&page, base_url);
-                    for link in &links {
-                        if !visited.contains(link) && visited.len() < self.crawl_max_urls {
-                            queue.push(link.clone());
+                    if depth < self.crawl_depth {
+                        let links = self.extract_links(&page, base_url);
+                        for link in &links {
+                            if !visited.contains(link) && visited.len() < self.crawl_max_urls {
+                                queue.push((link.clone(), depth + 1));
+                            }
                         }
                     }
                     pages.push(page);
@@ -128,7 +131,13 @@ impl WebScanner {
             .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
 
-        let body = resp.text().await.ok();
+        let body = match resp.text().await {
+            Ok(b) => Some(b),
+            Err(e) => {
+                tracing::warn!("Failed to read response body for {}: {}", url, e);
+                None
+            }
+        };
         let links = body
             .as_ref()
             .map(|b| self.parse_links(b, url))
@@ -162,7 +171,7 @@ impl WebScanner {
             .collect()
     }
 
-    fn parse_links(&self, html: &str, base_url: &str) -> Vec<String> {
+    pub fn parse_links(&self, html: &str, base_url: &str) -> Vec<String> {
         let mut links = Vec::new();
         let re = regex::Regex::new(r#"href\s*=\s*["']([^"']+)["']"#).unwrap();
         for cap in re.captures_iter(html) {
@@ -178,7 +187,7 @@ impl WebScanner {
         links
     }
 
-    fn parse_forms(&self, html: &str, base_url: &str) -> Vec<FormInfo> {
+    pub fn parse_forms(&self, html: &str, base_url: &str) -> Vec<FormInfo> {
         let mut forms = Vec::new();
         let form_re =
             regex::Regex::new(r#"<form[^>]*action\s*=\s*["']([^"']*)["'][^>]*>"#).unwrap();
@@ -503,7 +512,7 @@ impl WebScanner {
         findings
     }
 
-    async fn scan_misconfigurations(&self, page: &CrawledPage) -> Vec<Finding> {
+    pub async fn scan_misconfigurations(&self, page: &CrawledPage) -> Vec<Finding> {
         let mut findings = Vec::new();
 
         let security_headers = [
@@ -624,7 +633,13 @@ impl WebScanner {
             .map_err(|e| VestError::Provider(format!("Form submit failed: {}", e)))?;
 
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = match resp.text().await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::debug!("Failed to read form submit response body: {}", e);
+                String::new()
+            }
+        };
         let reflected = body.contains(value);
 
         Ok((status, body, reflected))
@@ -644,7 +659,13 @@ impl WebScanner {
             .map_err(|e| VestError::Provider(format!("XSS check failed: {}", e)))?;
 
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = match resp.text().await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::debug!("Failed to read XSS check response body: {}", e);
+                String::new()
+            }
+        };
         let reflected = body.contains(payload);
 
         Ok((status, body, reflected))

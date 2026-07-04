@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+/// The unified error type for all VEST operations.
 #[derive(Debug, Error)]
 pub enum VestError {
     #[error("IO error: {0}")]

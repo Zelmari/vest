@@ -8,6 +8,7 @@ pub struct ConnectionPool {
 impl ConnectionPool {
     pub fn new(path: &str) -> Result<Self, StorageError> {
         let conn = Connection::open(path)?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         Ok(Self { conn })
     }
 

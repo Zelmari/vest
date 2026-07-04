@@ -160,3 +160,4 @@ pattern = "pipeline"
 phases = ["recon", "analyze", "hunt", "exploit", "validate", "report"]
 token_budget_per_scan = 10_000_000
 scanners = ["web", "binary", "network"]
+safety = { write_approval = false, exploit_approval = false }

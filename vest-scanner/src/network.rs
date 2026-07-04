@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use std::path::Path;
 use vest_core::error::VestError;
 use vest_core::ids::new_id;
 use vest_core::types::{Finding, FindingStatus, Severity, Target, VulnerabilityClass};
@@ -577,42 +576,6 @@ impl NetworkScanner {
 
         findings
     }
-
-    fn read_config_files(path: &Path) -> Result<Vec<(String, String)>, VestError> {
-        let mut files = Vec::new();
-        if !path.exists() {
-            return Ok(files);
-        }
-
-        if path.is_file() {
-            let content = std::fs::read_to_string(path).map_err(VestError::Io)?;
-            let name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            files.push((name, content));
-            return Ok(files);
-        }
-
-        let entries = std::fs::read_dir(path).map_err(VestError::Io)?;
-        for entry in entries {
-            let entry = entry.map_err(VestError::Io)?;
-            let entry_path = entry.path();
-            if entry_path.is_file() {
-                let name = entry_path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                if let Ok(content) = std::fs::read_to_string(&entry_path) {
-                    files.push((name, content));
-                }
-            }
-        }
-
-        Ok(files)
-    }
 }
 
 impl Default for NetworkScanner {
@@ -672,16 +635,6 @@ impl Scanner for NetworkScanner {
             let dns_findings = self.analyze_dns(metadata);
             tracing::info!("Found {} DNS-related issues", dns_findings.len());
             all_findings.extend(set_target(dns_findings, &target.id));
-        }
-
-        if let Some(path) = &target.path {
-            let path = Path::new(path);
-            if path.exists() {
-                tracing::info!("Reading network config files from: {}", path.display());
-                if let Ok(config_files) = Self::read_config_files(path) {
-                    tracing::info!("Found {} config files", config_files.len());
-                }
-            }
         }
 
         tracing::info!(

@@ -19,7 +19,7 @@ impl BrowserScanner {
         Self {
             name: "browser-scanner".into(),
             description:
-                "Scans browser-based targets for storage, WebSocket, and WASM vulnerabilities"
+                "Scans browser-based targets for storage, WebSocket, and WASM vulnerabilities via Chrome DevTools Protocol"
                     .into(),
             enabled: true,
             check_storage: true,
@@ -42,6 +42,175 @@ impl BrowserScanner {
         self.check_wasm = check;
         self
     }
+
+    pub async fn inspect_page(url: &str) -> Result<serde_json::Value, String> {
+        let ws_url = Self::get_chrome_ws_url()
+            .await
+            .map_err(|e| format!("Chrome not found: {}", e))?;
+
+        let (mut browser, _handler) = chromiumoxide::Browser::connect(&ws_url)
+            .await
+            .map_err(|e| format!("Failed to connect to Chrome: {}", e))?;
+
+        let page = browser.new_page(url).await
+            .map_err(|e| format!("Failed to navigate to {}: {}", url, e))?;
+
+        // Wait for page to load
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        let mut result = serde_json::json!({
+            "url": url,
+            "title": "loaded",
+        });
+
+        // Extract localStorage
+        if let Ok(entries) = page.evaluate("JSON.stringify(Object.entries(localStorage))").await {
+            if let Ok(val) = entries.into_value::<serde_json::Value>() {
+                if let Some(storage) = val.as_str() {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(storage) {
+                        result["localStorage"] = parsed;
+                    }
+                }
+            }
+        }
+
+        // Extract sessionStorage
+        if let Ok(entries) = page.evaluate("JSON.stringify(Object.entries(sessionStorage))").await {
+            if let Ok(val) = entries.into_value::<serde_json::Value>() {
+                if let Some(storage) = val.as_str() {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(storage) {
+                        result["sessionStorage"] = parsed;
+                    }
+                }
+            }
+        }
+
+        // Check for IndexedDB usage
+        if let Ok(count) = page.evaluate("indexedDB.databases ? indexedDB.databases().then(dbs => dbs.length) : -1").await {
+            if let Ok(val) = count.into_value::<i32>() {
+                result["indexedDB_databases"] = serde_json::json!(val);
+            }
+        }
+
+        // Extract WebSocket URLs from page JS context
+        if let Ok(ws_urls) = page.evaluate(
+            r#"(function() {
+                let urls = [];
+                try {
+                    let entries = performance.getEntriesByType('resource');
+                    entries.forEach(e => {
+                        if (e.name.startsWith('ws:') || e.name.startsWith('wss:')) {
+                            urls.push(e.name);
+                        }
+                    });
+                } catch(e) {}
+                return JSON.stringify(urls);
+            })()"#,
+        ).await {
+            if let Ok(val) = ws_urls.into_value::<serde_json::Value>() {
+                if let Some(urls) = val.as_str() {
+                    if let Ok(parsed) = serde_json::from_str::<Vec<String>>(urls) {
+                        result["websocket_urls"] = serde_json::json!(parsed);
+                    }
+                }
+            }
+        }
+
+        // Extract WASM module URLs the page is using
+        if let Ok(wasm_urls) = page.evaluate(
+            r#"(function() {
+                let urls = [];
+                try {
+                    let entries = performance.getEntriesByType('resource');
+                    entries.forEach(e => {
+                        if (e.name.endsWith('.wasm')) {
+                            urls.push(e.name);
+                        }
+                    });
+                } catch(e) {}
+                return JSON.stringify(urls);
+            })()"#,
+        ).await {
+            if let Ok(val) = wasm_urls.into_value::<serde_json::Value>() {
+                if let Some(urls) = val.as_str() {
+                    if let Ok(parsed) = serde_json::from_str::<Vec<String>>(urls) {
+                        result["wasm_modules"] = serde_json::json!(parsed);
+                    }
+                }
+            }
+        }
+
+        // Extract security-relevant headers
+        if let Ok(security_info) = page.evaluate(
+            r#"(function() {
+                let meta = document.querySelectorAll('meta[http-equiv]');
+                let headers = {};
+                meta.forEach(m => {
+                    let name = m.getAttribute('http-equiv');
+                    let content = m.getAttribute('content');
+                    if (name) headers[name] = content;
+                });
+                return JSON.stringify({
+                    hasCSP: !!(document.querySelector('meta[http-equiv="Content-Security-Policy"]')),
+                    cookieCount: document.cookie.split(';').filter(c => c.trim()).length,
+                    metaHeaders: headers
+                });
+            })()"#,
+        ).await {
+            if let Ok(val) = security_info.into_value::<serde_json::Value>() {
+                if let Some(s) = val.as_str() {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s) {
+                        result["security_info"] = parsed;
+                    }
+                }
+            }
+        }
+
+        // Extract inline script content for analysis
+        if let Ok(scripts) = page.evaluate(
+            r#"(function() {
+                let scripts = document.querySelectorAll('script:not([src])');
+                return Array.from(scripts).map(s => s.textContent).join('\n').substring(0, 10000);
+            })()"#,
+        ).await {
+            if let Ok(val) = scripts.into_value::<serde_json::Value>() {
+                if let Some(js) = val.as_str() {
+                    result["inline_scripts"] = serde_json::json!({
+                        "content": js,
+                        "length": js.len(),
+                        "has_websocket": js.contains("ws://"),
+                        "has_localstorage": js.to_lowercase().contains("localstorage"),
+                        "has_indexeddb": js.to_lowercase().contains("indexeddb"),
+                    });
+                }
+            }
+        }
+
+        // Close the page and browser
+        page.close().await.ok();
+        browser.close().await.ok();
+
+        Ok(result)
+    }
+
+async fn get_chrome_ws_url() -> Result<String, String> {
+    let body = tokio::task::spawn_blocking(|| {
+        ureq::get("http://localhost:9222/json/version")
+            .call()
+            .map_err(|e| format!("Cannot reach Chrome DevTools on port 9222: {}. Start Chrome with: chrome --remote-debugging-port=9222", e))
+            .and_then(|resp| {
+                resp.into_body().read_to_string()
+                    .map_err(|e| format!("Failed to read response: {}", e))
+            })
+    }).await.map_err(|e| format!("Task join error: {}", e))??;
+
+    let json: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("Invalid JSON: {}", e))?;
+    json.get("webSocketDebuggerUrl")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "No webSocketDebuggerUrl in Chrome response. Is Chrome running with --remote-debugging-port=9222?".into())
+}
 
     fn read_target_files(path: &Path) -> Result<Vec<(String, String)>, VestError> {
         let mut files = Vec::new();
@@ -433,6 +602,180 @@ impl BrowserScanner {
 
         findings
     }
+
+    fn scan_files(&self, target: &Target, files: &[(String, String)]) -> Result<Vec<Finding>, VestError> {
+        let mut all_findings = Vec::new();
+
+        let set_target = |mut findings: Vec<Finding>, tid: &str| -> Vec<Finding> {
+            for f in &mut findings {
+                f.target_id = tid.to_string();
+                if f.scan_id.is_empty() {
+                    f.scan_id = "browser-scan".into();
+                }
+            }
+            findings
+        };
+
+        if self.check_storage {
+            let storage_findings = self.analyze_storage_safety(files);
+            all_findings.extend(set_target(storage_findings, &target.id));
+        }
+        if self.check_websockets {
+            let ws_findings = self.analyze_websocket_security(files);
+            all_findings.extend(set_target(ws_findings, &target.id));
+        }
+        if self.check_wasm {
+            let wasm_findings = self.analyze_wasm_modules(files);
+            all_findings.extend(set_target(wasm_findings, &target.id));
+        }
+
+        Ok(all_findings)
+    }
+
+    async fn scan_url(&self, url: &str) -> Result<Vec<Finding>, VestError> {
+        tracing::info!("Starting CDP browser scan of: {}", url);
+
+        let page_data = Self::inspect_page(url).await
+            .map_err(|e| VestError::Provider(format!("Browser CDP error: {}", e)))?;
+
+        let mut findings = Vec::new();
+        let now = chrono::Utc::now();
+
+        // Check localStorage for sensitive data
+        if let Some(storage) = page_data.get("localStorage") {
+            if let Some(entries) = storage.as_array() {
+                for entry in entries {
+                    if let Some(key) = entry.get(0).and_then(|v| v.as_str()) {
+                        let key_lower = key.to_lowercase();
+                        let sensitive = ["token", "key", "secret", "password", "jwt", "auth", "api", "private", "credential"];
+                        if sensitive.iter().any(|s| key_lower.contains(s)) {
+                            findings.push(Finding {
+                                id: new_id(), scan_id: "browser-scan".into(), target_id: String::new(),
+                                title: format!("Sensitive data in localStorage: {}", key),
+                                description: format!("The key '{}' in localStorage may contain sensitive data. Client-side storage is accessible to any JavaScript on the origin.", key),
+                                vulnerability_class: VulnerabilityClass::XSS,
+                                severity: Severity::High, confidence: 0.8,
+                                status: FindingStatus::Open, cvss_score: Some(7.1),
+                                cve_id: None, cwe_id: Some("CWE-922".into()),
+                                evidence: serde_json::json!({"storage": "localStorage", "key": key}),
+                                poc: None,
+                                remediation: Some("Do not store sensitive data in localStorage. Use HttpOnly, Secure cookies.".into()),
+                                location: serde_json::json!({"url": url, "type": "localStorage"}),
+                                false_positive_history: None,
+                                tags: vec!["storage".into(), "browser".into()],
+                                metadata: serde_json::json!({}),
+                                discovered_at: now, updated_at: now,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check WebSocket URLs for insecure connections
+        if let Some(ws_urls) = page_data.get("websocket_urls").and_then(|v| v.as_array()) {
+            for addr in ws_urls {
+                if let Some(ws) = addr.as_str() {
+                    if ws.starts_with("ws://") {
+                        findings.push(Finding {
+                            id: new_id(), scan_id: "browser-scan".into(), target_id: String::new(),
+                            title: format!("Insecure WebSocket: {}", ws),
+                            description: "WebSocket connection uses unencrypted ws://. Data transmitted is visible to network observers.".into(),
+                            vulnerability_class: VulnerabilityClass::WebSocketTamper,
+                            severity: Severity::High, confidence: 0.95,
+                            status: FindingStatus::Open, cvss_score: Some(7.5),
+                            cve_id: None, cwe_id: Some("CWE-319".into()),
+                            evidence: serde_json::json!({"url": ws, "protocol": "ws://"}),
+                            poc: None,
+                            remediation: Some("Use wss:// for all WebSocket connections.".into()),
+                            location: serde_json::json!({"url": ws}),
+                            false_positive_history: None,
+                            tags: vec!["websocket".into(), "cleartext".into()],
+                            metadata: serde_json::json!({}),
+                            discovered_at: now, updated_at: now,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check WASM modules count
+        if let Some(wasm) = page_data.get("wasm_modules").and_then(|v| v.as_array()) {
+            if !wasm.is_empty() {
+                findings.push(Finding {
+                    id: new_id(), scan_id: "browser-scan".into(), target_id: String::new(),
+                    title: format!("{} WASM modules detected", wasm.len()),
+                    description: format!("Found {} WebAssembly modules loaded by the page. WASM modules should be reviewed for dangerous imports and memory safety issues.", wasm.len()),
+                    vulnerability_class: VulnerabilityClass::Unknown,
+                    severity: Severity::Medium, confidence: 0.6,
+                    status: FindingStatus::Open, cvss_score: None,
+                    cve_id: None, cwe_id: Some("CWE-1104".into()),
+                    evidence: serde_json::json!({"count": wasm.len(), "modules": wasm}),
+                    poc: None,
+                    remediation: Some("Audit WASM modules. Use CSP to restrict WASM execution sources.".into()),
+                    location: serde_json::json!({"url": url}),
+                    false_positive_history: None,
+                    tags: vec!["wasm".into()],
+                    metadata: serde_json::json!({}),
+                    discovered_at: now, updated_at: now,
+                });
+            }
+        }
+
+        // Check security headers via CSP detection
+        if let Some(sec) = page_data.get("security_info") {
+            let has_csp = sec.get("hasCSP").and_then(|v| v.as_bool()).unwrap_or(false);
+            if !has_csp {
+                findings.push(Finding {
+                    id: new_id(), scan_id: "browser-scan".into(), target_id: String::new(),
+                    title: "No Content Security Policy detected".into(),
+                    description: "The page does not have a CSP meta tag. Without CSP, XSS attacks and data injection are harder to prevent.".into(),
+                    vulnerability_class: VulnerabilityClass::XSS,
+                    severity: Severity::Medium, confidence: 0.85,
+                    status: FindingStatus::Open, cvss_score: Some(6.1),
+                    cve_id: None, cwe_id: Some("CWE-1021".into()),
+                    evidence: serde_json::json!({"url": url, "csp_enabled": false}),
+                    poc: None,
+                    remediation: Some("Add a Content-Security-Policy header or meta tag.".into()),
+                    location: serde_json::json!({"url": url}),
+                    false_positive_history: None,
+                    tags: vec!["headers".into(), "csp".into()],
+                    metadata: serde_json::json!({}),
+                    discovered_at: now, updated_at: now,
+                });
+            }
+        }
+
+        // Check inline script content
+        if let Some(scripts) = page_data.get("inline_scripts") {
+            let js = scripts.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            if !js.is_empty() {
+                let _has_ws = scripts.get("has_websocket").and_then(|v| v.as_bool()).unwrap_or(false);
+                let has_ls = scripts.get("has_localstorage").and_then(|v| v.as_bool()).unwrap_or(false);
+                if has_ls {
+                    findings.push(Finding {
+                        id: new_id(), scan_id: "browser-scan".into(), target_id: String::new(),
+                        title: "localStorage usage detected in inline scripts".into(),
+                        description: "Inline JavaScript uses localStorage. Review stored data for sensitive information.".into(),
+                        vulnerability_class: VulnerabilityClass::InsecureDeserialization,
+                        severity: Severity::Low, confidence: 0.5,
+                        status: FindingStatus::Open, cvss_score: None,
+                        cve_id: None, cwe_id: Some("CWE-922".into()),
+                        evidence: serde_json::json!({"url": url, "has_localstorage": true}),
+                        poc: None,
+                        remediation: Some("Review localStorage usage. Encrypt sensitive stored data.".into()),
+                        location: serde_json::json!({"url": url}),
+                        false_positive_history: None,
+                        tags: vec!["storage".into()],
+                        metadata: serde_json::json!({}),
+                        discovered_at: now, updated_at: now,
+                    });
+                }
+            }
+        }
+
+        Ok(findings)
+    }
 }
 
 fn collect_files(dir: &Path, files: &mut Vec<(String, String)>) -> Result<(), VestError> {
@@ -493,11 +836,15 @@ impl Scanner for BrowserScanner {
     }
 
     async fn scan(&self, target: &Target) -> Result<Vec<Finding>, VestError> {
+        if let Some(ref url) = target.url_str {
+            return self.scan_url(url).await;
+        }
+
         let path = match &target.path {
             Some(p) => Path::new(p),
             None => {
                 return Err(VestError::Config(
-                    "Browser target requires a path to scan directories or files".into(),
+                    "Browser target requires a URL or local path".into(),
                 ))
             }
         };
@@ -510,48 +857,8 @@ impl Scanner for BrowserScanner {
         }
 
         tracing::info!("Starting browser scan of: {}", path.display());
-
         let files = Self::read_target_files(path)?;
-        tracing::info!("Found {} files to analyze", files.len());
-
-        let mut all_findings = Vec::new();
-
-        let set_target = |mut findings: Vec<Finding>, tid: &str| -> Vec<Finding> {
-            for f in &mut findings {
-                f.target_id = tid.to_string();
-                if f.scan_id.is_empty() {
-                    f.scan_id = "browser-scan".into();
-                }
-            }
-            findings
-        };
-
-        if self.check_storage {
-            tracing::info!("Analyzing browser storage safety");
-            let storage_findings = self.analyze_storage_safety(&files);
-            tracing::info!("Found {} storage-related issues", storage_findings.len());
-            all_findings.extend(set_target(storage_findings, &target.id));
-        }
-
-        if self.check_websockets {
-            tracing::info!("Analyzing WebSocket security");
-            let ws_findings = self.analyze_websocket_security(&files);
-            tracing::info!("Found {} WebSocket-related issues", ws_findings.len());
-            all_findings.extend(set_target(ws_findings, &target.id));
-        }
-
-        if self.check_wasm {
-            tracing::info!("Analyzing WASM modules");
-            let wasm_findings = self.analyze_wasm_modules(&files);
-            tracing::info!("Found {} WASM-related issues", wasm_findings.len());
-            all_findings.extend(set_target(wasm_findings, &target.id));
-        }
-
-        tracing::info!(
-            "Browser scan complete: {} total findings",
-            all_findings.len()
-        );
-        Ok(all_findings)
+        self.scan_files(target, &files)
     }
 }
 

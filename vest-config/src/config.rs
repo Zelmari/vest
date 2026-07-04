@@ -111,33 +111,213 @@ pub struct AgentRoleConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScannerConfig {
-    #[serde(default = "default_module_enabled")]
-    pub memory: ScannerModuleConfig,
+    #[serde(default)]
+    pub memory: MemoryScannerConfig,
 
-    #[serde(default = "default_module_enabled")]
-    pub binary: ScannerModuleConfig,
+    #[serde(default)]
+    pub binary: BinaryScannerConfig,
 
-    #[serde(default = "default_module_enabled")]
-    pub web: ScannerModuleConfig,
+    #[serde(default)]
+    pub web: WebScannerConfig,
 
-    #[serde(default = "default_module_enabled")]
-    pub browser: ScannerModuleConfig,
+    #[serde(default)]
+    pub browser: BrowserScannerConfig,
 
-    #[serde(default = "default_module_enabled")]
-    pub network: ScannerModuleConfig,
+    #[serde(default)]
+    pub network: NetworkScannerConfig,
 
-    #[serde(default = "default_module_enabled")]
-    pub files: ScannerModuleConfig,
-}
-
-fn default_module_enabled() -> ScannerModuleConfig {
-    ScannerModuleConfig { enabled: true }
+    #[serde(default)]
+    pub files: FileScannerConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScannerModuleConfig {
+pub struct MemoryScannerConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default = "default_max_memory_mb")]
+    pub max_memory_per_scan_mb: u64,
+    #[serde(default = "default_true")]
+    pub pattern_scan_acceleration: bool,
+    #[serde(default)]
+    pub suspicious_regions: Vec<String>,
+    #[serde(default = "default_true")]
+    pub hook_detection: bool,
+}
+
+fn default_max_memory_mb() -> u64 { 4096 }
+
+impl Default for MemoryScannerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_memory_per_scan_mb: 4096,
+            pattern_scan_acceleration: true,
+            suspicious_regions: vec!["RWX".into(), "PAGE_EXECUTE_READWRITE".into()],
+            hook_detection: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BinaryScannerConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub sink_catalogs: Vec<String>,
+    #[serde(default = "default_disassembler")]
+    pub disassembler: String,
+    #[serde(default = "default_true")]
+    pub check_mitigations: bool,
+    #[serde(default)]
+    pub find_rop_gadgets: bool,
+}
+
+fn default_disassembler() -> String { "capstone".into() }
+
+impl Default for BinaryScannerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sink_catalogs: vec!["sinks/c.txt".into(), "sinks/cpp.txt".into(), "sinks/rust.txt".into()],
+            disassembler: "capstone".into(),
+            check_mitigations: true,
+            find_rop_gadgets: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebScannerConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_crawl_depth")]
+    pub crawl_depth: u32,
+    #[serde(default = "default_crawl_max_urls")]
+    pub crawl_max_urls: u32,
+    #[serde(default = "default_true")]
+    pub respect_robots_txt: bool,
+    #[serde(default = "default_user_agent")]
+    pub user_agent: String,
+    #[serde(default = "default_true")]
+    pub nuclei_enabled: bool,
+    #[serde(default)]
+    pub nuclei_severity: Vec<String>,
+    #[serde(default = "default_nuclei_timeout")]
+    pub nuclei_timeout: u32,
+}
+
+fn default_crawl_depth() -> u32 { 10 }
+fn default_crawl_max_urls() -> u32 { 10000 }
+fn default_user_agent() -> String { "VEST/0.1 Vulnerability Scanner".into() }
+fn default_nuclei_timeout() -> u32 { 300 }
+
+impl Default for WebScannerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            crawl_depth: 10,
+            crawl_max_urls: 10000,
+            respect_robots_txt: true,
+            user_agent: "VEST/0.1 Vulnerability Scanner".into(),
+            nuclei_enabled: true,
+            nuclei_severity: vec!["critical".into(), "high".into(), "medium".into()],
+            nuclei_timeout: 300,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserScannerConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub browser_path: String,
+    #[serde(default = "default_true")]
+    pub headless: bool,
+    #[serde(default = "default_viewport_width")]
+    pub viewport_width: u32,
+    #[serde(default = "default_viewport_height")]
+    pub viewport_height: u32,
+    #[serde(default = "default_true")]
+    pub websocket_intercept: bool,
+    #[serde(default = "default_true")]
+    pub local_storage_inspect: bool,
+    #[serde(default = "default_true")]
+    pub indexeddb_inspect: bool,
+    #[serde(default = "default_true")]
+    pub wasm_inspect: bool,
+}
+
+fn default_viewport_width() -> u32 { 1920 }
+fn default_viewport_height() -> u32 { 1080 }
+
+impl Default for BrowserScannerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            browser_path: String::new(),
+            headless: true,
+            viewport_width: 1920,
+            viewport_height: 1080,
+            websocket_intercept: true,
+            local_storage_inspect: true,
+            indexeddb_inspect: true,
+            wasm_inspect: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkScannerConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub interface: String,
+    #[serde(default)]
+    pub capture_filter: String,
+    #[serde(default = "default_packet_capture_mb")]
+    pub packet_capture_max_mb: u32,
+    #[serde(default = "default_true")]
+    pub protocol_analysis_llm: bool,
+}
+
+fn default_packet_capture_mb() -> u32 { 500 }
+
+impl Default for NetworkScannerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interface: String::new(),
+            capture_filter: String::new(),
+            packet_capture_max_mb: 500,
+            protocol_analysis_llm: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileScannerConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_max_file_size_mb")]
+    pub max_file_size_mb: u32,
+    #[serde(default = "default_true")]
+    pub extract_archives: bool,
+    #[serde(default)]
+    pub fuzz_file_formats: bool,
+}
+
+fn default_max_file_size_mb() -> u32 { 500 }
+
+impl Default for FileScannerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_file_size_mb: 500,
+            extract_archives: true,
+            fuzz_file_formats: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

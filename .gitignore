@@ -3,6 +3,9 @@ target/
 **/*.rs.bk
 *.pdb
 
+# === Cargo ===
+.cargo/
+
 # === macOS ===
 .DS_Store
 .AppleDouble
@@ -66,6 +69,9 @@ out/
 *.crt
 *.cer
 secrets/
+credentials.toml
+credentials
+.credentials
 
 # === Database & Storage ===
 *.db

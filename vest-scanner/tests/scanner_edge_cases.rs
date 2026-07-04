@@ -102,7 +102,7 @@ fn test_hook_detection_empty_data() {
         module_name: None,
     };
     let region_data: Vec<(&MemoryRegion, Vec<u8>)> = vec![(&region, vec![])];
-    let findings = MemoryScanner::detect_hooks(&[], &region_data);
+    let findings = MemoryScanner::detect_hooks(&region_data);
     assert!(findings.is_empty());
 }
 
@@ -117,7 +117,7 @@ fn test_hook_detection_large_data_no_hooks() {
     };
     let data = vec![0x90u8; 100000];
     let region_data = vec![(&region, data)];
-    let findings = MemoryScanner::detect_hooks(&[], &region_data);
+    let findings = MemoryScanner::detect_hooks(&region_data);
     assert!(findings.is_empty());
 }
 

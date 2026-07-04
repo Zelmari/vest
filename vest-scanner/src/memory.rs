@@ -210,7 +210,6 @@ impl MemoryScanner {
     }
 
     pub fn detect_hooks(
-        _regions: &[MemoryRegion],
         region_data: &[(&MemoryRegion, Vec<u8>)],
     ) -> Vec<Finding> {
         let mut findings = Vec::new();
@@ -526,7 +525,7 @@ impl Scanner for MemoryScanner {
                 }
             }
 
-            let hook_findings = MemoryScanner::detect_hooks(&regions, &region_data);
+            let hook_findings = MemoryScanner::detect_hooks(&region_data);
             all_findings.extend(hook_findings);
         }
 
@@ -702,7 +701,7 @@ mod tests {
         data[0x202] = 0x5B;
         data[0x203] = 0xB8;
         let region_data = vec![(&regions[0], data)];
-        let findings = MemoryScanner::detect_hooks(&regions, &region_data);
+        let findings = MemoryScanner::detect_hooks(&region_data);
         assert!(!findings.is_empty());
     }
 

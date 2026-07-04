@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use vest_core::error::VestError;
 use vest_core::traits::{ReportFormat, Reporter};
-use vest_core::types::{Finding, ScanSession};
+use vest_core::types::{Finding, FindingStatus, ScanSession};
 
 #[derive(Serialize)]
 struct JsonReport {
@@ -19,6 +19,10 @@ struct JsonReport {
 struct JsonTarget {
     id: String,
     name: String,
+    #[serde(rename = "type")]
+    target_type: String,
+    platform: Option<String>,
+    metadata: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -36,6 +40,7 @@ struct JsonSummary {
     medium: usize,
     low: usize,
     info: usize,
+    false_positives: usize,
 }
 
 #[derive(Serialize)]
@@ -65,6 +70,10 @@ impl Reporter for JsonReporter {
         findings: &[Finding],
     ) -> Result<String, VestError> {
         let (critical, high, medium, low, info) = count_by_severity(findings);
+        let false_positives = findings
+            .iter()
+            .filter(|f| f.status == FindingStatus::FalsePositive)
+            .count();
 
         let report = JsonReport {
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -73,6 +82,9 @@ impl Reporter for JsonReporter {
             target: JsonTarget {
                 id: scan.target_id.clone(),
                 name: scan.target_id.clone(),
+                target_type: "unknown".into(),
+                platform: None,
+                metadata: serde_json::json!({}),
             },
             scan_config: JsonScanConfig {
                 mode: scan.mode.to_string(),
@@ -86,6 +98,7 @@ impl Reporter for JsonReporter {
                 medium,
                 low,
                 info,
+                false_positives,
             },
             findings: findings
                 .iter()
@@ -225,5 +238,6 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let json = rt.block_on(reporter.generate_report(&scan, &[])).unwrap();
         assert!(json.contains("\"total\": 0"));
+        assert!(json.contains("\"false_positives\": 0"));
     }
 }

@@ -16,7 +16,7 @@ async fn test_safety_checker_concurrent_rate_limits() {
     let mut handles = vec![];
     for _ in 0..1000 {
         let c = Arc::clone(&checker);
-        handles.push(tokio::task::spawn_blocking(move || c.check_rate_limit()));
+        handles.push(tokio::spawn(async move { c.check_rate_limit().await }));
     }
 
     let mut ok_count = 0;
@@ -216,7 +216,7 @@ async fn test_rate_limiter_heavy_contention_no_deadlock() {
         let mut handles = vec![];
         for _ in 0..10000 {
             let c = Arc::clone(&checker);
-            handles.push(tokio::task::spawn_blocking(move || c.check_rate_limit()));
+            handles.push(tokio::spawn(async move { c.check_rate_limit().await }));
         }
         for handle in handles {
             let _ = handle.await;
@@ -230,8 +230,8 @@ async fn test_rate_limiter_heavy_contention_no_deadlock() {
     );
 }
 
-#[test]
-fn test_rate_limiter_zero_burst_allows_nothing() {
+#[tokio::test]
+async fn test_rate_limiter_zero_burst_allows_nothing() {
     use vest_agent::safety::{SafetyChecker, SafetyConfig};
 
     let checker = SafetyChecker::new(SafetyConfig {
@@ -242,12 +242,12 @@ fn test_rate_limiter_zero_burst_allows_nothing() {
     });
 
     for _ in 0..10 {
-        assert!(checker.check_rate_limit().is_err());
+        assert!(checker.check_rate_limit().await.is_err());
     }
 }
 
-#[test]
-fn test_rate_limiter_max_values() {
+#[tokio::test]
+async fn test_rate_limiter_max_values() {
     use vest_agent::safety::{SafetyChecker, SafetyConfig};
 
     let checker = SafetyChecker::new(SafetyConfig {
@@ -258,12 +258,12 @@ fn test_rate_limiter_max_values() {
     });
 
     for _ in 0..10000 {
-        assert!(checker.check_rate_limit().is_ok());
+        assert!(checker.check_rate_limit().await.is_ok());
     }
 }
 
-#[test]
-fn test_rate_limit_disabled_concurrent_many_calls() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn test_rate_limit_disabled_concurrent_many_calls() {
     use std::sync::Arc;
     use vest_agent::safety::{SafetyChecker, SafetyConfig};
 
@@ -275,20 +275,20 @@ fn test_rate_limit_disabled_concurrent_many_calls() {
     let mut handles = vec![];
     for _ in 0..2000 {
         let c = Arc::clone(&checker);
-        handles.push(std::thread::spawn(move || {
+        handles.push(tokio::spawn(async move {
             for _ in 0..100 {
-                assert!(c.check_rate_limit().is_ok());
+                assert!(c.check_rate_limit().await.is_ok());
             }
         }));
     }
 
     for handle in handles {
-        handle.join().unwrap();
+        handle.await.unwrap();
     }
 }
 
-#[test]
-fn test_rate_limiter_burst_exhausted_then_refill() {
+#[tokio::test]
+async fn test_rate_limiter_burst_exhausted_then_refill() {
     use vest_agent::safety::{SafetyChecker, SafetyConfig};
 
     let checker = SafetyChecker::new(SafetyConfig {
@@ -299,13 +299,13 @@ fn test_rate_limiter_burst_exhausted_then_refill() {
     });
 
     for _ in 0..10 {
-        assert!(checker.check_rate_limit().is_ok());
+        assert!(checker.check_rate_limit().await.is_ok());
     }
-    assert!(checker.check_rate_limit().is_err());
+    assert!(checker.check_rate_limit().await.is_err());
 
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    assert!(checker.check_rate_limit().is_ok());
+    assert!(checker.check_rate_limit().await.is_ok());
 }
 
 #[test]
@@ -371,8 +371,8 @@ fn test_safety_config_default_clone() {
     assert_eq!(config.rate_limit_burst, cloned.rate_limit_burst);
 }
 
-#[test]
-fn test_safety_checker_withoverrides_runs_concurrently() {
+#[tokio::test]
+async fn test_safety_checker_withoverrides_runs_concurrently() {
     use std::sync::Arc;
     use vest_agent::safety::{SafetyChecker, SafetyConfig};
 
@@ -380,16 +380,16 @@ fn test_safety_checker_withoverrides_runs_concurrently() {
     let mut handles = vec![];
     for _ in 0..50 {
         let c = Arc::clone(&checker);
-        handles.push(std::thread::spawn(move || {
+        handles.push(tokio::spawn(async move {
             let overridden = c.with_overrides(SafetyConfig {
                 rate_limit_burst: 500,
                 ..Default::default()
             });
-            let _ = overridden.check_rate_limit();
+            let _ = overridden.check_rate_limit().await;
         }));
     }
     for handle in handles {
-        handle.join().unwrap();
+        handle.await.unwrap();
     }
 }
 

@@ -196,9 +196,17 @@ impl Validator {
             }
         }
 
-        Err(VestError::ValidationFailed {
+        tracing::warn!(
+            "Failed to parse LLM validator response for finding {}: {:?}",
+            finding.id, response
+        );
+        Ok(ValidationResult {
             finding_id: finding.id.clone(),
-            reasons: vec!["Failed to parse validator response".into()],
+            original_severity: finding.severity,
+            validated_severity: None,
+            status: ValidationDecision::Uncertain,
+            reasoning: "Failed to parse LLM validation response".into(),
+            confidence: finding.confidence * 0.5,
         })
     }
 
@@ -235,7 +243,7 @@ impl Validator {
         }
 
         // Rule 5: Very low confidence after heuristic checks -> false positive
-        if confidence < 0.1 && self.strict_mode {
+        if confidence < 0.1 {
             decision = ValidationDecision::FalsePositive;
         }
 

@@ -96,3 +96,11 @@ pub fn find_memory_by_pattern(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(entries)
 }
+
+pub fn delete_memory_entry(conn: &Connection, id: &str) -> Result<(), StorageError> {
+    conn.execute(
+        "DELETE FROM scan_memory WHERE id = ?1",
+        rusqlite::params![id],
+    )?;
+    Ok(())
+}

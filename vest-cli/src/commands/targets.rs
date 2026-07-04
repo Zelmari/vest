@@ -21,10 +21,7 @@ pub async fn run(args: TargetsArgs) -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
-            println!(
-                "{:<36} | {:<20} | {:<12} | Details",
-                "ID", "Name", "Type"
-            );
+            println!("{:<36} | {:<20} | {:<12} | Details", "ID", "Name", "Type");
             println!("{}", "-".repeat(100));
             for t in &list {
                 let id = &t.id[..t.id.len().min(34)];
@@ -41,10 +38,7 @@ pub async fn run(args: TargetsArgs) -> Result<(), Box<dyn std::error::Error>> {
                 };
                 println!(
                     "{:<36} | {:<20} | {:<12} | {}",
-                    id,
-                    name,
-                t.target_type,
-                    details
+                    id, name, t.target_type, details
                 );
             }
             println!("Total: {}", list.len());

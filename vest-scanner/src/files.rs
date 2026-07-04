@@ -117,7 +117,7 @@ impl FileScanner {
         findings
     }
 
-    fn scan_for_secrets(&self, path: &Path, content: &str) -> Vec<Finding> {
+    pub fn scan_for_secrets(&self, path: &Path, content: &str) -> Vec<Finding> {
         let mut findings = Vec::new();
         let now = chrono::Utc::now();
         let filename = path.file_name().unwrap_or_default().to_string_lossy();
@@ -517,7 +517,7 @@ impl FileScanner {
         findings
     }
 
-    fn scan_file(&self, path: &Path) -> Result<Vec<Finding>, VestError> {
+    pub fn scan_file(&self, path: &Path) -> Result<Vec<Finding>, VestError> {
         let mut findings = Vec::new();
 
         if self.check_format {
@@ -554,7 +554,7 @@ impl FileScanner {
         Ok(findings)
     }
 
-    fn collect_files(path: &Path) -> Result<Vec<std::path::PathBuf>, VestError> {
+    pub fn collect_files(path: &Path) -> Result<Vec<std::path::PathBuf>, VestError> {
         let mut files = Vec::new();
 
         if !path.exists() {

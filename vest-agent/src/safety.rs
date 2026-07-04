@@ -131,12 +131,12 @@ impl SafetyChecker {
         }
     }
 
-    pub fn check_rate_limit(&self) -> Result<(), VestError> {
+    pub async fn check_rate_limit(&self) -> Result<(), VestError> {
         if !self.config.rate_limit_enabled {
             return Ok(());
         }
 
-        let mut limiter = self.rate_limiter.blocking_write();
+        let mut limiter = self.rate_limiter.write().await;
         let now = std::time::Instant::now();
         let elapsed = now.duration_since(limiter.last_refill).as_secs_f64();
 
@@ -359,8 +359,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_rate_limit_allows_initial_burst() {
+    #[tokio::test]
+    async fn test_rate_limit_allows_initial_burst() {
         let checker = SafetyChecker::new(SafetyConfig {
             rate_limit_enabled: true,
             rate_limit_requests_per_second: 10,
@@ -369,19 +369,19 @@ mod tests {
         });
         for _ in 0..5 {
             assert!(
-                checker.check_rate_limit().is_ok(),
+                checker.check_rate_limit().await.is_ok(),
                 "Burst request should be allowed"
             );
         }
-        let result = checker.check_rate_limit();
+        let result = checker.check_rate_limit().await;
         assert!(matches!(result, Err(VestError::RateLimited(_))));
     }
 
-    #[test]
-    fn test_rate_limit_disabled_allows_all() {
+    #[tokio::test]
+    async fn test_rate_limit_disabled_allows_all() {
         let checker = SafetyChecker::permissive();
         for _ in 0..1000 {
-            assert!(checker.check_rate_limit().is_ok());
+            assert!(checker.check_rate_limit().await.is_ok());
         }
     }
 

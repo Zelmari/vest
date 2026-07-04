@@ -1,18 +1,12 @@
 use serde_json::Value;
 use std::sync::Arc;
 use vest_core::error::VestError;
+pub use vest_core::types::FallbackStrategy;
 use vest_core::LlmProvider;
 
 pub struct FallbackChain {
     providers: Vec<(String, Arc<dyn LlmProvider>)>,
     strategy: FallbackStrategy,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FallbackStrategy {
-    NextOnFailure,
-    NextOnRateLimit,
-    TryAllParallel,
 }
 
 impl FallbackChain {
@@ -34,7 +28,7 @@ impl FallbackChain {
 
     pub async fn chat(&self, messages: &[Value], model: &str) -> Result<String, VestError> {
         match self.strategy {
-            FallbackStrategy::NextOnFailure | FallbackStrategy::NextOnRateLimit => {
+            FallbackStrategy::NextOnFailure => {
                 let mut last_error = VestError::Provider("All providers exhausted".into());
                 for (name, provider) in &self.providers {
                     match provider.chat(messages, model).await {
@@ -43,6 +37,23 @@ impl FallbackChain {
                             tracing::warn!("Provider {} failed: {} — trying next", name, e);
                             last_error = e;
                             continue;
+                        }
+                    }
+                }
+                Err(last_error)
+            }
+            FallbackStrategy::NextOnRateLimit => {
+                let mut last_error = VestError::Provider("All providers exhausted".into());
+                for (name, provider) in &self.providers {
+                    match provider.chat(messages, model).await {
+                        Ok(response) => return Ok(response),
+                        Err(e) => {
+                            if matches!(e, VestError::RateLimited(_)) {
+                                tracing::warn!("Provider {} rate limited — trying next", name);
+                                last_error = e;
+                                continue;
+                            }
+                            return Err(e);
                         }
                     }
                 }
@@ -76,7 +87,7 @@ impl FallbackChain {
 
     pub async fn chat_stream(&self, messages: &[Value], model: &str) -> Result<String, VestError> {
         match self.strategy {
-            FallbackStrategy::NextOnFailure | FallbackStrategy::NextOnRateLimit => {
+            FallbackStrategy::NextOnFailure => {
                 let mut last_error = VestError::Provider("All providers exhausted".into());
                 for (name, provider) in &self.providers {
                     match provider.chat_stream(messages, model).await {
@@ -89,6 +100,26 @@ impl FallbackChain {
                             );
                             last_error = e;
                             continue;
+                        }
+                    }
+                }
+                Err(last_error)
+            }
+            FallbackStrategy::NextOnRateLimit => {
+                let mut last_error = VestError::Provider("All providers exhausted".into());
+                for (name, provider) in &self.providers {
+                    match provider.chat_stream(messages, model).await {
+                        Ok(response) => return Ok(response),
+                        Err(e) => {
+                            if matches!(e, VestError::RateLimited(_)) {
+                                tracing::warn!(
+                                    "Provider {} streaming rate limited — trying next",
+                                    name
+                                );
+                                last_error = e;
+                                continue;
+                            }
+                            return Err(e);
                         }
                     }
                 }

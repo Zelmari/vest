@@ -16,7 +16,8 @@ iced-x86.workspace = true
 reqwest.workspace = true
 tracing.workspace = true
 regex = "1"
-sha2 = "0.10"
+chromiumoxide = { workspace = true, features = ["tokio-runtime"] }
+ureq = { workspace = true }
 
 vest-core = { workspace = true }
 

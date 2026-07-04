@@ -87,14 +87,14 @@ impl AgentMemory {
             return Some(entry);
         }
 
-        // Check same vuln class + similar title on same target
-        self.false_positives
-            .values()
-            .find(|entry| {
-                entry.target_hash.as_deref() == Some(&finding.target_id)
-                    && (entry.context.contains(&finding.title)
-                        || finding.description.contains(&entry.reason))
-            })
+        // Fuzzy match: same target + same vuln class + similar content
+        self.false_positives.values().find(|entry| {
+            entry.target_hash.as_deref() == Some(&finding.target_id)
+                && (finding.title.to_lowercase().contains(&entry.reason.to_lowercase())
+                    || entry.reason.to_lowercase().contains(&finding.title.to_lowercase())
+                    || finding.description.to_lowercase().contains(&entry.reason.to_lowercase())
+                    || entry.reason.to_lowercase().contains(&finding.description.to_lowercase()))
+        })
     }
 
     /// Record a confirmed vulnerability pattern for faster future detection
@@ -198,9 +198,15 @@ impl AgentMemory {
                     );
                 }
                 PatternType::ConfirmedVuln => {
+                    let vuln_class = entry
+                        .evidence
+                        .get("class")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<VulnerabilityClass>().ok())
+                        .unwrap_or(VulnerabilityClass::Unknown);
                     self.confirmed_patterns.push(ConfirmedPattern {
                         pattern_hash: entry.pattern_hash.clone(),
-                        vulnerability_class: VulnerabilityClass::Unknown,
+                        vulnerability_class: vuln_class,
                         description: entry.description.clone(),
                         occurrence_count: entry.occurrences,
                         avg_confidence: entry.confidence,
@@ -212,11 +218,7 @@ impl AgentMemory {
     }
 
     fn hash_finding(&self, finding: &Finding) -> String {
-        let combined = format!(
-            "{}:{}",
-            finding.title,
-            finding.vulnerability_class
-        );
+        let combined = format!("{}:{}", finding.title, finding.vulnerability_class);
         let mut hasher = DefaultHasher::new();
         combined.hash(&mut hasher);
         format!("{:x}", hasher.finish())
