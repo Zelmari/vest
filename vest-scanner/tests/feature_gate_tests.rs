@@ -16,5 +16,9 @@ fn test_browser_module_not_available_without_feature() {
 #[cfg(feature = "browser")]
 #[test]
 fn test_browser_module_available_with_feature() {
-    assert!(true, "Browser module compiled successfully with feature");
+    // The test only compiles when the browser feature is enabled,
+    // which verifies the feature gate works correctly.
+    let scanner = vest_scanner::browser::BrowserScanner::new();
+    assert!(scanner.enabled);
+    assert!(!scanner.name.is_empty());
 }

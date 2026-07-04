@@ -130,12 +130,6 @@ mod tests {
     }
 
     #[test]
-    fn test_docker_installed_is_bool() {
-        let result = binary_installed("docker");
-        assert!(result || !result, "binary_installed should return a bool");
-    }
-
-    #[test]
     fn test_build_command_construction() {
         let dir = Path::new("/tmp/testdir");
         let cmd = build_command(dir);
