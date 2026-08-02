@@ -1,8 +1,12 @@
 use crate::ConfigArgs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use toml_edit::DocumentMut;
 
-pub async fn run(args: ConfigArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(
+    args: ConfigArgs,
+    config_path: impl AsRef<Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = resolve_config_path(config_path.as_ref());
     match args {
         ConfigArgs::Init => {
             let path = PathBuf::from("vest.toml");
@@ -15,64 +19,61 @@ pub async fn run(args: ConfigArgs) -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&path, toml_str)?;
             println!("Created vest.toml with default configuration");
         }
-        ConfigArgs::Show => {
-            let config_path = find_config_path();
-            match vest_config::load_config(&config_path) {
-                Ok(config) => {
-                    let toml_str = toml::to_string_pretty(&config)?;
-                    println!("Config loaded from: {}", config_path.display());
-                    println!("{}", toml_str);
-                }
-                Err(e) => {
-                    println!("Could not load config: {}", e);
-                    println!("Showing defaults:");
-                    let default = vest_config::default_config();
-                    let toml_str = toml::to_string_pretty(&default)?;
-                    println!("{}", toml_str);
-                }
+        ConfigArgs::Show => match vest_config::load_config(&config_path) {
+            Ok(config) => {
+                let toml_str = toml::to_string_pretty(&config)?;
+                println!("Config loaded from: {}", config_path.display());
+                println!("{}", toml_str);
             }
-        }
+            Err(e) if !config_path.exists() => {
+                println!("Could not load config: {}", e);
+                println!("Showing defaults:");
+                let default = vest_config::default_config();
+                let toml_str = toml::to_string_pretty(&default)?;
+                println!("{}", toml_str);
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Failed to load config {}: {e}. Refusing silent defaults for a present file.",
+                    config_path.display()
+                )
+                .into());
+            }
+        },
         ConfigArgs::Validate => {
-            let config_path = find_config_path();
-            match vest_config::load_config(&config_path) {
-                Ok(config) => {
-                    println!("Configuration is valid");
-                    println!(
-                        "  Provider: {}",
-                        config
-                            .providers
-                            .as_ref()
-                            .map(|p| &p.default.provider[..])
-                            .unwrap_or("not configured")
-                    );
-                    println!("  Agent pattern: {}", config.agent.default_pattern);
-                    println!("  Scanners enabled: memory={}, binary={}, web={}, browser={}, network={}, files={}",
-                        config.scanner.memory.enabled,
-                        config.scanner.binary.enabled,
-                        config.scanner.web.enabled,
-                        config.scanner.browser.enabled,
-                        config.scanner.network.enabled,
-                        config.scanner.files.enabled,
-                    );
-                }
-                Err(e) => {
-                    println!("Configuration error: {}", e);
-                }
-            }
+            let config = vest_config::load_config(&config_path)
+                .map_err(|e| format!("Configuration error at {}: {e}", config_path.display()))?;
+            println!("Configuration is valid");
+            println!(
+                "  Provider: {}",
+                config
+                    .providers
+                    .as_ref()
+                    .map(|p| &p.default.provider[..])
+                    .unwrap_or("not configured")
+            );
+            println!("  Agent pattern: {}", config.agent.default_pattern);
+            println!(
+                "  Scanners enabled: memory={}, binary={}, web={}, browser={}, network={}, files={}",
+                config.scanner.memory.enabled,
+                config.scanner.binary.enabled,
+                config.scanner.web.enabled,
+                config.scanner.browser.enabled,
+                config.scanner.network.enabled,
+                config.scanner.files.enabled,
+            );
         }
         ConfigArgs::Path => {
-            let path = find_config_path();
-            if path.exists() {
-                println!("{}", path.display());
+            if config_path.exists() {
+                println!("{}", config_path.display());
             } else {
                 println!(
                     "No config file found at {}. Run 'vest config init' to create one.",
-                    path.display()
+                    config_path.display()
                 );
             }
         }
         ConfigArgs::Set { key, value } => {
-            let config_path = find_config_path();
             if !config_path.exists() {
                 println!(
                     "No config file found at {}. Run 'vest config init' to create one.",
@@ -229,7 +230,12 @@ fn edit_distance(a: &str, b: &str) -> usize {
     dp[n][m]
 }
 
-fn find_config_path() -> PathBuf {
+/// Honour the global `-c/--config` path when present; otherwise fall back to
+/// `./vest.toml` or `~/.vest/vest.toml`.
+fn resolve_config_path(cli_path: &Path) -> PathBuf {
+    if cli_path.as_os_str() != "vest.toml" || cli_path.exists() {
+        return cli_path.to_path_buf();
+    }
     let local = PathBuf::from("vest.toml");
     if local.exists() {
         return local;

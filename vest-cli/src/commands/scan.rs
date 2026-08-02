@@ -1,12 +1,53 @@
 use crate::ScanArgs;
 use std::collections::BTreeSet;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
+use vest_agent::{
+    resolve_read_path, ApprovedFilesystemScope, ApprovedNetworkScope, AuthorisationContext,
+};
 use vest_core::error::VestError;
 use vest_core::traits::{Reporter, Scanner};
 use vest_core::types::{Finding, ScanMode, ScanStatus, Severity, Target, TargetType};
+use vest_core::{DataEgressClass, ToolEffect};
 
-pub async fn run(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
+/// Process-wide authorised filesystem roots for agent tools (set per scan).
+static TOOL_FS_SCOPE: OnceLock<RwLock<ApprovedFilesystemScope>> = OnceLock::new();
+/// Process-wide authorised network origins for agent HTTP tools (set per scan).
+static TOOL_NET_SCOPE: OnceLock<RwLock<ApprovedNetworkScope>> = OnceLock::new();
+/// Set from `--allow-memory-simulation` before the agent runs (not model-controlled).
+static ALLOW_MEMORY_SIMULATION: AtomicBool = AtomicBool::new(false);
+
+fn tool_fs_scope() -> &'static RwLock<ApprovedFilesystemScope> {
+    TOOL_FS_SCOPE.get_or_init(|| RwLock::new(ApprovedFilesystemScope::empty()))
+}
+
+fn tool_net_scope() -> &'static RwLock<ApprovedNetworkScope> {
+    TOOL_NET_SCOPE.get_or_init(|| RwLock::new(ApprovedNetworkScope::empty()))
+}
+
+fn set_tool_scopes(fs: ApprovedFilesystemScope, net: ApprovedNetworkScope) {
+    *tool_fs_scope().write().expect("fs scope lock") = fs;
+    *tool_net_scope().write().expect("net scope lock") = net;
+}
+
+fn resolve_tool_path(path: &str) -> Result<PathBuf, String> {
+    let scope = tool_fs_scope().read().expect("fs scope lock");
+    resolve_read_path(&scope, Path::new(path)).map_err(|e| format!("filesystem scope: {e}"))
+}
+
+fn authorise_tool_url(url: &str) -> Result<(), String> {
+    let scope = tool_net_scope().read().expect("net scope lock");
+    scope
+        .authorise_url(url)
+        .map(|_| ())
+        .map_err(|e| format!("network scope: {e}"))
+}
+
+pub async fn run(
+    args: ScanArgs,
+    config_path: impl AsRef<Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("\u{250c}{}\u{2510}", "\u{2500}".repeat(50));
     println!("\u{2502} {:^48} \u{2502}", "VEST SCAN");
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
@@ -46,9 +87,21 @@ pub async fn run(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let config_path = find_config_path();
-    let config =
-        vest_config::load_config(&config_path).unwrap_or_else(|_| vest_config::default_config());
+    let config_path = config_path.as_ref();
+    let config = if config_path.exists() {
+        vest_config::load_config(config_path).map_err(|e| {
+            format!(
+                "Failed to load config {}: {e}. Refusing silent defaults for a present file.",
+                config_path.display()
+            )
+        })?
+    } else {
+        eprintln!(
+            "No config at {}; using built-in defaults.",
+            config_path.display()
+        );
+        vest_config::default_config()
+    };
 
     let profile = args
         .profile
@@ -88,7 +141,7 @@ pub async fn run(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
-    let target = detect_target(&args);
+    let target = detect_target(&args)?;
     println!(
         "\u{2502} Type:        {:<35} \u{2502}",
         target.target_type.to_string()
@@ -101,14 +154,23 @@ pub async fn run(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
+    let (fs_scope, net_scope) = scopes_from_target(&target);
+    ALLOW_MEMORY_SIMULATION.store(args.allow_memory_simulation, Ordering::SeqCst);
+    set_tool_scopes(fs_scope.clone(), net_scope.clone());
     let registry = build_tool_registry();
-    let safety = build_safety(&args, &config);
+    let safety = build_safety(&args, &config, fs_scope, net_scope).await;
 
     println!("\u{2502} {:^48} \u{2502}", "Running scan...");
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     let start = std::time::Instant::now();
-    let mut findings = run_builtin_scanners(&scanner_names, &target, &config).await?;
+    let mut findings = run_builtin_scanners(
+        &scanner_names,
+        &target,
+        &config,
+        args.allow_memory_simulation,
+    )
+    .await?;
 
     if provider_name == "none" {
         println!(
@@ -193,7 +255,7 @@ pub async fn run(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             println!("\u{2502} Error: {:<41} \u{2502}", format!("{}", e));
             println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
-            return Ok(());
+            return Err(e);
         }
     }
 
@@ -297,16 +359,28 @@ async fn run_builtin_scanners(
     scanner_names: &[String],
     target: &Target,
     config: &vest_config::VestConfig,
+    allow_memory_simulation: bool,
 ) -> Result<Vec<Finding>, Box<dyn std::error::Error>> {
     let mut all_findings = Vec::new();
+    let mut fatal_errors: Vec<String> = Vec::new();
+    let mut ran_ok = 0usize;
 
     for scanner_name in scanner_names {
         let result = match scanner_name.as_str() {
             "web" if config.scanner.web.enabled => {
+                let w = &config.scanner.web;
                 let scanner = vest_scanner::web::WebScanner::new()
-                    .with_crawl_depth(config.scanner.web.crawl_depth)
-                    .with_max_urls(config.scanner.web.crawl_max_urls as usize)
-                    .with_user_agent(config.scanner.web.user_agent.clone());
+                    .with_crawl_depth(w.crawl_depth)
+                    .with_max_urls(w.crawl_max_urls as usize)
+                    .with_user_agent(w.user_agent.clone())
+                    .with_respect_robots_txt(w.respect_robots_txt)
+                    .with_max_response_bytes(w.max_response_bytes as usize)
+                    .with_max_redirects(w.max_redirects)
+                    // Explicit CLI web scan enables active probes; config may also request them.
+                    .with_allow_active_probes(true)
+                    .with_connect_timeout_ms(w.connect_timeout_ms)
+                    .with_timeout_seconds(w.request_timeout_seconds)
+                    .with_max_concurrent_requests(w.max_concurrent_requests as usize);
                 run_scanner("web", scanner, target).await
             }
             "binary" if config.scanner.binary.enabled => {
@@ -319,7 +393,8 @@ async fn run_builtin_scanners(
             "memory" if config.scanner.memory.enabled => {
                 let scanner = vest_scanner::memory::MemoryScanner::new()
                     .with_max_memory(config.scanner.memory.max_memory_per_scan_mb)
-                    .with_hook_detection(config.scanner.memory.hook_detection);
+                    .with_hook_detection(config.scanner.memory.hook_detection)
+                    .with_simulation_allowed(allow_memory_simulation);
                 run_scanner("memory", scanner, target).await
             }
             "network" if config.scanner.network.enabled => {
@@ -335,7 +410,16 @@ async fn run_builtin_scanners(
                 run_scanner("browser", scanner, target).await
             }
             "files" if config.scanner.files.enabled => {
-                let scanner = vest_scanner::files::FileScanner::new();
+                let f = &config.scanner.files;
+                let limits = vest_scanner::files::FileTraversalLimits::from_config(
+                    f.max_file_size_mb,
+                    f.max_depth,
+                    f.max_files,
+                    f.max_total_bytes,
+                    f.follow_symlinks,
+                    f.ignore_globs.clone(),
+                );
+                let scanner = vest_scanner::files::FileScanner::new().with_limits(limits);
                 run_scanner("files", scanner, target).await
             }
             disabled if known_scanner(disabled) => {
@@ -350,6 +434,7 @@ async fn run_builtin_scanners(
 
         match result {
             Ok(mut findings) => {
+                ran_ok += 1;
                 for finding in &mut findings {
                     mark_finding_source(finding, "scanner", Some(scanner_name));
                 }
@@ -361,13 +446,20 @@ async fn run_builtin_scanners(
                 all_findings.append(&mut findings);
             }
             Err(e) => {
+                let msg = e.to_string();
                 println!(
                     "\u{2502} {:<12} {:<28} \u{2502}",
                     scanner_name,
-                    truncate_for_box(&format!("skipped: {}", e), 28)
+                    truncate_for_box(&format!("failed: {}", msg), 28)
                 );
+                // Unsupported / config / IO failures are fatal for that scanner.
+                fatal_errors.push(format!("{scanner_name}: {msg}"));
             }
         }
+    }
+
+    if ran_ok == 0 && !fatal_errors.is_empty() {
+        return Err(format!("Scanner failure: {}", fatal_errors.join("; ")).into());
     }
 
     Ok(all_findings)
@@ -535,15 +627,21 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             parameters: serde_json::json!({"url": "string"}),
             requires_approval: false,
             risk_level: ro,
+            effect: ToolEffect::ActiveNetworkProbe,
+            egress_class: DataEgressClass::TargetContent,
         },
         |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let url = args.get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
+            authorise_tool_url(url)?;
 
+            // Tool-use path: passive by default (no active vulnerability probes).
             let scanner = vest_scanner::web::WebScanner::new()
                 .with_crawl_depth(5)
-                .with_max_urls(100);
+                .with_max_urls(100)
+                .with_allow_active_probes(false)
+                .with_respect_robots_txt(true);
 
             let resp = ureq::get(url)
                 .header("User-Agent", "VEST/0.1")
@@ -609,23 +707,34 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             parameters: serde_json::json!({"path": "string"}),
             requires_approval: false,
             risk_level: ro,
+            effect: ToolEffect::LocalFileContentRead,
+            egress_class: DataEgressClass::LocalContent,
         },
         |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let path_str = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or("path parameter required")?;
-            let path = std::path::Path::new(path_str);
+            let path = resolve_tool_path(path_str)?;
             if !path.exists() {
-                return Err(format!("Path not found: {}", path_str));
+                return Err(format!("Path not found: {}", path.display()));
             }
 
             let scanner = vest_scanner::files::FileScanner::new();
-            let files = vest_scanner::files::FileScanner::collect_files(path)
-                .map_err(|e| format!("Failed to collect files: {}", e))?;
+            let outcome = vest_scanner::files::collect_files_bounded(
+                &path,
+                &scanner.limits,
+            )
+            .map_err(|e| format!("Failed to collect files: {}", e))?;
+            if outcome.truncated {
+                tracing::warn!(
+                    "file_scan traversal truncated: {:?}",
+                    outcome.truncation_reason
+                );
+            }
 
             let mut all_findings = Vec::new();
             let mut scanned = 0usize;
-            for file_path in &files {
+            for file_path in &outcome.files {
                 match scanner.scan_file(file_path) {
                     Ok(findings) => {
                         scanned += 1;
@@ -651,9 +760,9 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             }).collect();
 
             Ok(serde_json::json!({
-                "path": path_str,
+                "path": path.display().to_string(),
                 "files_scanned": scanned,
-                "total_files": files.len(),
+                "total_files": outcome.files.len(),
                 "total_findings": all_findings.len(),
                 "secrets_found": secrets_count,
                 "backup_files_found": backup_count,
@@ -667,25 +776,32 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
     registry.register(
         vest_agent::ToolDefinition {
             name: "memory_scan".into(),
-            description: "Scan a process's memory regions for security vulnerabilities. Checks for RWX (writable+executable) regions, suspicious unnamed writable allocations, inline hooks (JMP, PUSH/RET, MOV RAX/RET), and shellcode patterns (socket/connect, CreateProcess, VirtualAlloc, URLDownloadToFile). Returns detailed findings with addresses.".into(),
+            description: "Scan process memory for RWX regions, hooks, and shellcode. Real OS acquisition is not implemented; without --allow-memory-simulation this returns unsupported. With the flag, results are explicitly tagged mode=simulation (fabricated, not from the PID).".into(),
             parameters: serde_json::json!({"pid": "integer"}),
             requires_approval: false,
             risk_level: ro,
+            effect: ToolEffect::ProcessMemoryRead,
+            egress_class: DataEgressClass::ProcessMemory,
         },
         |args: serde_json::Value| -> Result<serde_json::Value, String> {
-            let pid: u32 = args.get("pid")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
+            let pid: u32 = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            if !ALLOW_MEMORY_SIMULATION.load(Ordering::SeqCst) {
+                return Ok(serde_json::json!({
+                    "mode": "unsupported",
+                    "error": "Real process-memory acquisition is not implemented. Pass --allow-memory-simulation to run the explicit simulation harness (fabricated regions/bytes; not live PID memory).",
+                    "pid": pid,
+                }));
+            }
 
             let platform = vest_scanner::memory::MemoryScanner::detect_platform();
             let regions = vest_scanner::memory::MemoryScanner::get_simulated_regions(platform);
-
-            let suspicious_findings = vest_scanner::memory::MemoryScanner::check_suspicious_regions(&regions);
+            let suspicious_findings =
+                vest_scanner::memory::MemoryScanner::check_suspicious_regions(&regions);
 
             let mut region_data: Vec<(&vest_scanner::memory::MemoryRegion, Vec<u8>)> = Vec::new();
             for region in &regions {
                 if region.is_executable() {
-                    let data = vest_scanner::memory::MemoryScanner::read_memory(
+                    let data = vest_scanner::memory::MemoryScanner::fabricate_simulated_memory(
                         region.base_address,
                         region.size.min(4096) as usize,
                     );
@@ -694,22 +810,14 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             }
             let hook_findings = vest_scanner::memory::MemoryScanner::detect_hooks(&region_data);
 
-            let rwx_count = suspicious_findings.iter()
-                .filter(|f| f.title.contains("Suspicious memory region")).count();
-            let hook_count = hook_findings.iter()
-                .filter(|f| f.tags.iter().any(|t| t == "hook")).count();
-            let shellcode_count = hook_findings.iter()
-                .filter(|f| f.tags.iter().any(|t| t == "shellcode")).count();
-
-            let suspicious_summaries: Vec<serde_json::Value> = suspicious_findings.iter().map(|f| {
-                serde_json::json!({"title": f.title, "severity": f.severity.to_string()})
-            }).collect();
-            let hook_summaries: Vec<serde_json::Value> = hook_findings.iter().map(|f| {
-                serde_json::json!({"title": f.title, "severity": f.severity.to_string()})
-            }).collect();
-
-            let region_list: Vec<serde_json::Value> = regions.iter().map(|r| {
-                serde_json::json!({
+            Ok(serde_json::json!({
+                "mode": "simulation",
+                "warning": "SIMULATED data — not read from the requested PID",
+                "platform": platform,
+                "pid": pid,
+                "total_regions": regions.len(),
+                "total_findings": suspicious_findings.len() + hook_findings.len(),
+                "regions": regions.iter().map(|r| serde_json::json!({
                     "name": r.name,
                     "base_address": format!("0x{:x}", r.base_address),
                     "size": r.size,
@@ -718,20 +826,13 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
                     "is_executable": r.is_executable(),
                     "is_writable": r.is_writable(),
                     "is_rwx": r.is_rwx(),
-                })
-            }).collect();
-
-            Ok(serde_json::json!({
-                "platform": platform,
-                "pid": pid,
-                "total_regions": regions.len(),
-                "total_findings": suspicious_findings.len() + hook_findings.len(),
-                "rwx_region_count": rwx_count,
-                "hook_detection_count": hook_count,
-                "shellcode_detection_count": shellcode_count,
-                "regions": region_list,
-                "suspicious_region_findings": suspicious_summaries,
-                "hook_and_shellcode_findings": hook_summaries,
+                })).collect::<Vec<_>>(),
+                "suspicious_region_findings": suspicious_findings.iter().map(|f| {
+                    serde_json::json!({"title": f.title, "severity": f.severity.to_string()})
+                }).collect::<Vec<_>>(),
+                "hook_and_shellcode_findings": hook_findings.iter().map(|f| {
+                    serde_json::json!({"title": f.title, "severity": f.severity.to_string()})
+                }).collect::<Vec<_>>(),
             }))
         },
     );
@@ -743,11 +844,14 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             parameters: serde_json::json!({"url": "string"}),
             requires_approval: false,
             risk_level: ro,
+            effect: ToolEffect::PassiveNetworkRequest,
+            egress_class: DataEgressClass::TargetContent,
         },
         |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let url = args.get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
+            authorise_tool_url(url)?;
             let resp = ureq::get(url)
                 .header("User-Agent", "VEST/0.1")
                 .call()
@@ -772,12 +876,15 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             parameters: serde_json::json!({"url": "string", "data": "object"}),
             requires_approval: false,
             risk_level: ro,
+            effect: ToolEffect::StateChangingNetworkRequest,
+            egress_class: DataEgressClass::TargetContent,
         },
         |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let url = args
                 .get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
+            authorise_tool_url(url)?;
             let data = args.get("data").cloned().unwrap_or(serde_json::json!({}));
             let body_str =
                 serde_json::to_string(&data).map_err(|e| format!("Failed to serialize: {}", e))?;
@@ -808,16 +915,19 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             parameters: serde_json::json!({"path": "string"}),
             requires_approval: false,
             risk_level: ro,
+            effect: ToolEffect::LocalFileContentRead,
+            egress_class: DataEgressClass::LocalContent,
         },
         |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let path = args
                 .get("path")
                 .and_then(|v| v.as_str())
                 .ok_or("path parameter required")?;
-            let data = std::fs::read(path).map_err(|e| format!("Cannot read file: {}", e))?;
+            let resolved = resolve_tool_path(path)?;
+            let data = std::fs::read(&resolved).map_err(|e| format!("Cannot read file: {}", e))?;
             let text = String::from_utf8_lossy(&data[..data.len().min(10240)]);
             Ok(serde_json::json!({
-                "path": path,
+                "path": resolved.display().to_string(),
                 "size": data.len(),
                 "content": text,
             }))
@@ -831,10 +941,13 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             parameters: serde_json::json!({"path": "string"}),
             requires_approval: false,
             risk_level: ro,
+            effect: ToolEffect::LocalMetadataRead,
+            egress_class: DataEgressClass::LocalMetadata,
         },
         |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let entries: Vec<String> = std::fs::read_dir(path)
+            let resolved = resolve_tool_path(path)?;
+            let entries: Vec<String> = std::fs::read_dir(&resolved)
                 .map_err(|e| format!("Cannot read directory: {}", e))?
                 .filter_map(|e| e.ok())
                 .map(|e| {
@@ -848,7 +961,7 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
                 })
                 .collect();
             Ok(serde_json::json!({
-                "path": path,
+                "path": resolved.display().to_string(),
                 "entries": entries,
                 "count": entries.len(),
             }))
@@ -863,11 +976,14 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             parameters: serde_json::json!({"url": "string"}),
             requires_approval: false,
             risk_level: ro,
+            effect: ToolEffect::PassiveNetworkRequest,
+            egress_class: DataEgressClass::TargetContent,
         },
         |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let url = args.get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
+            authorise_tool_url(url)?;
             let handle = tokio::runtime::Handle::current();
             tokio::task::block_in_place(|| {
                 handle.block_on(vest_scanner::browser::BrowserScanner::inspect_page(url))
@@ -882,6 +998,8 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             parameters: serde_json::json!({"content": "string", "source": "string"}),
             requires_approval: false,
             risk_level: ro,
+            effect: ToolEffect::LocalFileContentRead,
+            egress_class: DataEgressClass::PotentiallySecretBearing,
         },
         |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let content = args.get("content")
@@ -912,9 +1030,49 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
     registry
 }
 
-fn build_safety(
+fn scopes_from_target(target: &Target) -> (ApprovedFilesystemScope, ApprovedNetworkScope) {
+    let fs = match (&target.path, target.target_type) {
+        (Some(path), _) => {
+            let p = PathBuf::from(path);
+            let root = if p.is_file() {
+                p.parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("."))
+            } else {
+                p
+            };
+            ApprovedFilesystemScope::new([root])
+                .unwrap_or_else(|_| ApprovedFilesystemScope::empty())
+        }
+        (None, TargetType::File | TargetType::Binary) => {
+            let p = PathBuf::from(&target.name);
+            let root = if p.is_file() {
+                p.parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("."))
+            } else {
+                p
+            };
+            ApprovedFilesystemScope::new([root])
+                .unwrap_or_else(|_| ApprovedFilesystemScope::empty())
+        }
+        _ => ApprovedFilesystemScope::empty(),
+    };
+
+    let net = if let Some(ref url) = target.url_str {
+        ApprovedNetworkScope::new([url.as_str()]).unwrap_or_else(|_| ApprovedNetworkScope::empty())
+    } else {
+        ApprovedNetworkScope::empty()
+    };
+
+    (fs, net)
+}
+
+async fn build_safety(
     args: &ScanArgs,
     config: &vest_config::VestConfig,
+    fs_scope: ApprovedFilesystemScope,
+    net_scope: ApprovedNetworkScope,
 ) -> Arc<vest_agent::SafetyChecker> {
     use vest_agent::safety::SafetyConfig;
 
@@ -949,10 +1107,22 @@ fn build_safety(
         safety_config.exploit_approval = false;
     }
 
-    Arc::new(vest_agent::SafetyChecker::new(safety_config))
+    let checker = Arc::new(vest_agent::SafetyChecker::new(safety_config));
+
+    let mut auth = AuthorisationContext::new(format!("scan-{}", args.target));
+    auth = auth
+        .with_filesystem(fs_scope)
+        .with_network(net_scope)
+        .with_interactive(false);
+    auth.allow_local_content_egress = config.safety.allow_model_egress_local_content;
+    auth.allow_process_memory_egress = config.safety.allow_model_egress_process_memory;
+    auth.allow_evidence_egress = config.safety.allow_model_egress_evidence;
+    checker.set_authorisation_context(auth).await;
+
+    checker
 }
 
-fn detect_target(args: &ScanArgs) -> Target {
+fn detect_target(args: &ScanArgs) -> Result<Target, Box<dyn std::error::Error>> {
     let name = &args.target;
     let now = chrono::Utc::now();
 
@@ -971,30 +1141,13 @@ fn detect_target(args: &ScanArgs) -> Target {
             (None, None, pid_val, None)
         }
         TargetType::Binary => (Some(name.clone()), None, None, None),
-        TargetType::Web => {
-            if name.starts_with("http") {
-                (None, Some(name.clone()), None, None)
-            } else {
-                (
-                    None,
-                    Some(format!("https://{}", name)),
-                    None,
-                    Some(name.clone()),
-                )
-            }
-        }
+        TargetType::Web => resolve_http_target(name)?,
         TargetType::Network => (None, None, None, Some(name.clone())),
-        TargetType::Browser => {
-            if name.starts_with("http") {
-                (None, Some(name.clone()), None, None)
-            } else {
-                (None, Some(format!("https://{}", name)), None, None)
-            }
-        }
+        TargetType::Browser => resolve_http_target(name)?,
         TargetType::File => (Some(name.clone()), None, None, None),
     };
 
-    Target {
+    Ok(Target {
         id: vest_core::ids::new_id(),
         name: name.clone(),
         target_type,
@@ -1005,7 +1158,30 @@ fn detect_target(args: &ScanArgs) -> Target {
         metadata: serde_json::json!({}),
         created_at: now,
         updated_at: now,
+    })
+}
+
+type TargetFields = (Option<String>, Option<String>, Option<u32>, Option<String>);
+
+/// Web/browser targets accept only `http`/`https`. Bare hosts become `https://host`.
+/// Schemes like `file:`, `javascript:`, or `data:` fail closed (never rewritten).
+fn resolve_http_target(name: &str) -> Result<TargetFields, Box<dyn std::error::Error>> {
+    if let Some((scheme, _rest)) = name.split_once("://") {
+        let scheme = scheme.to_ascii_lowercase();
+        if scheme != "http" && scheme != "https" {
+            return Err(format!(
+                "Invalid web target URL scheme '{scheme}' (only http/https). Refusing to rewrite '{name}'."
+            )
+            .into());
+        }
+        return Ok((None, Some(name.to_string()), None, None));
     }
+    Ok((
+        None,
+        Some(format!("https://{name}")),
+        None,
+        Some(name.to_string()),
+    ))
 }
 
 fn guess_type(name: &str) -> TargetType {
@@ -1042,15 +1218,6 @@ fn guess_type(name: &str) -> TargetType {
     } else {
         TargetType::File
     }
-}
-
-fn find_config_path() -> PathBuf {
-    let local = PathBuf::from("vest.toml");
-    if local.exists() {
-        return local;
-    }
-    let home = std::env::var("HOME").ok().unwrap_or_else(|| ".".into());
-    PathBuf::from(home).join(".vest").join("vest.toml")
 }
 
 fn get_db_path() -> String {

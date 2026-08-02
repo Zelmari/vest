@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use vest_core::types::{Finding, Target};
+use vest_core::{DataEgressClass, ToolEffect};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -8,6 +9,46 @@ pub struct ToolDefinition {
     pub parameters: serde_json::Value,
     pub requires_approval: bool,
     pub risk_level: RiskLevel,
+    /// Explicit effect — never inferred from the tool name.
+    pub effect: ToolEffect,
+    /// Default egress classification for tool results.
+    pub egress_class: DataEgressClass,
+}
+
+impl ToolDefinition {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: serde_json::Value,
+        effect: ToolEffect,
+        egress_class: DataEgressClass,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            parameters,
+            requires_approval: effect.strength_rank() > 1,
+            risk_level: risk_for_effect(effect),
+            effect,
+            egress_class,
+        }
+    }
+}
+
+fn risk_for_effect(effect: ToolEffect) -> RiskLevel {
+    match effect {
+        ToolEffect::PureComputation
+        | ToolEffect::LocalMetadataRead
+        | ToolEffect::NetworkMetadataRead => RiskLevel::ReadOnly,
+        ToolEffect::PassiveNetworkRequest | ToolEffect::ProcessMetadataRead => RiskLevel::Low,
+        ToolEffect::LocalFileContentRead => RiskLevel::Medium,
+        ToolEffect::ActiveNetworkProbe | ToolEffect::ProcessMemoryRead => RiskLevel::High,
+        ToolEffect::LocalWrite
+        | ToolEffect::StateChangingNetworkRequest
+        | ToolEffect::CommandExecution
+        | ToolEffect::CredentialAccess
+        | ToolEffect::Unknown => RiskLevel::Critical,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -94,6 +94,12 @@ user_agent = "VEST/0.1 Vulnerability Scanner"
 nuclei_enabled = true
 nuclei_severity = ["critical", "high", "medium"]
 nuclei_timeout = 300
+max_response_bytes = 5242880
+max_redirects = 5
+allow_active_probes = false
+connect_timeout_ms = 10000
+request_timeout_seconds = 30
+max_concurrent_requests = 8
 
 [scanner.browser]
 enabled = true
@@ -118,6 +124,11 @@ enabled = true
 max_file_size_mb = 500
 extract_archives = true
 fuzz_file_formats = false
+max_depth = 32
+max_files = 10000
+max_total_bytes = 1073741824
+follow_symlinks = false
+ignore_globs = []
 
 [safety]
 write_approval = true

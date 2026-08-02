@@ -12,6 +12,7 @@ tokio.workspace = true
 reqwest.workspace = true
 backon.workspace = true
 tracing.workspace = true
+futures.workspace = true
 
 vest-core = { workspace = true }
 vest-config = { workspace = true }

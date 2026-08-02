@@ -21,7 +21,27 @@ pub fn load_config(path: &Path) -> Result<VestConfig, VestError> {
     })?;
     let config: VestConfig = toml::from_str(&contents)
         .map_err(|e| VestError::Config(format!("Failed to parse config: {}", e)))?;
+    config
+        .safety
+        .validate()
+        .map_err(|e| VestError::Config(format!("Invalid safety configuration: {e}")))?;
+    config.scanner.files.validate().map_err(VestError::Config)?;
+    config.scanner.web.validate().map_err(VestError::Config)?;
+    if config.scanner.memory.max_memory_per_scan_mb == 0 {
+        return Err(VestError::Config(
+            "scanner.memory.max_memory_per_scan_mb must be > 0".into(),
+        ));
+    }
     Ok(config)
+}
+
+/// Load config if the path exists; if missing, return defaults.
+/// A present but unreadable or malformed file is always an error (no silent fallback).
+pub fn load_config_or_default(path: &Path) -> Result<VestConfig, VestError> {
+    if !path.exists() {
+        return Ok(default_config());
+    }
+    load_config(path)
 }
 
 pub fn default_config() -> VestConfig {

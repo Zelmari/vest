@@ -18,7 +18,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/vest/vest"
+repository = "https://github.com/Zelmari/vest"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -45,6 +45,7 @@ goblin = "0.9"
 capstone = "0.12"
 iced-x86 = "1"
 backon = "1"
+futures = "0.3"
 
 # Internal crate dependencies
 vest-core = { path = "vest-core" }

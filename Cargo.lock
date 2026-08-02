@@ -2626,11 +2626,13 @@ dependencies = [
  "async-trait",
  "chrono",
  "rand",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
+ "url",
  "uuid",
  "vest-config",
  "vest-core",
@@ -2709,6 +2711,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "backon",
+ "futures",
  "reqwest",
  "serde",
  "serde_json",
@@ -2739,6 +2742,7 @@ dependencies = [
  "capstone",
  "chromiumoxide",
  "chrono",
+ "futures-util",
  "goblin",
  "iced-x86",
  "rand",
@@ -2749,6 +2753,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ureq",
+ "url",
  "vest-core",
 ]
 
