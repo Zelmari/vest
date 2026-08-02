@@ -405,55 +405,6 @@ fn exit_code_for_message(msg: &str) -> i32 {
     exit_code::INTERNAL
 }
 
-#[cfg(test)]
-mod exit_code_tests {
-    use super::*;
-
-    #[test]
-    fn maps_config_errors() {
-        assert_eq!(
-            exit_code_for_message("Failed to load config: parse error"),
-            exit_code::CONFIG
-        );
-        assert_eq!(
-            exit_code_for_message("Configuration error at /tmp/x.toml"),
-            exit_code::CONFIG
-        );
-    }
-
-    #[test]
-    fn maps_authorisation_errors() {
-        assert_eq!(
-            exit_code_for_message("policy denied 'read_file': filesystem scope"),
-            exit_code::AUTHORISATION
-        );
-        assert_eq!(
-            exit_code_for_message("approval required"),
-            exit_code::AUTHORISATION
-        );
-    }
-
-    #[test]
-    fn maps_scanner_and_persistence() {
-        assert_eq!(
-            exit_code_for_message("Scanner failure: memory unsupported"),
-            exit_code::SCANNER
-        );
-        assert_eq!(
-            exit_code_for_message("sqlite database locked"),
-            exit_code::PERSISTENCE
-        );
-    }
-
-    #[test]
-    fn maps_invalid_input() {
-        assert_eq!(
-            exit_code_for_message("Unsupported shell: foo"),
-            exit_code::INVALID_INPUT
-        );
-    }
-}
-
 #[tokio::main]
 async fn main() {
     load_dotenv();
@@ -512,4 +463,53 @@ async fn dispatch(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod exit_code_tests {
+    use super::*;
+
+    #[test]
+    fn maps_config_errors() {
+        assert_eq!(
+            exit_code_for_message("Failed to load config: parse error"),
+            exit_code::CONFIG
+        );
+        assert_eq!(
+            exit_code_for_message("Configuration error at /tmp/x.toml"),
+            exit_code::CONFIG
+        );
+    }
+
+    #[test]
+    fn maps_authorisation_errors() {
+        assert_eq!(
+            exit_code_for_message("policy denied 'read_file': filesystem scope"),
+            exit_code::AUTHORISATION
+        );
+        assert_eq!(
+            exit_code_for_message("approval required"),
+            exit_code::AUTHORISATION
+        );
+    }
+
+    #[test]
+    fn maps_scanner_and_persistence() {
+        assert_eq!(
+            exit_code_for_message("Scanner failure: memory unsupported"),
+            exit_code::SCANNER
+        );
+        assert_eq!(
+            exit_code_for_message("sqlite database locked"),
+            exit_code::PERSISTENCE
+        );
+    }
+
+    #[test]
+    fn maps_invalid_input() {
+        assert_eq!(
+            exit_code_for_message("Unsupported shell: foo"),
+            exit_code::INVALID_INPUT
+        );
+    }
 }
