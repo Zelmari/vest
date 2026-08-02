@@ -5,6 +5,20 @@ use vest_core::ids::new_id;
 use vest_core::types::{Finding, FindingStatus, Severity, Target, VulnerabilityClass};
 use vest_core::Scanner;
 
+/// Operating mode for process-memory scanning.
+///
+/// Real process-memory acquisition (ptrace / ReadProcessMemory / etc.) is **not**
+/// implemented. The default is [`MemoryScanMode::Unsupported`]. An explicit
+/// simulation harness is available only when opted in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MemoryScanMode {
+    /// Refuse real acquisition; `scan` returns [`VestError::Unsupported`].
+    #[default]
+    Unsupported,
+    /// Run the explicit local simulation harness (fabricated regions/bytes).
+    Simulation,
+}
+
 pub struct MemoryScanner {
     pub name: String,
     pub description: String,
@@ -13,6 +27,8 @@ pub struct MemoryScanner {
     pub pattern_scan_acceleration: bool,
     pub suspicious_regions: Vec<String>,
     pub hook_detection: bool,
+    /// Scan mode — defaults to [`MemoryScanMode::Unsupported`].
+    pub mode: MemoryScanMode,
 }
 
 impl MemoryScanner {
@@ -20,13 +36,14 @@ impl MemoryScanner {
         Self {
             name: "memory-scanner".into(),
             description:
-                "Scans process memory for vulnerabilities, RWX regions, and suspicious patterns"
+                "Process memory scanner (real acquisition unsupported; simulation opt-in only)"
                     .into(),
             enabled: true,
             max_memory_per_scan_mb: 4096,
             pattern_scan_acceleration: true,
             suspicious_regions: vec!["RWX".into(), "PAGE_EXECUTE_READWRITE".into()],
             hook_detection: true,
+            mode: MemoryScanMode::Unsupported,
         }
     }
 
@@ -38,6 +55,42 @@ impl MemoryScanner {
     pub fn with_max_memory(mut self, mb: u64) -> Self {
         self.max_memory_per_scan_mb = mb;
         self
+    }
+
+    /// Explicitly enable the simulation harness.
+    ///
+    /// When `allowed` is true, [`Scanner::scan`] runs against fabricated regions/bytes
+    /// and tags every finding as simulated. When false (default), scan returns
+    /// [`VestError::Unsupported`].
+    pub fn with_simulation_allowed(mut self, allowed: bool) -> Self {
+        self.mode = if allowed {
+            MemoryScanMode::Simulation
+        } else {
+            MemoryScanMode::Unsupported
+        };
+        self
+    }
+
+    pub fn mode(&self) -> MemoryScanMode {
+        self.mode
+    }
+
+    fn mark_finding_simulated(finding: &mut Finding) {
+        if !finding.title.starts_with("[SIMULATED]") {
+            finding.title = format!("[SIMULATED] {}", finding.title);
+        }
+        if !finding.description.starts_with("SIMULATED:") {
+            finding.description = format!("SIMULATED: {}", finding.description);
+        }
+        if !finding.tags.iter().any(|t| t == "simulation") {
+            finding.tags.push("simulation".into());
+        }
+        if !finding.metadata.is_object() {
+            finding.metadata = serde_json::json!({});
+        }
+        if let Some(obj) = finding.metadata.as_object_mut() {
+            obj.insert("simulation".into(), serde_json::json!(true));
+        }
     }
 
     pub fn scan_pattern(data: &[u8], pattern: &str) -> Vec<usize> {
@@ -341,6 +394,10 @@ impl MemoryScanner {
         pointers
     }
 
+    /// Fabricated memory map for the **simulation harness only**.
+    ///
+    /// This does not inspect any live process. Prefer calling via
+    /// [`MemoryScanner::with_simulation_allowed`] / [`MemoryScanMode::Simulation`].
     pub fn get_simulated_regions(platform: &str) -> Vec<MemoryRegion> {
         match platform {
             "windows" => vec![
@@ -428,7 +485,16 @@ impl MemoryScanner {
         }
     }
 
+    /// Fabricate bytes for the **simulation harness only**.
+    ///
+    /// Does not read process memory. The `base` address is unused for acquisition
+    /// (retained only so callers can keep address math consistent in tests).
     pub fn read_memory(base: u64, size: usize) -> Vec<u8> {
+        Self::fabricate_simulated_memory(base, size)
+    }
+
+    /// Explicit name for fabricated simulation bytes (same as [`Self::read_memory`]).
+    pub fn fabricate_simulated_memory(base: u64, size: usize) -> Vec<u8> {
         let mut data = vec![0u8; size];
 
         for (i, byte) in data.iter_mut().enumerate().take(size) {
@@ -443,7 +509,7 @@ impl MemoryScanner {
             data[0x200..0x204].copy_from_slice(&[0x90, 0x90, 0x58, 0xC3]);
         }
 
-        let _ = base;
+        let _ = base; // unused: no real process-memory acquisition
         data
     }
 }
@@ -496,13 +562,31 @@ impl Scanner for MemoryScanner {
     }
 
     async fn scan(&self, target: &Target) -> Result<Vec<Finding>, VestError> {
+        match self.mode {
+            MemoryScanMode::Unsupported => Err(VestError::Unsupported(
+                "Real process-memory acquisition is not implemented; pass --allow-memory-simulation to run the explicit simulation harness"
+                    .into(),
+            )),
+            MemoryScanMode::Simulation => self.scan_simulation(target).await,
+        }
+    }
+}
+
+impl MemoryScanner {
+    /// Explicit simulation harness — fabricated regions and bytes only.
+    async fn scan_simulation(&self, target: &Target) -> Result<Vec<Finding>, VestError> {
         let platform = MemoryScanner::detect_platform();
-        tracing::info!("Starting memory scan on platform: {}", platform);
+        tracing::warn!(
+            platform = platform,
+            target_id = %target.id,
+            pid = ?target.pid,
+            "Running MEMORY SIMULATION harness (not real process acquisition; PID is not used)"
+        );
 
         let mut all_findings = Vec::new();
 
         let regions = MemoryScanner::get_simulated_regions(platform);
-        tracing::info!("Enumerated {} memory regions", regions.len());
+        tracing::info!("Simulated {} memory regions", regions.len());
 
         if !self.suspicious_regions.is_empty() {
             let suspicious = MemoryScanner::check_suspicious_regions(&regions);
@@ -515,7 +599,7 @@ impl Scanner for MemoryScanner {
                 if region.is_executable()
                     && region.size <= self.max_memory_per_scan_mb * 1024 * 1024
                 {
-                    let data = MemoryScanner::read_memory(
+                    let data = MemoryScanner::fabricate_simulated_memory(
                         region.base_address,
                         region.size.min(4096) as usize,
                     );
@@ -529,10 +613,11 @@ impl Scanner for MemoryScanner {
 
         for f in &mut all_findings {
             f.target_id = target.id.clone();
+            Self::mark_finding_simulated(f);
         }
 
         tracing::info!(
-            "Memory scan complete: {} total findings",
+            "Memory SIMULATION complete: {} total findings (all tagged simulation=true)",
             all_findings.len()
         );
         Ok(all_findings)
@@ -710,6 +795,80 @@ mod tests {
         assert!(scanner.hook_detection);
         assert!(scanner.pattern_scan_acceleration);
         assert_eq!(scanner.max_memory_per_scan_mb, 4096);
+        assert_eq!(scanner.mode(), MemoryScanMode::Unsupported);
+    }
+
+    #[tokio::test]
+    async fn test_scan_default_returns_unsupported() {
+        use vest_core::traits::Scanner;
+        let scanner = MemoryScanner::new();
+        let target = Target {
+            id: "t".into(),
+            name: "t".into(),
+            target_type: vest_core::types::TargetType::Process,
+            path: None,
+            url_str: None,
+            pid: Some(1234),
+            host: None,
+            metadata: serde_json::json!({}),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let err = scanner.scan(&target).await.unwrap_err();
+        assert!(
+            matches!(err, VestError::Unsupported(_)),
+            "expected Unsupported, got {err}"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("not implemented"));
+        assert!(msg.contains("--allow-memory-simulation"));
+    }
+
+    #[tokio::test]
+    async fn test_scan_simulation_tags_findings() {
+        use vest_core::traits::Scanner;
+        let scanner = MemoryScanner::new().with_simulation_allowed(true);
+        assert_eq!(scanner.mode(), MemoryScanMode::Simulation);
+        let target = Target {
+            id: "sim-target".into(),
+            name: "sim".into(),
+            target_type: vest_core::types::TargetType::Process,
+            path: None,
+            url_str: None,
+            pid: Some(9999),
+            host: None,
+            metadata: serde_json::json!({}),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let findings = scanner.scan(&target).await.unwrap();
+        assert!(
+            !findings.is_empty(),
+            "simulation harness should produce findings on known platforms"
+        );
+        for f in &findings {
+            assert_eq!(f.target_id, "sim-target");
+            assert!(
+                f.title.contains("SIMULATED"),
+                "title must say SIMULATED: {}",
+                f.title
+            );
+            assert!(
+                f.description.starts_with("SIMULATED:"),
+                "description must say SIMULATED: {}",
+                f.description
+            );
+            assert_eq!(f.metadata["simulation"], serde_json::json!(true));
+            assert!(f.tags.iter().any(|t| t == "simulation"));
+        }
+    }
+
+    #[test]
+    fn test_read_memory_is_fabricated_not_pid_backed() {
+        // Same fabricated pattern regardless of base — proves no real acquisition.
+        let a = MemoryScanner::read_memory(0x1000, 64);
+        let b = MemoryScanner::fabricate_simulated_memory(0xDEAD_BEEF, 64);
+        assert_eq!(a, b);
     }
 
     #[test]

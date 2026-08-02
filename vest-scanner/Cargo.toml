@@ -16,6 +16,8 @@ iced-x86.workspace = true
 reqwest.workspace = true
 tracing.workspace = true
 regex = "1"
+url.workspace = true
+futures-util = "0.3"
 chromiumoxide = { workspace = true, features = ["tokio-runtime"], optional = true }
 ureq = { workspace = true }
 
@@ -27,3 +29,4 @@ default = ["browser"]
 
 [dev-dependencies]
 rand = "0.8"
+tokio = { workspace = true, features = ["full", "test-util"] }

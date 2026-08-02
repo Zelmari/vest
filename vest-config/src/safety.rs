@@ -24,7 +24,11 @@ fn default_max_concurrent_exploits() -> u32 {
     1
 }
 
+/// Safety configuration.
+///
+/// Unknown fields in `[safety]` are rejected so typos cannot silently disable policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SafetyConfig {
     #[serde(default = "default_true")]
     pub write_approval: bool,
@@ -44,6 +48,7 @@ pub struct SafetyConfig {
     #[serde(default = "default_rate_limit_burst")]
     pub rate_limit_burst: u32,
 
+    /// When true, the CLI may offer Docker sandbox helpers. This is not an OS sandbox for agent tools.
     #[serde(default = "default_true")]
     pub sandbox_enabled: bool,
 
@@ -56,9 +61,49 @@ pub struct SafetyConfig {
     #[serde(default = "default_max_concurrent_exploits")]
     pub max_concurrent_exploits: u32,
 
+    #[serde(default)]
     pub allowed_targets: Vec<String>,
+    #[serde(default)]
     pub blocked_targets: Vec<String>,
+    #[serde(default)]
     pub allowed_networks: Vec<String>,
+
+    /// When true, agent tools may return local file contents to a remote model after policy allow.
+    /// Default false (action auth ≠ egress auth).
+    #[serde(default)]
+    pub allow_model_egress_local_content: bool,
+
+    /// When true, process-memory bytes may be sent to a remote model. Default false.
+    #[serde(default)]
+    pub allow_model_egress_process_memory: bool,
+
+    /// When true, bounded finding evidence excerpts may be included in validator prompts.
+    #[serde(default)]
+    pub allow_model_egress_evidence: bool,
+}
+
+impl SafetyConfig {
+    /// Validate safety-critical bounds. Malformed present configs must not become permissive defaults.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.rate_limit_enabled {
+            if self.rate_limit_requests_per_second == 0 {
+                return Err("safety.rate_limit_requests_per_second must be > 0".into());
+            }
+            if self.rate_limit_burst == 0 {
+                return Err("safety.rate_limit_burst must be > 0".into());
+            }
+        }
+        if self.max_scan_duration_seconds == 0 {
+            return Err("safety.max_scan_duration_seconds must be > 0".into());
+        }
+        if self.max_concurrent_exploits == 0 {
+            return Err("safety.max_concurrent_exploits must be > 0".into());
+        }
+        if self.sandbox_image.trim().is_empty() {
+            return Err("safety.sandbox_image must not be empty".into());
+        }
+        Ok(())
+    }
 }
 
 impl Default for SafetyConfig {
@@ -77,6 +122,9 @@ impl Default for SafetyConfig {
             allowed_targets: Vec::new(),
             blocked_targets: Vec::new(),
             allowed_networks: Vec::new(),
+            allow_model_egress_local_content: false,
+            allow_model_egress_process_memory: false,
+            allow_model_egress_evidence: false,
         }
     }
 }

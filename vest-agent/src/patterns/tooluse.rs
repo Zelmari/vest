@@ -1,4 +1,5 @@
 use crate::context::AgentContext;
+use crate::policy::NormalisedToolCall;
 use crate::safety::SafetyChecker;
 use crate::tool_registry::ToolRegistry;
 use serde::Deserialize;
@@ -8,6 +9,7 @@ use vest_core::error::VestError;
 use vest_core::new_id;
 use vest_core::traits::{AgentStatus, LlmProvider};
 use vest_core::types::{Finding, FindingStatus, Severity, Target, VulnerabilityClass};
+use vest_core::{ApprovalDecision, DataEgressClass, ToolEffect};
 
 pub struct ToolUseRunner {
     provider: Arc<dyn LlmProvider>,
@@ -74,50 +76,47 @@ impl ToolUseRunner {
                     if let Some(tool_call) = self.parse_tool_call(&response) {
                         let tool_name = &tool_call.name;
 
-                        let tool_def = self.registry.get_tool(tool_name);
-                        if let Some(def) = tool_def {
-                            if def.definition.requires_approval {
-                                match self
-                                    .safety
-                                    .approve_tool_call(tool_name, &tool_call.arguments)
-                                {
-                                    Ok(true) => {}
-                                    Ok(false) => {
-                                        ctx.add_message(
-                                            "assistant",
-                                            format!(
-                                                "Tool call rejected by safety gate: {}",
-                                                tool_name
-                                            ),
-                                        );
-                                        ctx.add_message(
-                                            "user",
-                                            format!(
-                                                "The tool call '{}' was rejected by the safety system. Try a different approach.",
-                                                tool_name
-                                            ),
-                                        );
-                                        continue;
-                                    }
-                                    Err(e) => {
-                                        ctx.add_observation(format!(
-                                            "Safety check error for '{}': {}",
-                                            tool_name, e
-                                        ));
-                                        ctx.add_message(
-                                            "user",
-                                            format!(
-                                                "Safety check failed for '{}': {}. Try a different approach.",
-                                                tool_name, e
-                                            ),
-                                        );
-                                        continue;
-                                    }
-                                }
-                            }
+                        // Always evaluate policy — `requires_approval` is UX-only and
+                        // must never skip the policy engine.
+                        let (effect, egress_class) = match self.registry.get_tool(tool_name) {
+                            Some(registered) => (
+                                registered.definition.effect,
+                                registered.definition.egress_class,
+                            ),
+                            None => (ToolEffect::Unknown, DataEgressClass::Prohibited),
+                        };
+                        let normalised = NormalisedToolCall::from_parts(
+                            tool_name,
+                            effect,
+                            egress_class,
+                            &tool_call.arguments,
+                        );
+                        let auth_ctx = self.safety.auth_context();
+                        let decision = self.safety.policy().evaluate(&auth_ctx, &normalised);
+                        if !decision.is_allow() {
+                            let reason = match &decision {
+                                ApprovalDecision::Deny { reason } => reason.clone(),
+                                ApprovalDecision::RequireInteractive { reason } => reason.clone(),
+                                ApprovalDecision::Allow => String::new(),
+                            };
+                            ctx.add_message(
+                                "assistant",
+                                format!("Tool call rejected by policy: {}", tool_name),
+                            );
+                            ctx.add_message(
+                                "user",
+                                format!(
+                                    "The tool call '{}' was rejected by the policy engine: {}. Try a different approach.",
+                                    tool_name, reason
+                                ),
+                            );
+                            ctx.add_observation(format!(
+                                "Policy denied '{}': {}",
+                                tool_name, reason
+                            ));
+                            continue;
                         }
 
-                        // Rate limit check before execution
                         if let Err(e) = self.safety.check_rate_limit().await {
                             ctx.add_observation(format!("Rate limited: {}", e));
                             ctx.add_message(
@@ -135,10 +134,12 @@ impl ToolUseRunner {
                             ),
                         );
 
-                        match self
-                            .registry
-                            .execute(tool_name, tool_call.arguments.clone())
-                        {
+                        match self.registry.invoke(
+                            self.safety.policy(),
+                            &auth_ctx,
+                            tool_name,
+                            tool_call.arguments.clone(),
+                        ) {
                             Ok(result) => {
                                 let result_str = serde_json::to_string(&result).unwrap_or_default();
                                 ctx.add_message(

@@ -1,10 +1,14 @@
+pub mod auth;
 pub mod error;
 pub mod ids;
+pub mod secret;
 pub mod traits;
 pub mod types;
 
+pub use auth::{ApprovalDecision, DataEgressClass, HttpMethodKind, ToolEffect};
 pub use error::VestError;
 pub use ids::new_id;
+pub use secret::SecretString;
 pub use traits::{Agent, AgentStatus, LlmProvider, ReportFormat, Reporter, Scanner};
 pub use types::{
     AgentAction, Artifact, FallbackStrategy, Finding, FindingStatus, MergeStrategy, PatternType,

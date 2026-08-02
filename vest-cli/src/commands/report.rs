@@ -74,7 +74,9 @@ async fn generate_report(
             std::fs::write(&report_path, report)?;
             println!("\n  Report saved to: {}", report_path.display());
         }
-        Err(e) => println!("Scan '{}' not found: {}", scan_id, e),
+        Err(e) => {
+            return Err(format!("Scan '{scan_id}' not found: {e}").into());
+        }
     }
     Ok(())
 }

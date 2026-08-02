@@ -9,13 +9,20 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
     match args {
         ProvidersArgs::List => {
             let config_path = find_vest_toml();
-            let config = match vest_config::load_config(&config_path) {
-                Ok(c) => c,
-                Err(_) => {
-                    println!("No config found. Using defaults.");
-                    println!("  Default provider: none configured");
-                    return Ok(());
-                }
+            let config = if !config_path.exists() {
+                println!(
+                    "No config found at {}. Using defaults.",
+                    config_path.display()
+                );
+                println!("  Default provider: none configured");
+                return Ok(());
+            } else {
+                vest_config::load_config(&config_path).map_err(|e| {
+                    format!(
+                        "Failed to load config {}: {e}. Refusing silent defaults for a present file.",
+                        config_path.display()
+                    )
+                })?
             };
 
             println!("Keys are read from environment variables ({{PROVIDER}}_API_KEY).");
@@ -63,32 +70,42 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
         }
         ProvidersArgs::SetKey { provider, key } => {
             let env_var = format!("{}_API_KEY", provider.to_uppercase());
-            match key {
-                Some(k) => {
-                    println!("To set the key persistently, add this to your shell profile:");
-                    println!();
-                    println!("  export {}={}", env_var, k);
-                    println!();
-                    println!("Or set it for the current session only:");
-                    println!();
-                    println!("  export {}={}", env_var, k);
-                    println!();
-                    println!("Then run your scan as normal. VEST reads keys from environment variables only.");
-                }
-                None => {
-                    println!("Set your API key via the {} environment variable:", env_var);
-                    println!();
-                    println!("  export {}={{your-key-here}}", env_var);
-                    println!();
-                    println!("Add the export to your shell profile (~/.zshrc, ~/.bashrc) to make it permanent.");
-                    println!("Keys are never stored on disk by VEST.");
-                }
+            // Never echo a supplied key: argv is visible in process lists and shell history.
+            if key.is_some() {
+                eprintln!(
+                    "warning: passing --key on the command line is deprecated and insecure; \
+                     the value was not printed. Prefer setting {env_var} in your environment."
+                );
             }
+            println!("Configure the provider key via the environment (not printed by Vest):");
+            println!();
+            println!("  export {env_var}=<your-key-here>");
+            println!();
+            println!("Or create a local .env file (gitignored plaintext on disk — not an OS credential store):");
+            println!();
+            println!("  {env_var}=<your-key-here>");
+            println!();
+            println!("Vest reads keys from the process environment. It does not store API keys in its database.");
+            println!("A plaintext .env file is still a file on disk; protect it accordingly.");
+            // Intentionally drop `key` without logging or returning it.
+            drop(key);
         }
         ProvidersArgs::Test { provider } => {
             let config_path = find_vest_toml();
-            let config = vest_config::load_config(&config_path)
-                .unwrap_or_else(|_| vest_config::default_config());
+            let config = if config_path.exists() {
+                vest_config::load_config(&config_path).map_err(|e| {
+                    format!(
+                        "Failed to load config {}: {e}. Refusing to fall back to defaults for a present config file.",
+                        config_path.display()
+                    )
+                })?
+            } else {
+                eprintln!(
+                    "No config file at {}; using built-in defaults.",
+                    config_path.display()
+                );
+                vest_config::default_config()
+            };
             let providers = providers_to_check(&config, provider.as_deref());
 
             if providers.is_empty() {
@@ -143,8 +160,7 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
         }
         ProvidersArgs::Models { provider } => {
             let config_path = find_vest_toml();
-            let config = vest_config::load_config(&config_path)
-                .unwrap_or_else(|_| vest_config::default_config());
+            let config = vest_config::load_config_or_default(&config_path)?;
             let model = default_model_for(&config, &provider);
             let provider_client = create_provider(&provider, &model, &config)?;
             println!("Available models for {}:", provider);
@@ -180,8 +196,7 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
         ProvidersArgs::Status => {
             println!("Provider status check:");
             let config_path = find_vest_toml();
-            let config = vest_config::load_config(&config_path)
-                .unwrap_or_else(|_| vest_config::default_config());
+            let config = vest_config::load_config_or_default(&config_path)?;
             for provider in providers_to_check(&config, None) {
                 let model = default_model_for(&config, &provider);
                 let key_status = key_status_for(&provider);

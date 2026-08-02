@@ -1,11 +1,153 @@
+//! Web application scanner with origin-scoped HTTP crawling.
+//!
+//! Network safety invariants:
+//! - Only `http`/`https` URLs; structural origin matching via [`NetworkScope`]
+//! - No automatic redirects; each hop is re-validated against scope
+//! - Response bodies are capped; crawl concurrency and request budgets are enforced
+//! - Active vulnerability probes are gated by [`WebScanner::allow_active_probes`]
+
 use async_trait::async_trait;
+use futures_util::StreamExt;
+use reqwest::header::LOCATION;
 use reqwest::Client;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
+use url::Url;
 use vest_core::error::VestError;
 use vest_core::ids::new_id;
 use vest_core::types::{Finding, FindingStatus, Severity, Target, VulnerabilityClass};
 use vest_core::Scanner;
+
+/// Allowed origin for crawl/probe traffic (scheme + host + effective port).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkScope {
+    pub scheme: String,
+    pub host: String,
+    pub port: u16,
+}
+
+impl NetworkScope {
+    pub fn from_url(url: &Url) -> Result<Self, VestError> {
+        reject_disallowed_url(url)?;
+        let host = url
+            .host_str()
+            .ok_or_else(|| VestError::Config("URL missing host".into()))?
+            .to_ascii_lowercase();
+        let port = url
+            .port_or_known_default()
+            .ok_or_else(|| VestError::Config("URL missing effective port".into()))?;
+        Ok(Self {
+            scheme: url.scheme().to_ascii_lowercase(),
+            host,
+            port,
+        })
+    }
+
+    pub fn allows(&self, url: &Url) -> bool {
+        if reject_disallowed_url(url).is_err() {
+            return false;
+        }
+        let Some(host) = url.host_str() else {
+            return false;
+        };
+        let Some(port) = url.port_or_known_default() else {
+            return false;
+        };
+        self.scheme == url.scheme().to_ascii_lowercase()
+            && self.host == host.to_ascii_lowercase()
+            && self.port == port
+    }
+
+    pub fn origin_string(&self) -> String {
+        match (self.scheme.as_str(), self.port) {
+            ("http", 80) | ("https", 443) => format!("{}://{}", self.scheme, self.host),
+            _ => format!("{}://{}:{}", self.scheme, self.host, self.port),
+        }
+    }
+}
+
+fn reject_disallowed_url(url: &Url) -> Result<(), VestError> {
+    match url.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(VestError::Scan(format!(
+                "disallowed URL scheme '{scheme}' (only http/https)"
+            )));
+        }
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(VestError::Scan(
+            "URLs with userinfo are not allowed (credential/host confusion)".into(),
+        ));
+    }
+    if url.host_str().is_none() {
+        return Err(VestError::Scan("URL missing host".into()));
+    }
+    Ok(())
+}
+
+/// Resolve `href` against `base` and ensure the result stays in `scope`.
+pub fn resolve_in_scope(base: &Url, href: &str, scope: &NetworkScope) -> Option<Url> {
+    let joined = base.join(href).ok()?;
+    if scope.allows(&joined) {
+        Some(joined)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct RobotsRules {
+    /// Path prefixes disallowed for User-agent `*`.
+    disallows: Vec<String>,
+}
+
+impl RobotsRules {
+    fn parse(body: &str) -> Self {
+        let mut rules = RobotsRules::default();
+        let mut in_star = false;
+        for raw in body.lines() {
+            let line = raw.split('#').next().unwrap_or("").trim();
+            if line.is_empty() {
+                continue;
+            }
+            let lower = line.to_ascii_lowercase();
+            if let Some(rest) = lower.strip_prefix("user-agent:") {
+                let ua = rest.trim();
+                in_star = ua == "*";
+                continue;
+            }
+            if !in_star {
+                continue;
+            }
+            if lower.starts_with("disallow:") {
+                if let Some((_, value)) = line.split_once(':') {
+                    let path = value.trim();
+                    if !path.is_empty() {
+                        rules.disallows.push(path.to_string());
+                    }
+                }
+            }
+        }
+        rules
+    }
+
+    fn allows_path(&self, path: &str) -> bool {
+        let path = if path.is_empty() { "/" } else { path };
+        for rule in &self.disallows {
+            if rule == "/" {
+                return false;
+            }
+            if path.starts_with(rule) {
+                return false;
+            }
+        }
+        true
+    }
+}
 
 pub struct WebScanner {
     pub name: String,
@@ -16,19 +158,30 @@ pub struct WebScanner {
     pub respect_robots_txt: bool,
     pub user_agent: String,
     pub timeout_seconds: u64,
+    pub connect_timeout_ms: u64,
+    pub max_response_bytes: usize,
+    pub max_redirects: u32,
+    pub allow_active_probes: bool,
+    pub max_concurrent_requests: usize,
     client: Client,
+    semaphore: Arc<Semaphore>,
 }
 
 impl WebScanner {
-    pub fn new() -> Self {
-        let timeout = Duration::from_secs(30);
-        let client = Client::builder()
-            .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::limited(10))
+    fn build_client(timeout_seconds: u64, connect_timeout_ms: u64) -> Client {
+        Client::builder()
+            .timeout(Duration::from_secs(timeout_seconds))
+            .connect_timeout(Duration::from_millis(connect_timeout_ms))
+            .redirect(reqwest::redirect::Policy::none())
             .danger_accept_invalid_certs(false)
             .build()
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
 
+    pub fn new() -> Self {
+        let timeout_seconds = 30;
+        let connect_timeout_ms = 10_000;
+        let max_concurrent_requests = 8;
         Self {
             name: "web-scanner".into(),
             description: "Scans web applications for OWASP Top 10 vulnerabilities".into(),
@@ -37,8 +190,14 @@ impl WebScanner {
             crawl_max_urls: 10000,
             respect_robots_txt: true,
             user_agent: "VEST/0.1 Vulnerability Scanner".into(),
-            timeout_seconds: timeout.as_secs(),
-            client,
+            timeout_seconds,
+            connect_timeout_ms,
+            max_response_bytes: 5_242_880,
+            max_redirects: 5,
+            allow_active_probes: false,
+            max_concurrent_requests,
+            client: Self::build_client(timeout_seconds, connect_timeout_ms),
+            semaphore: Arc::new(Semaphore::new(max_concurrent_requests)),
         }
     }
 
@@ -54,6 +213,44 @@ impl WebScanner {
 
     pub fn with_user_agent(mut self, ua: impl Into<String>) -> Self {
         self.user_agent = ua.into();
+        self
+    }
+
+    pub fn with_respect_robots_txt(mut self, respect: bool) -> Self {
+        self.respect_robots_txt = respect;
+        self
+    }
+
+    pub fn with_max_response_bytes(mut self, bytes: usize) -> Self {
+        self.max_response_bytes = bytes;
+        self
+    }
+
+    pub fn with_max_redirects(mut self, max: u32) -> Self {
+        self.max_redirects = max;
+        self
+    }
+
+    pub fn with_allow_active_probes(mut self, allow: bool) -> Self {
+        self.allow_active_probes = allow;
+        self
+    }
+
+    pub fn with_connect_timeout_ms(mut self, ms: u64) -> Self {
+        self.connect_timeout_ms = ms;
+        self.client = Self::build_client(self.timeout_seconds, self.connect_timeout_ms);
+        self
+    }
+
+    pub fn with_timeout_seconds(mut self, secs: u64) -> Self {
+        self.timeout_seconds = secs;
+        self.client = Self::build_client(self.timeout_seconds, self.connect_timeout_ms);
+        self
+    }
+
+    pub fn with_max_concurrent_requests(mut self, n: usize) -> Self {
+        self.max_concurrent_requests = n.max(1);
+        self.semaphore = Arc::new(Semaphore::new(self.max_concurrent_requests));
         self
     }
 }
@@ -78,29 +275,55 @@ pub struct FormInfo {
 
 impl WebScanner {
     async fn crawl(&self, base_url: &str) -> Result<Vec<CrawledPage>, VestError> {
+        let base = Url::parse(base_url)
+            .map_err(|e| VestError::Config(format!("invalid start URL: {e}")))?;
+        let scope = NetworkScope::from_url(&base)?;
+
+        let robots = if self.respect_robots_txt {
+            self.fetch_robots(&scope).await
+        } else {
+            RobotsRules::default()
+        };
+
         let mut pages = Vec::new();
         let mut visited = HashSet::new();
-        let mut queue: Vec<(String, u32)> = Vec::new();
-        queue.push((base_url.to_string(), 0));
+        let mut queue: Vec<(Url, u32)> = Vec::new();
+        queue.push((base.clone(), 0));
+        let request_count = AtomicUsize::new(0);
 
         while let Some((url, depth)) = queue.pop() {
             if visited.len() >= self.crawl_max_urls {
                 break;
             }
-            if visited.contains(&url) {
+            let url_key = url.as_str().to_string();
+            if visited.contains(&url_key) {
                 continue;
             }
-            visited.insert(url.clone());
+            if !scope.allows(&url) {
+                tracing::debug!("Skipping out-of-scope URL {}", url);
+                continue;
+            }
+            if self.respect_robots_txt && !robots.allows_path(url.path()) {
+                tracing::debug!("Skipping robots-disallowed path {}", url.path());
+                continue;
+            }
+            visited.insert(url_key);
 
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
-            match self.fetch_page(&url).await {
+            match self.fetch_page_scoped(&url, &scope, &request_count).await {
                 Ok(page) => {
                     if depth < self.crawl_depth {
-                        let links = self.extract_links(&page, base_url);
-                        for link in &links {
-                            if !visited.contains(link) && visited.len() < self.crawl_max_urls {
-                                queue.push((link.clone(), depth + 1));
+                        for link in &page.links {
+                            if visited.len() + queue.len() >= self.crawl_max_urls {
+                                break;
+                            }
+                            if let Ok(link_url) = Url::parse(link) {
+                                if scope.allows(&link_url)
+                                    && (!self.respect_robots_txt
+                                        || robots.allows_path(link_url.path()))
+                                    && !visited.contains(link)
+                                {
+                                    queue.push((link_url, depth + 1));
+                                }
                             }
                         }
                     }
@@ -115,79 +338,221 @@ impl WebScanner {
         Ok(pages)
     }
 
-    async fn fetch_page(&self, url: &str) -> Result<CrawledPage, VestError> {
-        let resp = self
-            .client
-            .get(url)
-            .header("User-Agent", &self.user_agent)
-            .send()
-            .await
-            .map_err(|e| VestError::Provider(format!("HTTP request failed for {}: {}", url, e)))?;
-
-        let status = resp.status().as_u16();
-        let headers: Vec<(String, String)> = resp
-            .headers()
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-            .collect();
-
-        let body = match resp.text().await {
-            Ok(b) => Some(b),
-            Err(e) => {
-                tracing::warn!("Failed to read response body for {}: {}", url, e);
-                None
-            }
+    async fn fetch_robots(&self, scope: &NetworkScope) -> RobotsRules {
+        let robots_url = match Url::parse(&format!("{}/robots.txt", scope.origin_string())) {
+            Ok(u) => u,
+            Err(_) => return RobotsRules::default(),
         };
-        let links = body
+        let counter = AtomicUsize::new(0);
+        match self.fetch_page_scoped(&robots_url, scope, &counter).await {
+            Ok(page) => RobotsRules::parse(page.body.as_deref().unwrap_or("")),
+            Err(e) => {
+                tracing::debug!("robots.txt fetch failed: {e}");
+                RobotsRules::default()
+            }
+        }
+    }
+
+    async fn fetch_page_scoped(
+        &self,
+        start: &Url,
+        scope: &NetworkScope,
+        request_count: &AtomicUsize,
+    ) -> Result<CrawledPage, VestError> {
+        let (final_url, status, headers, body) = self
+            .request_with_redirects("GET", start, scope, request_count, None)
+            .await?;
+
+        let body_str = body.and_then(|b| String::from_utf8(b).ok());
+        let links = body_str
             .as_ref()
-            .map(|b| self.parse_links(b, url))
+            .map(|b| self.parse_links_scoped(b, &final_url, scope))
             .unwrap_or_default();
-        let forms = body
+        let forms = body_str
             .as_ref()
-            .map(|b| self.parse_forms(b, url))
+            .map(|b| self.parse_forms_scoped(b, &final_url, scope))
             .unwrap_or_default();
 
         Ok(CrawledPage {
-            url: url.to_string(),
+            url: final_url.to_string(),
             status,
-            body,
+            body: body_str,
             headers,
             links,
             forms,
         })
     }
 
+    async fn request_with_redirects(
+        &self,
+        method: &str,
+        start: &Url,
+        scope: &NetworkScope,
+        request_count: &AtomicUsize,
+        form: Option<&[(String, String)]>,
+    ) -> Result<(Url, u16, Vec<(String, String)>, Option<Vec<u8>>), VestError> {
+        let mut current = start.clone();
+        let mut hops = 0u32;
+
+        loop {
+            if !scope.allows(&current) {
+                return Err(VestError::Scan(format!(
+                    "URL escapes network scope: {}",
+                    current
+                )));
+            }
+            if request_count.fetch_add(1, Ordering::Relaxed) >= self.crawl_max_urls {
+                return Err(VestError::Scan("request budget exhausted".into()));
+            }
+
+            let _permit = self
+                .semaphore
+                .acquire()
+                .await
+                .map_err(|e| VestError::Internal(format!("semaphore closed: {e}")))?;
+
+            let mut builder = match method {
+                "POST" => self.client.post(current.clone()),
+                _ => self.client.get(current.clone()),
+            };
+            builder = builder.header("User-Agent", &self.user_agent);
+            if let Some(fields) = form {
+                let owned: Vec<(String, String)> = fields.to_vec();
+                builder = builder.form(&owned);
+            }
+
+            let resp = builder.send().await.map_err(|e| {
+                if e.is_timeout() || e.is_connect() {
+                    VestError::Timeout(format!("HTTP {method} {} failed: {e}", current))
+                } else {
+                    VestError::Provider(format!("HTTP {method} {} failed: {e}", current))
+                }
+            })?;
+
+            let status = resp.status();
+            if status.is_redirection() {
+                hops += 1;
+                if hops > self.max_redirects {
+                    return Err(VestError::Scan(format!(
+                        "too many redirects (>{}) from {}",
+                        self.max_redirects, start
+                    )));
+                }
+                let loc = resp
+                    .headers()
+                    .get(LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or_else(|| {
+                        VestError::Scan(format!("redirect without Location from {current}"))
+                    })?;
+                let next = current.join(loc).map_err(|e| {
+                    VestError::Scan(format!("invalid redirect Location '{loc}': {e}"))
+                })?;
+                // Drop body of redirect response.
+                drop(resp);
+                current = next;
+                continue;
+            }
+
+            let headers: Vec<(String, String)> = resp
+                .headers()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                .collect();
+            let status_code = status.as_u16();
+            let body = self.read_body_limited(resp).await?;
+            return Ok((current, status_code, headers, body));
+        }
+    }
+
+    async fn read_body_limited(
+        &self,
+        resp: reqwest::Response,
+    ) -> Result<Option<Vec<u8>>, VestError> {
+        if let Some(cl) = resp.content_length() {
+            if cl > self.max_response_bytes as u64 {
+                return Err(VestError::Scan(format!(
+                    "response Content-Length {cl} exceeds limit {}",
+                    self.max_response_bytes
+                )));
+            }
+        }
+
+        let mut stream = resp.bytes_stream();
+        let mut buf = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| VestError::Provider(format!("body read failed: {e}")))?;
+            if buf.len().saturating_add(chunk.len()) > self.max_response_bytes {
+                return Err(VestError::Scan(format!(
+                    "response body exceeds limit {}",
+                    self.max_response_bytes
+                )));
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(Some(buf))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     fn extract_links(&self, page: &CrawledPage, base_url: &str) -> Vec<String> {
+        let Ok(base) = Url::parse(base_url) else {
+            return Vec::new();
+        };
+        let Ok(scope) = NetworkScope::from_url(&base) else {
+            return Vec::new();
+        };
         page.links
             .iter()
-            .filter(|l| l.starts_with(base_url) || l.starts_with('/'))
-            .map(|l| {
-                if l.starts_with('/') {
-                    format!("{}{}", base_url.trim_end_matches('/'), l)
+            .filter_map(|l| {
+                let u = Url::parse(l).ok()?;
+                if scope.allows(&u) {
+                    Some(u.to_string())
                 } else {
-                    l.clone()
+                    None
                 }
             })
             .collect()
     }
 
     pub fn parse_links(&self, html: &str, base_url: &str) -> Vec<String> {
+        let Ok(base) = Url::parse(base_url) else {
+            return Vec::new();
+        };
+        let Ok(scope) = NetworkScope::from_url(&base) else {
+            return Vec::new();
+        };
+        self.parse_links_scoped(html, &base, &scope)
+    }
+
+    fn parse_links_scoped(&self, html: &str, base: &Url, scope: &NetworkScope) -> Vec<String> {
         let mut links = Vec::new();
         let re = regex::Regex::new(r#"href\s*=\s*["']([^"']+)["']"#).unwrap();
         for cap in re.captures_iter(html) {
-            let href = cap[1].to_string();
-            if href.starts_with("http") || href.starts_with('/') {
-                if href.starts_with('/') {
-                    links.push(format!("{}{}", base_url.trim_end_matches('/'), href));
-                } else {
-                    links.push(href);
-                }
+            let href = &cap[1];
+            if href.starts_with('#')
+                || href.starts_with("mailto:")
+                || href.starts_with("javascript:")
+            {
+                continue;
+            }
+            if let Some(resolved) = resolve_in_scope(base, href, scope) {
+                links.push(resolved.to_string());
             }
         }
         links
     }
 
     pub fn parse_forms(&self, html: &str, base_url: &str) -> Vec<FormInfo> {
+        let Ok(base) = Url::parse(base_url) else {
+            return Vec::new();
+        };
+        let Ok(scope) = NetworkScope::from_url(&base) else {
+            return Vec::new();
+        };
+        self.parse_forms_scoped(html, &base, &scope)
+    }
+
+    fn parse_forms_scoped(&self, html: &str, base: &Url, scope: &NetworkScope) -> Vec<FormInfo> {
         let mut forms = Vec::new();
         let form_re = regex::Regex::new(r#"<form\b[^>]*>"#).unwrap();
         let action_re = regex::Regex::new(r#"action\s*=\s*["']([^"']*)["']"#).unwrap();
@@ -205,19 +570,13 @@ impl WebScanner {
                 .map(|end| &remaining[..end])
                 .unwrap_or(remaining);
 
-            let action = action_re
+            let action_raw = action_re
                 .captures(form_tag.as_str())
                 .map(|c| c[1].to_string())
-                .unwrap_or_else(|| base_url.to_string());
+                .unwrap_or_default();
 
-            let action_url = if action == base_url {
-                action
-            } else if action.starts_with('/') {
-                format!("{}{}", base_url.trim_end_matches('/'), action)
-            } else if action.starts_with("http") {
-                action.clone()
-            } else {
-                format!("{}/{}", base_url.trim_end_matches('/'), action)
+            let Some(action_url) = resolve_in_scope(base, &action_raw, scope) else {
+                continue;
             };
 
             let method = method_re
@@ -239,7 +598,7 @@ impl WebScanner {
             }
 
             forms.push(FormInfo {
-                action: action_url,
+                action: action_url.to_string(),
                 method,
                 inputs,
             });
@@ -248,7 +607,7 @@ impl WebScanner {
         forms
     }
 
-    async fn scan_xss(&self, page: &CrawledPage) -> Vec<Finding> {
+    async fn scan_xss(&self, page: &CrawledPage, scope: &NetworkScope) -> Vec<Finding> {
         let mut findings = Vec::new();
         let payloads = vec![
             "<script>alert('xss')</script>",
@@ -257,12 +616,20 @@ impl WebScanner {
             "javascript:alert('xss')",
             "'><script>alert('xss')</script>",
         ];
+        let counter = AtomicUsize::new(0);
 
         for form in &page.forms {
             for (param_name, _) in &form.inputs {
                 for payload in &payloads {
                     let result = self
-                        .submit_form(&form.action, &form.method, param_name, payload, &page.url)
+                        .submit_form_scoped(
+                            &form.action,
+                            &form.method,
+                            param_name,
+                            payload,
+                            scope,
+                            &counter,
+                        )
                         .await;
                     if let Ok((_status, _body, reflected)) = result {
                         if reflected {
@@ -297,8 +664,9 @@ impl WebScanner {
                     let test_url = page
                         .url
                         .replace(param, &format!("{}={}", name, test_payload));
-                    if let Ok((_status, _body, reflected)) =
-                        self.fetch_page_for_xss(&test_url, test_payload).await
+                    if let Ok((_status, _body, reflected)) = self
+                        .fetch_page_for_xss_scoped(&test_url, test_payload, scope, &counter)
+                        .await
                     {
                         if reflected {
                             findings.push(self.make_finding(
@@ -347,8 +715,9 @@ impl WebScanner {
                     continue;
                 }
                 let test_url = format!("{}?{}={}", base_part, param_name, test_payload);
-                if let Ok((_status, _body, reflected)) =
-                    self.fetch_page_for_xss(&test_url, test_payload).await
+                if let Ok((_status, _body, reflected)) = self
+                    .fetch_page_for_xss_scoped(&test_url, test_payload, scope, &counter)
+                    .await
                 {
                     if reflected {
                         findings.push(self.make_finding(
@@ -371,7 +740,7 @@ impl WebScanner {
         findings
     }
 
-    async fn scan_sqli(&self, page: &CrawledPage) -> Vec<Finding> {
+    async fn scan_sqli(&self, page: &CrawledPage, scope: &NetworkScope) -> Vec<Finding> {
         let mut findings = Vec::new();
         let payloads = vec![
             ("'", "SQL syntax error"),
@@ -380,12 +749,20 @@ impl WebScanner {
             ("1; DROP TABLE users--", "DROP TABLE"),
             ("' UNION SELECT NULL--", "UNION SELECT"),
         ];
+        let counter = AtomicUsize::new(0);
 
         for form in &page.forms {
             for (param_name, _) in &form.inputs {
                 for (payload, signature) in &payloads {
                     let result = self
-                        .submit_form(&form.action, &form.method, param_name, payload, &page.url)
+                        .submit_form_scoped(
+                            &form.action,
+                            &form.method,
+                            param_name,
+                            payload,
+                            scope,
+                            &counter,
+                        )
                         .await;
                     if let Ok((status, body, _)) = result {
                         let body_lower = body.to_lowercase();
@@ -417,7 +794,7 @@ impl WebScanner {
         findings
     }
 
-    async fn scan_ssrf(&self, page: &CrawledPage) -> Vec<Finding> {
+    async fn scan_ssrf(&self, page: &CrawledPage, scope: &NetworkScope) -> Vec<Finding> {
         let mut findings = Vec::new();
         let ssrf_targets = vec![
             "http://169.254.169.254/latest/meta-data/",
@@ -425,6 +802,7 @@ impl WebScanner {
             "http://127.0.0.1:22",
             "file:///etc/passwd",
         ];
+        let counter = AtomicUsize::new(0);
 
         for form in &page.forms {
             for (param_name, param_type) in &form.inputs {
@@ -434,7 +812,14 @@ impl WebScanner {
                 {
                     for target in &ssrf_targets {
                         let result = self
-                            .submit_form(&form.action, &form.method, param_name, target, &page.url)
+                            .submit_form_scoped(
+                                &form.action,
+                                &form.method,
+                                param_name,
+                                target,
+                                scope,
+                                &counter,
+                            )
                             .await;
                         if let Ok((_status, body, _)) = result {
                             if body.contains("ami-id")
@@ -468,7 +853,7 @@ impl WebScanner {
         findings
     }
 
-    async fn scan_path_traversal(&self, page: &CrawledPage) -> Vec<Finding> {
+    async fn scan_path_traversal(&self, page: &CrawledPage, scope: &NetworkScope) -> Vec<Finding> {
         let mut findings = Vec::new();
         let payloads = vec![
             "../../../etc/passwd",
@@ -489,6 +874,7 @@ impl WebScanner {
             "User Database",
             "Host Database",
         ];
+        let counter = AtomicUsize::new(0);
 
         for form in &page.forms {
             for (param_name, _) in &form.inputs {
@@ -498,7 +884,14 @@ impl WebScanner {
                 {
                     for payload in &payloads {
                         let result = self
-                            .submit_form(&form.action, &form.method, param_name, payload, &page.url)
+                            .submit_form_scoped(
+                                &form.action,
+                                &form.method,
+                                param_name,
+                                payload,
+                                scope,
+                                &counter,
+                            )
                             .await;
                         if let Ok((_, body, _)) = result {
                             for sig in &signatures {
@@ -562,43 +955,35 @@ impl WebScanner {
                 {
                     for payload in &payloads {
                         let test_url = format!("{}?{}={}", base_part, param_name, payload);
-                        match self
-                            .client
-                            .get(&test_url)
-                            .header("User-Agent", &self.user_agent)
-                            .send()
-                            .await
-                        {
-                            Ok(resp) => {
-                                if let Ok(body) = resp.text().await {
-                                    for sig in &signatures {
-                                        if body.contains(sig) {
-                                            findings.push(self.make_finding(
-                                                format!(
-                                                    "Path traversal in URL parameter '{}' at {}",
-                                                    param_name, page.url
-                                                ),
-                                                VulnerabilityClass::PathTraversal,
-                                                Severity::Critical,
-                                                0.9,
-                                                serde_json::json!({
-                                                    "url": page.url,
-                                                    "parameter": param_name,
-                                                    "payload": payload,
-                                                }),
-                                                Some("CWE-22".into()),
-                                            ));
-                                            break;
-                                        }
+                        if let Ok(url) = Url::parse(&test_url) {
+                            if !scope.allows(&url) {
+                                continue;
+                            }
+                            if let Ok((_, _, _, Some(body))) = self
+                                .request_with_redirects("GET", &url, scope, &counter, None)
+                                .await
+                            {
+                                let body = String::from_utf8_lossy(&body);
+                                for sig in &signatures {
+                                    if body.contains(sig) {
+                                        findings.push(self.make_finding(
+                                            format!(
+                                                "Path traversal in URL parameter '{}' at {}",
+                                                param_name, page.url
+                                            ),
+                                            VulnerabilityClass::PathTraversal,
+                                            Severity::Critical,
+                                            0.9,
+                                            serde_json::json!({
+                                                "url": page.url,
+                                                "parameter": param_name,
+                                                "payload": payload,
+                                            }),
+                                            Some("CWE-22".into()),
+                                        ));
+                                        break;
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                tracing::debug!(
-                                    "Path traversal URL check failed for {}: {}",
-                                    test_url,
-                                    e
-                                );
                             }
                         }
                     }
@@ -609,20 +994,32 @@ impl WebScanner {
         findings
     }
 
-    async fn scan_command_injection(&self, page: &CrawledPage) -> Vec<Finding> {
+    async fn scan_command_injection(
+        &self,
+        page: &CrawledPage,
+        scope: &NetworkScope,
+    ) -> Vec<Finding> {
         let mut findings = Vec::new();
         let payloads = vec![
             ("127.0.0.1; sleep 5", "timing"),
             ("127.0.0.1 | whoami", "whoami"),
             ("127.0.0.1 `id`", "uid="),
         ];
+        let counter = AtomicUsize::new(0);
 
         for form in &page.forms {
             for (param_name, _) in &form.inputs {
                 for (payload, _sig) in &payloads {
                     let start = std::time::Instant::now();
                     let result = self
-                        .submit_form(&form.action, &form.method, param_name, payload, &page.url)
+                        .submit_form_scoped(
+                            &form.action,
+                            &form.method,
+                            param_name,
+                            payload,
+                            scope,
+                            &counter,
+                        )
                         .await;
                     let elapsed = start.elapsed();
 
@@ -671,7 +1068,16 @@ impl WebScanner {
         findings
     }
 
+    /// Passive misconfiguration checks (response headers only).
     pub async fn scan_misconfigurations(&self, page: &CrawledPage) -> Vec<Finding> {
+        self.scan_misconfigurations_inner(page, None).await
+    }
+
+    async fn scan_misconfigurations_inner(
+        &self,
+        page: &CrawledPage,
+        scope: Option<&NetworkScope>,
+    ) -> Vec<Finding> {
         let mut findings = Vec::new();
 
         let security_headers = [
@@ -730,103 +1136,93 @@ impl WebScanner {
             }
         }
 
-        let git_url = format!("{}/.git/HEAD", page.url.trim_end_matches('/'));
-        if let Ok(resp) = self
-            .client
-            .get(&git_url)
-            .header("User-Agent", &self.user_agent)
-            .send()
-            .await
-        {
-            if resp.status().is_success() {
-                findings.push(self.make_finding(
-                    format!("Exposed .git directory at {}", git_url),
-                    VulnerabilityClass::Unknown,
-                    Severity::High,
-                    0.95,
-                    serde_json::json!({"url": git_url}),
-                    Some("CWE-538".into()),
-                ));
-            }
-        }
-
-        let env_url = format!("{}/.env", page.url.trim_end_matches('/'));
-        if let Ok(resp) = self
-            .client
-            .get(&env_url)
-            .header("User-Agent", &self.user_agent)
-            .send()
-            .await
-        {
-            if resp.status().is_success() {
-                findings.push(self.make_finding(
-                    format!("Exposed .env file at {}", env_url),
-                    VulnerabilityClass::Unknown,
-                    Severity::Critical,
-                    0.95,
-                    serde_json::json!({"url": env_url}),
-                    Some("CWE-538".into()),
-                ));
+        if self.allow_active_probes {
+            if let Some(scope) = scope {
+                let counter = AtomicUsize::new(0);
+                if let Ok(base) = Url::parse(&page.url) {
+                    for (suffix, title, severity, cwe) in [
+                        (
+                            ".git/HEAD",
+                            "Exposed .git directory",
+                            Severity::High,
+                            "CWE-538",
+                        ),
+                        (".env", "Exposed .env file", Severity::Critical, "CWE-538"),
+                    ] {
+                        if let Ok(probe_url) = base.join(suffix) {
+                            if !scope.allows(&probe_url) {
+                                continue;
+                            }
+                            if let Ok((_, status, _, _)) = self
+                                .request_with_redirects("GET", &probe_url, scope, &counter, None)
+                                .await
+                            {
+                                if (200..300).contains(&status) {
+                                    findings.push(self.make_finding(
+                                        format!("{title} at {probe_url}"),
+                                        VulnerabilityClass::Unknown,
+                                        severity,
+                                        0.95,
+                                        serde_json::json!({"url": probe_url.to_string()}),
+                                        Some(cwe.into()),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
         findings
     }
 
-    async fn submit_form(
+    async fn submit_form_scoped(
         &self,
         action: &str,
         _method: &str,
         param: &str,
         value: &str,
-        _referer: &str,
+        scope: &NetworkScope,
+        request_count: &AtomicUsize,
     ) -> Result<(u16, String, bool), VestError> {
-        let params = [(param, value)];
-        let resp = self
-            .client
-            .post(action)
-            .header("User-Agent", &self.user_agent)
-            .form(&params)
-            .send()
-            .await
-            .map_err(|e| VestError::Provider(format!("Form submit failed: {}", e)))?;
-
-        let status = resp.status().as_u16();
-        let body = match resp.text().await {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::debug!("Failed to read form submit response body: {}", e);
-                String::new()
-            }
-        };
+        let url =
+            Url::parse(action).map_err(|e| VestError::Scan(format!("invalid form action: {e}")))?;
+        if !scope.allows(&url) {
+            return Err(VestError::Scan(format!(
+                "form action escapes scope: {action}"
+            )));
+        }
+        let fields = vec![(param.to_string(), value.to_string())];
+        let (_final, status, _headers, body) = self
+            .request_with_redirects("POST", &url, scope, request_count, Some(&fields))
+            .await?;
+        let body = body
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
         let reflected = body.contains(value);
-
         Ok((status, body, reflected))
     }
 
-    async fn fetch_page_for_xss(
+    async fn fetch_page_for_xss_scoped(
         &self,
         url: &str,
         payload: &str,
+        scope: &NetworkScope,
+        request_count: &AtomicUsize,
     ) -> Result<(u16, String, bool), VestError> {
-        let resp = self
-            .client
-            .get(url)
-            .header("User-Agent", &self.user_agent)
-            .send()
-            .await
-            .map_err(|e| VestError::Provider(format!("XSS check failed: {}", e)))?;
-
-        let status = resp.status().as_u16();
-        let body = match resp.text().await {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::debug!("Failed to read XSS check response body: {}", e);
-                String::new()
-            }
-        };
+        let parsed =
+            Url::parse(url).map_err(|e| VestError::Scan(format!("invalid XSS probe URL: {e}")))?;
+        if !scope.allows(&parsed) {
+            return Err(VestError::Scan(format!("XSS probe escapes scope: {url}")));
+        }
+        let (_final, status, _headers, body) = self
+            .request_with_redirects("GET", &parsed, scope, request_count, None)
+            .await?;
+        let body = body
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
         let reflected = body.contains(payload);
-
         Ok((status, body, reflected))
     }
 
@@ -899,30 +1295,31 @@ impl Scanner for WebScanner {
             }
         };
 
-        tracing::info!("Starting web scan of: {}", url);
+        let start =
+            Url::parse(&url).map_err(|e| VestError::Config(format!("invalid target URL: {e}")))?;
+        let scope = NetworkScope::from_url(&start)?;
+
+        tracing::info!(
+            "Starting web scan of: {} (active_probes={})",
+            url,
+            self.allow_active_probes
+        );
         let mut all_findings = Vec::new();
 
         let pages = self.crawl(&url).await?;
         tracing::info!("Crawled {} pages", pages.len());
 
         for page in &pages {
-            let xss_findings = self.scan_xss(page).await;
-            all_findings.extend(xss_findings);
-
-            let sqli_findings = self.scan_sqli(page).await;
-            all_findings.extend(sqli_findings);
-
-            let ssrf_findings = self.scan_ssrf(page).await;
-            all_findings.extend(ssrf_findings);
-
-            let path_findings = self.scan_path_traversal(page).await;
-            all_findings.extend(path_findings);
-
-            let cmd_findings = self.scan_command_injection(page).await;
-            all_findings.extend(cmd_findings);
-
-            let config_findings = self.scan_misconfigurations(page).await;
+            let config_findings = self.scan_misconfigurations_inner(page, Some(&scope)).await;
             all_findings.extend(config_findings);
+
+            if self.allow_active_probes {
+                all_findings.extend(self.scan_xss(page, &scope).await);
+                all_findings.extend(self.scan_sqli(page, &scope).await);
+                all_findings.extend(self.scan_ssrf(page, &scope).await);
+                all_findings.extend(self.scan_path_traversal(page, &scope).await);
+                all_findings.extend(self.scan_command_injection(page, &scope).await);
+            }
         }
 
         let mut seen: HashSet<String> = HashSet::new();
@@ -943,6 +1340,9 @@ impl Scanner for WebScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_parse_links() {
@@ -1026,6 +1426,7 @@ mod tests {
         assert!(scanner.enabled);
         assert_eq!(scanner.crawl_depth, 10);
         assert_eq!(scanner.crawl_max_urls, 10000);
+        assert!(!scanner.allow_active_probes);
     }
 
     #[test]
@@ -1073,34 +1474,330 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_xss_url_param() {
-        let scanner = WebScanner::new();
-        let page = CrawledPage {
-            url: "http://test.com/search?q=test".into(),
-            status: 200,
-            body: None,
-            headers: vec![],
-            links: vec![],
-            forms: vec![],
-        };
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let findings = rt.block_on(scanner.scan_xss(&page));
-        assert!(findings.is_empty());
+    fn test_scope_same_origin_and_prefix_attack() {
+        let base = Url::parse("https://example.com/app").unwrap();
+        let scope = NetworkScope::from_url(&base).unwrap();
+        assert!(scope.allows(&Url::parse("https://example.com/other").unwrap()));
+        assert!(!scope.allows(&Url::parse("https://example.com.evil.com/").unwrap()));
+        assert!(!scope.allows(&Url::parse("https://evil.com/").unwrap()));
+        assert!(!scope.allows(&Url::parse("http://example.com/").unwrap()));
     }
 
     #[test]
-    fn test_scan_path_traversal_url_param() {
+    fn test_scope_rejects_userinfo_port_scheme() {
+        assert!(NetworkScope::from_url(&Url::parse("https://user@example.com/").unwrap()).is_err());
+        assert!(NetworkScope::from_url(&Url::parse("file:///etc/passwd").unwrap()).is_err());
+        assert!(NetworkScope::from_url(&Url::parse("ftp://example.com/").unwrap()).is_err());
+        assert!(NetworkScope::from_url(&Url::parse("javascript:alert(1)").unwrap()).is_err());
+        assert!(NetworkScope::from_url(&Url::parse("data:text/plain,hi").unwrap()).is_err());
+
+        let scope = NetworkScope::from_url(&Url::parse("https://example.com/").unwrap()).unwrap();
+        assert!(!scope.allows(&Url::parse("https://example.com:8443/").unwrap()));
+        assert!(scope.allows(&Url::parse("https://example.com:443/").unwrap()));
+    }
+
+    #[test]
+    fn test_relative_join_stays_in_scope() {
+        let base = Url::parse("https://example.com/dir/page").unwrap();
+        let scope = NetworkScope::from_url(&base).unwrap();
+        let ok = resolve_in_scope(&base, "../ok", &scope).unwrap();
+        assert_eq!(ok.path(), "/ok");
+        assert!(resolve_in_scope(&base, "https://evil.com/", &scope).is_none());
+        assert!(resolve_in_scope(&base, "//evil.com/path", &scope).is_none());
+    }
+
+    #[test]
+    fn test_robots_parse_and_allow() {
+        let body = "\
+User-agent: *\n\
+Disallow: /private\n\
+Disallow: /tmp\n\
+\n\
+User-agent: Googlebot\n\
+Disallow: /\n";
+        let rules = RobotsRules::parse(body);
+        assert!(rules.allows_path("/public"));
+        assert!(!rules.allows_path("/private/secret"));
+        assert!(!rules.allows_path("/tmp"));
+    }
+
+    type TestHandler = Arc<dyn Fn(String) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync>;
+
+    async fn spawn_http_server(handler: TestHandler) -> (u16, Arc<AtomicBool>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = stop.clone();
+        tokio::spawn(async move {
+            while !stop_flag.load(Ordering::Relaxed) {
+                let Ok((mut socket, _)) =
+                    tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                        .await
+                        .unwrap_or(Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "timeout",
+                        )))
+                else {
+                    continue;
+                };
+                let mut buf = vec![0u8; 8192];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let (status, headers, body) = handler(req);
+                let reason = match status {
+                    200 => "OK",
+                    302 => "Found",
+                    404 => "Not Found",
+                    _ => "OK",
+                };
+                let mut resp = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n",
+                    body.len()
+                );
+                for (k, v) in headers {
+                    resp.push_str(&format!("{k}: {v}\r\n"));
+                }
+                resp.push_str("\r\n");
+                let mut bytes = resp.into_bytes();
+                bytes.extend_from_slice(&body);
+                let _ = socket.write_all(&bytes).await;
+            }
+        });
+        // Give the accept loop a moment.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        (port, stop)
+    }
+
+    fn hdr(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_same_origin_crawl_and_reject_external_link() {
+        let handler: TestHandler = Arc::new(|req: String| {
+            if req.contains("GET / ") || req.contains("GET / HTTP") {
+                (
+                    200u16,
+                    hdr(&[]),
+                    b"<a href=\"/ok\">ok</a><a href=\"http://evil.example/x\">x</a>".to_vec(),
+                )
+            } else if req.contains("GET /ok") {
+                (200u16, hdr(&[]), b"ok".to_vec())
+            } else {
+                (404u16, hdr(&[]), b"no".to_vec())
+            }
+        });
+        let (port, stop) = spawn_http_server(handler).await;
+        let base = format!("http://127.0.0.1:{port}/");
+        let scanner = WebScanner::new()
+            .with_respect_robots_txt(false)
+            .with_crawl_depth(2)
+            .with_max_urls(10)
+            .with_allow_active_probes(false);
+        let pages = scanner.crawl(&base).await.unwrap();
+        assert!(pages.iter().any(|p| p.url.ends_with('/')));
+        assert!(pages.iter().any(|p| p.url.contains("/ok")));
+        assert!(!pages.iter().any(|p| p.url.contains("evil.example")));
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn test_redirect_escape_blocked() {
+        let handler: TestHandler = Arc::new(|req: String| {
+            if req.contains("GET /start") {
+                (
+                    302u16,
+                    hdr(&[("Location", "http://127.0.0.1:9/evil")]),
+                    vec![],
+                )
+            } else {
+                (200u16, hdr(&[]), b"hi".to_vec())
+            }
+        });
+        let (port, stop) = spawn_http_server(handler).await;
+        let base = format!("http://127.0.0.1:{port}/start");
+        let scanner = WebScanner::new().with_respect_robots_txt(false);
+        let scope = NetworkScope::from_url(&Url::parse(&base).unwrap()).unwrap();
+        let counter = AtomicUsize::new(0);
+        let result = scanner
+            .fetch_page_scoped(&Url::parse(&base).unwrap(), &scope, &counter)
+            .await;
+        assert!(result.is_err());
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn test_body_limit_enforced() {
+        let handler: TestHandler = Arc::new(|_req: String| (200u16, hdr(&[]), vec![b'A'; 10_000]));
+        let (port, stop) = spawn_http_server(handler).await;
+        let base = format!("http://127.0.0.1:{port}/");
+        let scanner = WebScanner::new()
+            .with_respect_robots_txt(false)
+            .with_max_response_bytes(100);
+        let scope = NetworkScope::from_url(&Url::parse(&base).unwrap()).unwrap();
+        let counter = AtomicUsize::new(0);
+        let result = scanner
+            .fetch_page_scoped(&Url::parse(&base).unwrap(), &scope, &counter)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds limit"));
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn test_redirect_loop_capped() {
+        let handler: TestHandler = Arc::new(|req: String| {
+            let loc = if req.contains("GET /a") { "/b" } else { "/a" };
+            (302u16, hdr(&[("Location", loc)]), vec![])
+        });
+        let (port, stop) = spawn_http_server(handler).await;
+        let base = format!("http://127.0.0.1:{port}/a");
+        let scanner = WebScanner::new()
+            .with_respect_robots_txt(false)
+            .with_max_redirects(3);
+        let scope = NetworkScope::from_url(&Url::parse(&base).unwrap()).unwrap();
+        let counter = AtomicUsize::new(0);
+        let result = scanner
+            .fetch_page_scoped(&Url::parse(&base).unwrap(), &scope, &counter)
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("too many redirects"));
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn test_request_cap_and_depth() {
+        let handler: TestHandler = Arc::new(|req: String| {
+            let body = if req.contains("GET /0") {
+                b"<a href=\"/1\">1</a>".to_vec()
+            } else if req.contains("GET /1") {
+                b"<a href=\"/2\">2</a>".to_vec()
+            } else {
+                b"<a href=\"/3\">3</a>".to_vec()
+            };
+            (200u16, hdr(&[]), body)
+        });
+        let (port, stop) = spawn_http_server(handler).await;
+        let base = format!("http://127.0.0.1:{port}/0");
+        let scanner = WebScanner::new()
+            .with_respect_robots_txt(false)
+            .with_crawl_depth(1)
+            .with_max_urls(2);
+        let pages = scanner.crawl(&base).await.unwrap();
+        assert!(pages.len() <= 2);
+        assert!(!pages.iter().any(|p| p.url.ends_with("/2")));
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn test_passive_does_not_run_active_probes() {
+        let active_hit = Arc::new(AtomicBool::new(false));
+        let active_hit2 = active_hit.clone();
+        let handler: TestHandler = Arc::new(move |req: String| {
+            if req.contains("POST") || req.contains("alert") || req.contains(".git") {
+                active_hit2.store(true, Ordering::Relaxed);
+            }
+            (
+                200u16,
+                hdr(&[]),
+                b"<form action=\"/login\" method=\"POST\"><input name=\"q\" type=\"text\"></form>"
+                    .to_vec(),
+            )
+        });
+        let (port, stop) = spawn_http_server(handler).await;
+        let base = format!("http://127.0.0.1:{port}/");
+        let scanner = WebScanner::new()
+            .with_respect_robots_txt(false)
+            .with_allow_active_probes(false)
+            .with_crawl_depth(1)
+            .with_max_urls(5);
+        let target = Target {
+            id: "t".into(),
+            name: "local".into(),
+            target_type: vest_core::types::TargetType::Web,
+            path: None,
+            url_str: Some(base),
+            pid: None,
+            host: None,
+            metadata: serde_json::json!({}),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let findings = scanner.scan(&target).await.unwrap();
+        assert!(!active_hit.load(Ordering::Relaxed));
+        assert!(findings.iter().all(|f| {
+            f.vulnerability_class != VulnerabilityClass::XSS
+                && f.vulnerability_class != VulnerabilityClass::SQLInjection
+        }));
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn test_robots_txt_respected() {
+        let handler: TestHandler = Arc::new(|req: String| {
+            if req.contains("GET /robots.txt") {
+                (
+                    200u16,
+                    hdr(&[]),
+                    b"User-agent: *\nDisallow: /hidden\n".to_vec(),
+                )
+            } else if req.contains("GET /hidden") {
+                (200u16, hdr(&[]), b"secret".to_vec())
+            } else {
+                (
+                    200u16,
+                    hdr(&[]),
+                    b"<a href=\"/hidden\">h</a><a href=\"/ok\">o</a>".to_vec(),
+                )
+            }
+        });
+        let (port, stop) = spawn_http_server(handler).await;
+        let base = format!("http://127.0.0.1:{port}/");
+        let scanner = WebScanner::new()
+            .with_respect_robots_txt(true)
+            .with_crawl_depth(2)
+            .with_max_urls(10);
+        let pages = scanner.crawl(&base).await.unwrap();
+        assert!(!pages.iter().any(|p| p.url.contains("/hidden")));
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn test_connect_timeout() {
+        // Port with nothing listening — connect should time out / fail quickly.
+        let scanner = WebScanner::new()
+            .with_respect_robots_txt(false)
+            .with_connect_timeout_ms(200)
+            .with_timeout_seconds(1);
+        let url = Url::parse("http://127.0.0.1:1/").unwrap();
+        let scope = NetworkScope::from_url(&url).unwrap();
+        let counter = AtomicUsize::new(0);
+        let result = scanner.fetch_page_scoped(&url, &scope, &counter).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_links_filters_scope() {
         let scanner = WebScanner::new();
         let page = CrawledPage {
-            url: "http://test.com/files?filename=test".into(),
+            url: "https://example.com/".into(),
             status: 200,
             body: None,
             headers: vec![],
-            links: vec![],
+            links: vec![
+                "https://example.com/a".into(),
+                "https://example.com.evil.com/b".into(),
+            ],
             forms: vec![],
         };
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let findings = rt.block_on(scanner.scan_path_traversal(&page));
-        assert!(findings.is_empty());
+        let links = scanner.extract_links(&page, "https://example.com/");
+        assert_eq!(links.len(), 1);
+        assert!(links[0].contains("/a"));
     }
 }

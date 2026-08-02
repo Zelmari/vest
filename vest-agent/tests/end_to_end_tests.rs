@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::sync::Arc;
-use vest_agent::context::{RiskLevel, ToolDefinition};
+use vest_agent::context::ToolDefinition;
 use vest_agent::patterns::tooluse::ToolUseRunner;
 use vest_agent::safety::SafetyChecker;
 use vest_agent::tool_registry::ToolRegistry;
@@ -8,6 +8,7 @@ use vest_core::error::VestError;
 use vest_core::ids::new_id;
 use vest_core::traits::{LlmProvider, Reporter};
 use vest_core::types::*;
+use vest_core::{DataEgressClass, ToolEffect};
 use vest_storage::{findings, scans, schema, targets};
 
 // Mock Providers
@@ -179,13 +180,13 @@ async fn test_end_to_end_tooluse_scan_to_report() {
 
     let mut registry = ToolRegistry::new();
     registry.register(
-        ToolDefinition {
-            name: "read_memory".into(),
-            description: "Read process memory at given address".into(),
-            parameters: serde_json::json!({"address": "string", "size": "integer"}),
-            requires_approval: false,
-            risk_level: RiskLevel::ReadOnly,
-        },
+        ToolDefinition::new(
+            "read_memory",
+            "Read process memory at given address",
+            serde_json::json!({"address": "string", "size": "integer"}),
+            ToolEffect::ProcessMemoryRead,
+            DataEgressClass::ProcessMemory,
+        ),
         |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let addr = args
                 .get("address")
@@ -195,13 +196,13 @@ async fn test_end_to_end_tooluse_scan_to_report() {
         },
     );
     registry.register(
-        ToolDefinition {
-            name: "list_regions".into(),
-            description: "List memory regions of process".into(),
-            parameters: serde_json::json!({}),
-            requires_approval: false,
-            risk_level: RiskLevel::ReadOnly,
-        },
+        ToolDefinition::new(
+            "list_regions",
+            "List memory regions of process",
+            serde_json::json!({}),
+            ToolEffect::ProcessMetadataRead,
+            DataEgressClass::LocalMetadata,
+        ),
         |_args: serde_json::Value| -> Result<serde_json::Value, String> {
             Ok(serde_json::json!({"regions": [
                 {"name": "game.exe", "perms": "RX"},
@@ -509,13 +510,13 @@ async fn test_end_to_end_multi_tool_registry() {
     for i in 0..5 {
         let tool_name = format!("tool_{}", i);
         registry.register(
-            ToolDefinition {
-                name: tool_name.clone(),
-                description: format!("Tool {}", i),
-                parameters: serde_json::json!({"input": "string"}),
-                requires_approval: false,
-                risk_level: RiskLevel::ReadOnly,
-            },
+            ToolDefinition::new(
+                tool_name.clone(),
+                format!("Tool {}", i),
+                serde_json::json!({"input": "string"}),
+                ToolEffect::PureComputation,
+                DataEgressClass::PublicNonSensitive,
+            ),
             move |args: serde_json::Value| -> Result<serde_json::Value, String> {
                 Ok(serde_json::json!({"result": format!("tool_{}_result", i), "input": args}))
             },
@@ -664,13 +665,13 @@ async fn test_end_to_end_orchestrator_tooluse() {
 
     let mut registry = ToolRegistry::new();
     registry.register(
-        ToolDefinition {
-            name: "inspect_target".into(),
-            description: "Inspect the scan target for vulnerabilities".into(),
-            parameters: serde_json::json!({}),
-            requires_approval: false,
-            risk_level: RiskLevel::ReadOnly,
-        },
+        ToolDefinition::new(
+            "inspect_target",
+            "Inspect the scan target for vulnerabilities",
+            serde_json::json!({}),
+            ToolEffect::LocalMetadataRead,
+            DataEgressClass::LocalMetadata,
+        ),
         |_args: serde_json::Value| -> Result<serde_json::Value, String> {
             Ok(serde_json::json!({
                 "target_info": {"os": "Linux", "arch": "x86_64"},
@@ -679,13 +680,13 @@ async fn test_end_to_end_orchestrator_tooluse() {
         },
     );
     registry.register(
-        ToolDefinition {
-            name: "scan_ports".into(),
-            description: "Scan open ports".into(),
-            parameters: serde_json::json!({"host": "string"}),
-            requires_approval: false,
-            risk_level: RiskLevel::ReadOnly,
-        },
+        ToolDefinition::new(
+            "scan_ports",
+            "Scan open ports",
+            serde_json::json!({"host": "string"}),
+            ToolEffect::ActiveNetworkProbe,
+            DataEgressClass::TargetMetadata,
+        ),
         |_args: serde_json::Value| -> Result<serde_json::Value, String> {
             Ok(serde_json::json!({"ports": [80, 443, 8080]}))
         },
@@ -784,9 +785,14 @@ async fn test_end_to_end_memory_scanner_trait() {
         TargetType::Process,
         Some(12345),
     );
-    let findings = scanner.scan(&target).await.unwrap();
+    // Default path is honest: real acquisition unsupported.
+    let err = scanner.scan(&target).await.unwrap_err();
+    assert!(matches!(err, vest_core::error::VestError::Unsupported(_)));
+
+    let sim = vest_scanner::memory::MemoryScanner::new().with_simulation_allowed(true);
+    let findings = sim.scan(&target).await.unwrap();
     eprintln!(
-        "TEST 12: MemoryScanner found {} findings via trait",
+        "TEST 12: MemoryScanner simulation found {} findings via trait",
         findings.len()
     );
     assert!(
@@ -795,5 +801,7 @@ async fn test_end_to_end_memory_scanner_trait() {
     );
     if !findings.is_empty() {
         assert_eq!(findings[0].target_id, "mem-trait-target");
+        assert_eq!(findings[0].metadata["simulation"], serde_json::json!(true));
+        assert!(findings[0].title.contains("SIMULATED"));
     }
 }

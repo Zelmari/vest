@@ -2,9 +2,12 @@
 target/
 **/*.rs.bk
 *.pdb
+*.rlib
+*.rmeta
 
 # === Cargo ===
 .cargo/
+# Keep Cargo.lock committed for the application binary workspace.
 
 # === macOS ===
 .DS_Store
@@ -43,8 +46,9 @@ $RECYCLE.BIN/
 *.ipr
 out/
 
-# === VSCode ===
+# === VSCode / Cursor ===
 .vscode/
+.cursor/
 *.code-workspace
 .history/
 
@@ -62,12 +66,16 @@ out/
 
 # === Environment & Secrets ===
 .env
+.env.*
+!.env.example
 .env.local
 .env.*.local
 *.pem
 *.key
 *.crt
 *.cer
+*.p12
+*.pfx
 secrets/
 credentials.toml
 credentials
@@ -79,7 +87,8 @@ credentials
 *.sqlite
 *.sqlite3
 vest.db
-~/.vest/
+# Local Vest workspace / state under the repo (do not use ~ expansion; gitignore is literal)
+.vest/
 
 # === Logs ===
 *.log
@@ -92,9 +101,14 @@ logs/
 *.backup
 *.old
 *.orig
+*.swp
 
-# === Planning (local only) ===
+# === Planning / local agent artifacts ===
 .plan/
+.claude/
+.codex/
+.aider*
+.agent/
 
 # === Config Overrides ===
 vest.toml.local
@@ -102,28 +116,37 @@ vest.toml.user
 config.local.toml
 
 # === Docker ===
-# Dockerfile is committed; ignore build contexts
 .docker/
 docker-compose.override.yml
 
-# === External Tools (future) ===
+# === External Tools ===
 nuclei-templates/
 frida-scripts/
-tools/
+# Local installs under tools/ — keep vest-tools crate source
+/tools/
 
-# === Test Artifacts ===
+# === Test / Benchmark Artifacts ===
 test-results/
 coverage/
+lcov.info
 examples/.vest-demo/
 examples/reports/generated/
 examples/demo-target/vulnerable-binary/vuln
 *.profraw
 *.profdata
+flamegraph.svg
+perf.data
+perf.data.old
 .tar.gz
 .zip
 *.dmp
 core
 core.*
+
+# === Generated reports at repo root ===
+/report.json
+/report.md
+/report.html
 
 # === Package Managers ===
 node_modules/

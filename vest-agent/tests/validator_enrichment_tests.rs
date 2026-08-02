@@ -117,12 +117,17 @@ fn validator_enriches_unknown_class() {
     );
     // The enriched finding should have a guessed class
     assert_eq!(enriched.vulnerability_class, VulnerabilityClass::XSS);
-    // The enriched finding should have a CVSS score assigned
-    assert!(enriched.cvss_score.is_some());
+    // Heuristic enrichment stores a severity estimate in metadata, not cvss_score
+    assert!(enriched.cvss_score.is_none());
     assert!(
-        (enriched.cvss_score.unwrap() - 7.5).abs() < 0.01,
-        "Expected CVSS ~7.5 for High severity, got {:?}",
-        enriched.cvss_score
+        (enriched.metadata["severity_score_estimate"]
+            .as_f64()
+            .unwrap()
+            - 7.5)
+            .abs()
+            < 0.01,
+        "Expected severity_score_estimate ~7.5 for High severity, got {:?}",
+        enriched.metadata.get("severity_score_estimate")
     );
 }
 
@@ -142,9 +147,15 @@ fn validator_enriches_sql_injection_class() {
         enriched.vulnerability_class,
         VulnerabilityClass::SQLInjection
     );
+    assert!(enriched.cvss_score.is_none());
     assert!(
-        (enriched.cvss_score.unwrap() - 9.0).abs() < 0.01,
-        "Expected CVSS ~9.0 for Critical severity"
+        (enriched.metadata["severity_score_estimate"]
+            .as_f64()
+            .unwrap()
+            - 9.0)
+            .abs()
+            < 0.01,
+        "Expected severity_score_estimate ~9.0 for Critical severity"
     );
 }
 
@@ -251,28 +262,64 @@ fn validator_enriches_ssrf_class() {
 }
 
 #[test]
-fn validator_assigns_cvss_by_severity() {
+fn validator_assigns_severity_score_estimate_by_severity() {
     let validator = Validator::new();
 
     let critical = make_finding("crit", Severity::Critical, VulnerabilityClass::XSS, 0.9);
     let (_r, enriched) = validator.heuristic_validate(&critical);
-    assert!((enriched.cvss_score.unwrap() - 9.0).abs() < 0.01);
+    assert!(enriched.cvss_score.is_none());
+    assert!(
+        (enriched.metadata["severity_score_estimate"]
+            .as_f64()
+            .unwrap()
+            - 9.0)
+            .abs()
+            < 0.01
+    );
 
     let high = make_finding("high", Severity::High, VulnerabilityClass::XSS, 0.9);
     let (_r, enriched) = validator.heuristic_validate(&high);
-    assert!((enriched.cvss_score.unwrap() - 7.5).abs() < 0.01);
+    assert!(
+        (enriched.metadata["severity_score_estimate"]
+            .as_f64()
+            .unwrap()
+            - 7.5)
+            .abs()
+            < 0.01
+    );
 
     let medium = make_finding("medium", Severity::Medium, VulnerabilityClass::XSS, 0.9);
     let (_r, enriched) = validator.heuristic_validate(&medium);
-    assert!((enriched.cvss_score.unwrap() - 5.0).abs() < 0.01);
+    assert!(
+        (enriched.metadata["severity_score_estimate"]
+            .as_f64()
+            .unwrap()
+            - 5.0)
+            .abs()
+            < 0.01
+    );
 
     let low = make_finding("low", Severity::Low, VulnerabilityClass::XSS, 0.9);
     let (_r, enriched) = validator.heuristic_validate(&low);
-    assert!((enriched.cvss_score.unwrap() - 3.0).abs() < 0.01);
+    assert!(
+        (enriched.metadata["severity_score_estimate"]
+            .as_f64()
+            .unwrap()
+            - 3.0)
+            .abs()
+            < 0.01
+    );
 
     let info = make_finding("info", Severity::Info, VulnerabilityClass::XSS, 0.9);
     let (_r, enriched) = validator.heuristic_validate(&info);
-    assert!((enriched.cvss_score.unwrap() - 1.0).abs() < 0.01);
+    assert!(
+        (enriched.metadata["severity_score_estimate"]
+            .as_f64()
+            .unwrap()
+            - 1.0)
+            .abs()
+            < 0.01
+    );
 }
 
 #[test]
@@ -292,8 +339,10 @@ fn validator_heuristic_boundary_conditions() {
         vest_agent::validator::ValidationDecision::Uncertain
     );
     assert!(result.confidence < 0.3);
-    // Still enriches
-    assert!(enriched.cvss_score.is_some());
+    // Still enriches with severity estimate; confidence applied to finding
+    assert!(enriched.cvss_score.is_none());
+    assert!(enriched.metadata.get("severity_score_estimate").is_some());
+    assert!((enriched.confidence - result.confidence).abs() < 0.01);
 
     // Medium confidence + unknown class -> confirmed (after -0.2 = 0.15 >= 0.1, not false positive)
     let finding = make_finding(
@@ -421,12 +470,15 @@ async fn orchestrator_with_initial_findings_passes_through() {
             // At minimum, the validator enriches them.
             if !findings.is_empty() {
                 for f in &findings {
-                    // After heuristic enrichment, class should no longer be Unknown
-                    // if it matches known patterns, or remain Unknown for unrecognized patterns.
-                    // CVSS should be assigned
+                    // After heuristic enrichment, severity estimate lives in metadata
                     assert!(
-                        f.cvss_score.is_some(),
-                        "Finding should have CVSS: {:?}",
+                        f.metadata.get("severity_score_estimate").is_some(),
+                        "Finding should have severity_score_estimate: {:?}",
+                        f.title
+                    );
+                    assert!(
+                        f.cvss_score.is_none(),
+                        "Heuristic must not invent cvss_score: {:?}",
                         f.title
                     );
                 }
