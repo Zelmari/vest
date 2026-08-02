@@ -13,6 +13,17 @@ pub struct OpenAiCompatProvider {
     client: Client,
 }
 
+impl std::fmt::Debug for OpenAiCompatProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiCompatProvider")
+            .field("name", &self.name)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("base_url", &self.base_url)
+            .field("default_model", &self.default_model)
+            .finish()
+    }
+}
+
 impl OpenAiCompatProvider {
     pub fn new(
         name: String,

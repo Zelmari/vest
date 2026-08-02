@@ -6,7 +6,8 @@ const DOCKER_NOT_INSTALLED_MSG: &str =
     "Docker is not installed. Install from https://docs.docker.com/get-docker/";
 const IMAGE_NAME: &str = "vest-sandbox";
 const NO_DOCKERFILE_MSG: &str = "No Dockerfile found in the current directory or ~/.vest/.\n\
-     Create a Dockerfile in the current directory or place one in ~/.vest/Dockerfile.";
+     Create a Dockerfile in the current directory or place one in ~/.vest/Dockerfile.\n\
+     Note: `vest sandbox` is an experimental Docker helper, not a verified OS sandbox for agent tools.";
 
 fn binary_installed(name: &str) -> bool {
     Command::new(name)

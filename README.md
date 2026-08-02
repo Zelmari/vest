@@ -1,15 +1,17 @@
 # VEST
 
-**V**ulnerability **E**xploitation & **S**canning **T**oolkit. An offline-first, multi-provider security scanner that uses LLM agents to detect vulnerabilities across files, web applications, binaries, memory, network services, and browsers. Built in Rust.
+> **EXPERIMENTAL.** Vest is under active development. It is **not** production-grade, fully sandboxed, or guaranteed secure. Treat model output as untrusted. See [docs/security-model.md](docs/security-model.md), [SECURITY.md](SECURITY.md), and the trust/policy docs under `docs/`.
+
+**V**ulnerability **E**xploitation & **S**canning **T**oolkit. An offline-first, multi-provider security scanner that uses LLM agents to detect vulnerabilities across files, web applications, binaries, memory (simulation only by default), network services, and browsers. Built in Rust.
 
 ## Demo
 
 ```
-$ vest scan ./examples/demo-target/vulnerable-files --target-type file --scanner files
+$ cargo run -p vest-cli -- scan ./examples/demo-target/vulnerable-files --target-type file --scanner files
 
   files        32 finding(s)
   Duration:    0.1s
-  Findings:    22 classified, 0 null CVSS
+  Findings:    22 classified
 
   Summary:
     hardcoded_credentials  17
@@ -17,78 +19,78 @@ $ vest scan ./examples/demo-target/vulnerable-files --target-type file --scanner
     unknown                 4
 ```
 
-The scanner found AWS keys, GitHub tokens, hardcoded passwords, SSH private keys, JWT secrets, backup files, and exposed git configuration — all from a directory of 10 deliberately-vulnerable fixture files. Every finding is classified by vulnerability class and scored with a CVSS rating by the validation pipeline.
+The scanner found AWS keys, GitHub tokens, hardcoded passwords, SSH private keys, JWT secrets, backup files, and exposed git configuration — all from a directory of deliberately-vulnerable fixture files. Findings are classified by vulnerability class; severity uses a **heuristic severity-score estimate** (not a real CVSS vector calculation).
 
 For a live web demo, start the Flask target and scan it:
 
 ```
 $ python3 examples/demo-target/webapp/app.py &
-$ vest scan http://localhost:5555 --target-type web --scanner web
-
-  Findings:    10
-  Summary:
-    xss:                 2   (reflected in 'q' and 'filename' parameters)
-    sql_injection:       2   (error-based in username/password form fields)
-    path_traversal:      1   (../../etc/passwd via filename parameter)
-    cors:                5   (wildcard origin on all endpoints + missing 7 security headers)
+$ cargo run -p vest-cli -- scan http://localhost:5555 --target-type web --scanner web
 ```
 
 ## Architecture
 
-VEST is a workspace of 10 crates with a strict dependency graph — `vest-core` has zero external dependencies, and each layer builds on the one below it.
+VEST is a Cargo workspace of **11 crates** with a layered dependency graph — `vest-core` stays lean, and each layer builds on the one below it.
 
 ```
-vest-core        shared types, traits, IDs, errors
-  vest-config      TOML config parsing with validation
+vest-core        shared types, traits, IDs, errors, auth/egress enums
+  vest-config      TOML config parsing with validation (fail-closed when present)
   vest-providers   7 LLM backends behind a common trait + fallback chain
   vest-scanner     6 scanner modules (files, web, binary, memory, network, browser)
-  vest-storage     SQLite persistence (6 tables, 18 indexes)
+  vest-storage     SQLite persistence
   vest-report      terminal / JSON / markdown reporters
   vest-payloads    attack payload libraries
   vest-tools       external tool integration (nuclei)
+  vest-test-utils  shared test helpers
 
-  vest-agent       agent orchestration: 4 patterns, safety system, validator
-    vest-cli         clap CLI (11 subcommands)
+  vest-agent       agent orchestration: patterns, policy engine, validator, egress
+    vest-cli         clap CLI binary (`vest`)
 ```
 
-The agent layer sits on top of providers and scanners. The orchestrator selects an execution pattern, the pipeline feeds scanner findings through classification and validation phases, and the safety checker gates every tool invocation with rate limiting and capability approval.
+The agent layer sits on top of providers and scanners. The orchestrator selects an execution pattern; the pipeline feeds scanner findings through classification and validation. A **policy engine** gates every tool invocation by explicit `ToolEffect`, filesystem/network scope, and egress class. This is **not** an OS sandbox.
 
 ## Features
 
-- **6 scanner modules** covering files, web apps, binaries (ELF/PE/Mach-O), process memory, network services, and browser targets (CDP)
-- **4 agent orchestration patterns:** Pipeline (sequential phases), Swarm (parallel specialists with voting), Tool-Use (single agent loop), Hierarchical (parent/child delegation)
-- **7 LLM providers** with automatic fallback: OpenAI, Anthropic, DeepSeek, Google Gemini, Ollama (local), Groq, OpenRouter — all behind a single `LlmProvider` trait
-- **3 report formats:** Unicode box-drawn terminal output, structured JSON, collapsible Markdown with severity tables
-- **Heuristic enrichment pipeline:** findings classified by vulnerability class and scored with CVSS even without an LLM
-- **Safety system:** token-bucket rate limiter, 6 tool capability categories, target allow/block lists, approval gates
-- **SQLite persistence:** scan history, finding lifecycle (open/confirmed/false-positive), scan comparison diffing
-- **618 tests, 0 failures** across 38 test suites with property-based, concurrency, edge case, and integration coverage
-- **25,668 lines of Rust**
+- **6 scanner modules** covering files, web apps, binaries (ELF/PE/Mach-O), process memory (unsupported by default; opt-in simulation), network services, and browser targets (CDP)
+- **4 agent orchestration patterns:** Pipeline, Swarm, Tool-Use, Hierarchical
+- **7 LLM providers** with automatic fallback: OpenAI, Anthropic, DeepSeek, Google Gemini, Ollama (local), Groq, OpenRouter
+- **3 report formats:** terminal, JSON, Markdown
+- **Heuristic enrichment:** vulnerability class + severity-score estimate without requiring an LLM
+- **Policy engine:** effect-based tool gating, scoped approvals, egress filtering — not OS isolation
+- **SQLite persistence:** scan history, finding lifecycle, scan comparison
+- **Hundreds of tests** across unit, property-based, concurrency, and integration suites
 
 ## Quickstart
 
 ```bash
-git clone https://github.com/vest/vest
+git clone https://github.com/Zelmari/vest
 cd vest
-cargo build --release
+cargo build --release -p vest-cli
 
-# Set your LLM keys in a .env file (gitignored)
-echo 'DEEPSEEK_API_KEY=sk-your-key' > .env
+# Keys from the environment (or a local plaintext .env — see below)
+export DEEPSEEK_API_KEY=sk-your-key
 
 # Run the file scanner against the demo target
-cargo run -- scan ./examples/demo-target/vulnerable-files --target-type file --scanner files
+cargo run --release -p vest-cli -- scan ./examples/demo-target/vulnerable-files \
+  --target-type file --scanner files
 ```
 
-No API key? Set `provider = "none"` in `vest.toml` and the heuristic enrichment pipeline runs without an LLM.
+Install the `vest` binary from this workspace:
+
+```bash
+cargo install --path vest-cli
+```
+
+No API key? Set `provider = "none"` (or use Ollama / heuristic-only paths) in `vest.toml` and enrichment can still run without a remote LLM.
 
 ## Scan Modes
 
 | Mode | Behaviour |
 |------|-----------|
-| `pipeline` | Sequential 5-phase flow: Reconnaissance -> Surface Analysis -> Vulnerability Hunting -> Validation -> Reporting |
-| `swarm` | Parallel specialist agents (memory/web/binary/auth-logic) with 3 merge strategies: voting (40% threshold), union, strict (70%) |
-| `tool-use` | Single agent with access to all registered tools: web scan, file scan, HTTP fetch, browser inspect, secret scanning |
-| `hierarchical` | Orchestrator decomposes tasks via LLM, spawns specialist child agents, collects and merges results |
+| `pipeline` | Sequential phases: Reconnaissance → Surface Analysis → Vulnerability Hunting → Validation → Reporting |
+| `swarm` | Parallel specialist agents with merge strategies (voting, union, strict) |
+| `tool-use` | Single agent loop over registered tools; every call goes through the policy engine |
+| `hierarchical` | Orchestrator decomposes tasks, spawns specialist children, merges results |
 
 Set the default in `vest.toml` (`agent.default_pattern`) or override with `--mode`.
 
@@ -96,12 +98,12 @@ Set the default in `vest.toml` (`agent.default_pattern`) or override with `--mod
 
 | Scanner | Target | Detects |
 |---------|--------|---------|
-| `files` | directory path | Secrets (AWS/GitHub/Stripe/Slack/JWT keys, passwords), dangerous file types, backup files, sensitive config files (.env, id_rsa, Docker config, git exposure) |
-| `web` | URL | XSS (reflected, form-based, URL param), SQL injection (error-based, status 500), path traversal, SSRF, command injection, misconfiguration (missing headers, CORS wildcard, .git/.env exposure) |
-| `binary` | ELF/PE/Mach-O binary | Dangerous sink functions (gets/strcpy/system/printf), security mitigations (NX/ASLR/stack canaries), ROP gadget discovery |
-| `memory` | PID or simulated | Pattern scanning (brute-force + Boyer-Moore-Horspool), hook detection (JMP/PUSH-RET/MOV-RAX-RET), shellcode patterns, suspicious RWX region detection |
-| `network` | host:port | Dangerous service ports, TLS analysis (deprecated versions, weak ciphers), DNS misconfiguration (SPF +all) |
-| `browser` | URL (CDP) | localStorage/sessionStorage secrets, WebSocket URLs, WASM module imports, security headers via Chrome DevTools Protocol |
+| `files` | directory path | Secrets, dangerous file types, backup files, sensitive config (.env, id_rsa, Docker config, git exposure). Traversal is depth/size/symlink-bounded. |
+| `web` | URL | XSS, SQL injection signals, path traversal, SSRF probes, misconfiguration. Redirects are not auto-followed; robots.txt can be respected. |
+| `binary` | ELF/PE/Mach-O | Dangerous sinks, mitigations (NX/ASLR/canaries), ROP gadget discovery |
+| `memory` | PID (real acquisition **unsupported** by default) | Opt-in **simulation only** with `--allow-memory-simulation` (fabricated regions/bytes; not live PID memory). Without the flag: unsupported / fail closed. |
+| `network` | host:port | Dangerous ports, TLS analysis, basic DNS misconfiguration signals |
+| `browser` | URL (CDP) | Storage secrets, WebSocket URLs, WASM imports, headers via Chrome DevTools Protocol |
 
 ## Provider Support
 
@@ -115,7 +117,21 @@ Set the default in `vest.toml` (`agent.default_pattern`) or override with `--mod
 | Groq | `groq` | `GROQ_API_KEY` | |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | |
 
-API keys are read from environment variables only — never stored on disk. Create a `.env` file in the project root (gitignored) or set them in your shell profile. Keys already in the environment take priority over `.env` values.
+### API keys
+
+- Keys are read from **environment variables** (and optionally a local `.env` loaded into the process environment).
+- A `.env` file is **plaintext on disk**, not an OS credential store. Protect it accordingly; keep it gitignored.
+- Vest does **not** store API keys in its SQLite database.
+- Vest **never prints** API key values (`providers set-key` prints setup instructions only).
+- Prefer `export PROVIDER_API_KEY=...` over passing `--key` on the command line (argv is visible in process lists / shell history).
+
+## Safety model (short)
+
+- **Policy engine** evaluates every tool call (`ToolEffect`, path/URL scope, arg digest, egress class).
+- Registry `requires_approval` is **UX metadata**, not a bypass.
+- Unknown tools / unknown effects are **denied** (fail closed).
+- Local file content and process memory are **not** sent to remote models by default.
+- Optional Docker helpers (`vest sandbox`) are convenience wrappers — **not** a verified OS sandbox for agent tools. See [docs/security-model.md](docs/security-model.md), [docs/agent-tool-policy.md](docs/agent-tool-policy.md), and [docs/model-data-boundary.md](docs/model-data-boundary.md).
 
 ## Example Output
 
@@ -133,53 +149,41 @@ API keys are read from environment variables only — never stored on disk. Crea
 +----------------------------------------------------+
 ```
 
-**JSON** (`-f json -o report.json`):
-```json
-{
-  "summary": { "total": 22, "critical": 14, "high": 5, "medium": 3 },
-  "findings": [
-    {
-      "title": "AWS Access Key ID found in file",
-      "vulnerability_class": "hardcoded_credentials",
-      "severity": "critical",
-      "cvss_score": 9.0,
-      "cwe_id": "CWE-798",
-      "evidence": { "file": ".env", "pattern": "AWS Access Key ID" },
-      "location": { "file": "./examples/demo-target/vulnerable-files/.env" }
-    }
-  ]
-}
-```
+**JSON** (`-f json -o report.json`): structured findings with severity, optional `severity_score_estimate` metadata, CWE/CVE fields when present. Do not treat numeric severity estimates as CVSS.
 
-**Markdown** (`-f markdown -o report.md`): severity table with icons, collapsible evidence sections, CVSS/CWE/CVE fields, remediation advice, PoC blocks.
+**Markdown** (`-f markdown -o report.md`): severity table, collapsible evidence, remediation advice.
 
 ## Installation
 
 ```bash
-cargo install --path .
+git clone https://github.com/Zelmari/vest
+cd vest
+cargo install --path vest-cli
 ```
 
 Requirements:
-- Rust 1.75+ (stable toolchain)
-- Optional: Docker (for sandbox commands), Ollama (for local LLM), Python 3 + Flask (for web demo target), gcc (for binary demo target)
+- Rust stable (recent 1.75+ recommended)
+- Optional: Docker (for experimental `vest sandbox` helpers), Ollama (local LLM), Python 3 + Flask (web demo), gcc (binary demo)
 
 ## Project Structure
 
 ```
 vest/
-  vest-core/         shared domain types, traits, error handling
+  vest-core/         shared domain types, traits, auth/egress, secrets helper
   vest-config/       TOML config parsing, validation, defaults
-  vest-providers/    7 LLM provider implementations + fallback chain
-  vest-agent/        orchestration engine, 4 patterns, safety, validator
-  vest-scanner/      6 scanner modules with 70+ detection patterns
-  vest-storage/      SQLite persistence layer (6 tables, full CRUD)
-  vest-report/       terminal box-drawn, JSON, and Markdown reporters
-  vest-payloads/     XSS, SQLi, ROP, shellcode, and fuzzing payloads
+  vest-providers/    LLM provider implementations + fallback chain
+  vest-agent/        orchestration, policy engine, egress, validator
+  vest-scanner/      scanner modules
+  vest-storage/      SQLite persistence
+  vest-report/       reporters
+  vest-payloads/     payload libraries
   vest-tools/        external tool integration (nuclei)
-  vest-cli/          clap CLI, 11 subcommands, 1068-line scan orchestrator
+  vest-test-utils/   test helpers
+  vest-cli/          clap CLI binary (`vest`)
   examples/          demo targets (vulnerable files, Flask webapp, C binary)
-  sinks/             binary scanner function catalogs (C/C++/Rust)
-  vest.toml          default configuration with provider+scanner settings
+  docs/              security model, policy, egress, hardening audit
+  sinks/             binary scanner function catalogs
+  vest.toml          default configuration
 ```
 
 ## Commands
@@ -193,16 +197,44 @@ vest scans                   view scan history
 vest findings                query and export findings
 vest report                  generate and compare scan reports
 vest tools                   manage external tools (nuclei, sqlmap, etc.)
-vest sandbox                 manage Docker sandbox environment
+vest sandbox                 experimental Docker helper (build/start/clean)
 vest completions <shell>     generate shell completions (bash/zsh/fish)
 ```
+
+Useful scan flags:
+- `--allow-memory-simulation` — opt into fabricated memory-scan harness (not real PID memory)
+- `--mode`, `--scanner`, `--target-type`, `--provider`
 
 ## Testing
 
 ```bash
-cargo test --workspace              # 618 tests across 38 suites
-cargo clippy --workspace            # 0 warnings
-cargo fmt --check --all             # clean
+cargo test --workspace
+cargo clippy --workspace --all-targets
+cargo fmt --check --all
 ```
 
-Test categories: property-based serialization roundtrips, concurrency stress tests (10K findings, 10K rate-limiter bursts), edge case coverage (null bytes, 100K-char values, nested JSON), integration tests (full scan -> storage -> report cycle), pattern scanning cross-checks (brute-force vs fast algorithm equivalence), validator enrichment boundary tests, and chaos mode robustness checks.
+Coverage includes property-based serialization, concurrency stress tests, edge cases, integration cycles, pattern-scan cross-checks, validator enrichment, and security-invariant tests added during the hardening pass. Exact counts change frequently.
+
+## Migration notes (breaking / behaviour changes)
+
+These changes land with the verified security-hardening pass:
+
+1. **`providers set-key` never echoes the key.** Passing `--key` is deprecated; Vest prints `export …=<your-key-here>` instructions only.
+2. **Unknown tools are denied.** Tools must be registered with an explicit `ToolEffect`; unknown / unregistered names fail closed.
+3. **Memory scanner defaults to unsupported.** Real OS memory acquisition is not implemented. Use `--allow-memory-simulation` only for the explicit simulation harness (results are tagged as simulation).
+4. **Config fail-closed.** A present but malformed `vest.toml` (or invalid safety/scanner sections) is a hard error — no silent default fallback for a broken file. Missing file may still use built-in defaults.
+5. **Egress defaults are restrictive.** Local file content and process memory are not sent to remote models by default; evidence in validator prompts uses allowlisted DTOs / redacted excerpts when enabled. See [docs/model-data-boundary.md](docs/model-data-boundary.md).
+6. **Severity scores are estimates**, not CVSS. Prefer `severity` + `metadata.severity_score_estimate` over treating `cvss_score` as a real vector.
+7. **`requires_approval: false` is not a policy bypass.** Every tool invocation is evaluated by the policy engine.
+
+## Documentation
+
+| Doc | Topic |
+|-----|--------|
+| [docs/security-model.md](docs/security-model.md) | Trust principals and boundaries |
+| [docs/agent-tool-policy.md](docs/agent-tool-policy.md) | ToolEffect, approval, non-bypass |
+| [docs/model-data-boundary.md](docs/model-data-boundary.md) | Egress classes and defaults |
+| [docs/security-hardening-audit.md](docs/security-hardening-audit.md) | Hardening issue matrix |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting |
+| [CHANGELOG.md](CHANGELOG.md) | Release notes |
+| [LICENSE](LICENSE) | MIT |

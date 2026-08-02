@@ -212,6 +212,20 @@ pub struct WebScannerConfig {
     pub nuclei_severity: Vec<String>,
     #[serde(default = "default_nuclei_timeout")]
     pub nuclei_timeout: u32,
+    #[serde(default = "default_max_response_bytes")]
+    pub max_response_bytes: u64,
+    #[serde(default = "default_max_redirects")]
+    pub max_redirects: u32,
+    /// When false (default), only passive crawl / header checks run.
+    /// Active vulnerability probes require an explicit enable (CLI web scan sets this).
+    #[serde(default)]
+    pub allow_active_probes: bool,
+    #[serde(default = "default_connect_timeout_ms")]
+    pub connect_timeout_ms: u64,
+    #[serde(default = "default_request_timeout_seconds")]
+    pub request_timeout_seconds: u64,
+    #[serde(default = "default_max_concurrent_requests")]
+    pub max_concurrent_requests: u32,
 }
 
 fn default_crawl_depth() -> u32 {
@@ -226,6 +240,21 @@ fn default_user_agent() -> String {
 fn default_nuclei_timeout() -> u32 {
     300
 }
+fn default_max_response_bytes() -> u64 {
+    5_242_880 // 5 MiB
+}
+fn default_max_redirects() -> u32 {
+    5
+}
+fn default_connect_timeout_ms() -> u64 {
+    10_000
+}
+fn default_request_timeout_seconds() -> u64 {
+    30
+}
+fn default_max_concurrent_requests() -> u32 {
+    8
+}
 
 impl Default for WebScannerConfig {
     fn default() -> Self {
@@ -238,7 +267,40 @@ impl Default for WebScannerConfig {
             nuclei_enabled: true,
             nuclei_severity: vec!["critical".into(), "high".into(), "medium".into()],
             nuclei_timeout: 300,
+            max_response_bytes: default_max_response_bytes(),
+            max_redirects: default_max_redirects(),
+            allow_active_probes: false,
+            connect_timeout_ms: default_connect_timeout_ms(),
+            request_timeout_seconds: default_request_timeout_seconds(),
+            max_concurrent_requests: default_max_concurrent_requests(),
         }
+    }
+}
+
+impl WebScannerConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.crawl_depth == 0 {
+            return Err("scanner.web.crawl_depth must be non-zero".into());
+        }
+        if self.crawl_max_urls == 0 {
+            return Err("scanner.web.crawl_max_urls must be non-zero".into());
+        }
+        if self.max_response_bytes == 0 {
+            return Err("scanner.web.max_response_bytes must be non-zero".into());
+        }
+        if self.max_redirects == 0 {
+            return Err("scanner.web.max_redirects must be non-zero".into());
+        }
+        if self.connect_timeout_ms == 0 {
+            return Err("scanner.web.connect_timeout_ms must be non-zero".into());
+        }
+        if self.request_timeout_seconds == 0 {
+            return Err("scanner.web.request_timeout_seconds must be non-zero".into());
+        }
+        if self.max_concurrent_requests == 0 {
+            return Err("scanner.web.max_concurrent_requests must be non-zero".into());
+        }
+        Ok(())
     }
 }
 
@@ -327,10 +389,31 @@ pub struct FileScannerConfig {
     pub extract_archives: bool,
     #[serde(default)]
     pub fuzz_file_formats: bool,
+    #[serde(default = "default_files_max_depth")]
+    pub max_depth: u32,
+    #[serde(default = "default_files_max_files")]
+    pub max_files: u32,
+    /// Aggregate bytes read across the traversal (0 = derive from max_file_size_mb).
+    #[serde(default = "default_files_max_total_bytes")]
+    pub max_total_bytes: u64,
+    #[serde(default)]
+    pub follow_symlinks: bool,
+    /// Simple name or suffix ignores (e.g. `node_modules`, `*.pyc`).
+    #[serde(default)]
+    pub ignore_globs: Vec<String>,
 }
 
 fn default_max_file_size_mb() -> u32 {
     500
+}
+fn default_files_max_depth() -> u32 {
+    32
+}
+fn default_files_max_files() -> u32 {
+    10_000
+}
+fn default_files_max_total_bytes() -> u64 {
+    1_073_741_824 // 1 GiB
 }
 
 impl Default for FileScannerConfig {
@@ -340,7 +423,30 @@ impl Default for FileScannerConfig {
             max_file_size_mb: 500,
             extract_archives: true,
             fuzz_file_formats: false,
+            max_depth: default_files_max_depth(),
+            max_files: default_files_max_files(),
+            max_total_bytes: default_files_max_total_bytes(),
+            follow_symlinks: false,
+            ignore_globs: Vec::new(),
         }
+    }
+}
+
+impl FileScannerConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_file_size_mb == 0 {
+            return Err("scanner.files.max_file_size_mb must be non-zero".into());
+        }
+        if self.max_depth == 0 {
+            return Err("scanner.files.max_depth must be non-zero".into());
+        }
+        if self.max_files == 0 {
+            return Err("scanner.files.max_files must be non-zero".into());
+        }
+        if self.max_total_bytes == 0 {
+            return Err("scanner.files.max_total_bytes must be non-zero".into());
+        }
+        Ok(())
     }
 }
 
@@ -611,6 +717,41 @@ enabled = false
         assert!(!config.scanner.memory.enabled);
         assert!(!config.scanner.web.enabled);
         assert!(config.scanner.binary.enabled);
+    }
+
+    #[test]
+    fn test_file_scanner_config_defaults_and_validation() {
+        let cfg = FileScannerConfig::default();
+        assert_eq!(cfg.max_depth, 32);
+        assert_eq!(cfg.max_files, 10_000);
+        assert!(!cfg.follow_symlinks);
+        assert!(cfg.validate().is_ok());
+
+        let mut bad = cfg.clone();
+        bad.max_depth = 0;
+        assert!(bad.validate().unwrap_err().contains("max_depth"));
+        bad = cfg.clone();
+        bad.max_files = 0;
+        assert!(bad.validate().unwrap_err().contains("max_files"));
+        bad = cfg;
+        bad.max_file_size_mb = 0;
+        assert!(bad.validate().unwrap_err().contains("max_file_size_mb"));
+    }
+
+    #[test]
+    fn test_web_scanner_config_defaults_and_validation() {
+        let cfg = WebScannerConfig::default();
+        assert!(!cfg.allow_active_probes);
+        assert_eq!(cfg.max_redirects, 5);
+        assert_eq!(cfg.max_response_bytes, 5_242_880);
+        assert!(cfg.validate().is_ok());
+
+        let mut bad = cfg.clone();
+        bad.max_response_bytes = 0;
+        assert!(bad.validate().unwrap_err().contains("max_response_bytes"));
+        bad = cfg;
+        bad.connect_timeout_ms = 0;
+        assert!(bad.validate().unwrap_err().contains("connect_timeout_ms"));
     }
 
     #[test]

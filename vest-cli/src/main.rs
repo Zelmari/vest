@@ -45,7 +45,7 @@ pub enum Commands {
     /// External tool management
     #[command(subcommand)]
     Tools(ToolsArgs),
-    /// Docker sandbox management
+    /// Experimental Docker helper (build/start/clean) — not an OS sandbox for agent tools
     #[command(subcommand)]
     Sandbox(SandboxArgs),
     /// Generate shell completions
@@ -125,6 +125,12 @@ pub struct ScanArgs {
     /// PID for process targets
     #[arg(long)]
     pub pid: Option<u32>,
+
+    /// Opt in to the explicit memory-scan simulation harness (fabricated regions/bytes).
+    /// Real process-memory acquisition is not implemented; without this flag memory
+    /// scanning fails closed / reports unsupported.
+    #[arg(long)]
+    pub allow_memory_simulation: bool,
 }
 
 #[derive(Subcommand)]
@@ -163,13 +169,14 @@ pub enum ProvidersArgs {
     },
     /// Check provider health
     Status,
-    /// Store an API key for a provider
+    /// Print instructions for configuring a provider API key via the environment
     SetKey {
         /// Provider name (openai, deepseek, anthropic, google, groq, openrouter)
         #[arg(value_name = "PROVIDER")]
         provider: String,
-        /// API key (if not provided, will prompt interactively)
-        #[arg(short, long)]
+        /// Deprecated: accepting a key on the CLI is insecure (shell history / process list).
+        /// The value is never printed. Prefer environment variables.
+        #[arg(short, long, hide = true)]
         key: Option<String>,
     },
 }
@@ -291,15 +298,15 @@ pub enum ToolsArgs {
 
 #[derive(Subcommand)]
 pub enum SandboxArgs {
-    /// Build sandbox Docker image
+    /// Build the experimental vest-sandbox Docker image (requires a local Dockerfile)
     Build,
-    /// Start sandbox container
+    /// Start the experimental helper container (not a verified agent sandbox)
     #[command(allow_hyphen_values = true)]
     Start {
         /// Additional arguments to pass through to docker run
         extra_args: Vec<String>,
     },
-    /// Clean up sandbox containers and image
+    /// Clean up helper containers and the vest-sandbox image
     Clean,
 }
 
@@ -336,9 +343,70 @@ fn load_dotenv() {
     }
 }
 
+/// Process exit codes for the `vest` CLI.
+///
+/// | Code | Meaning |
+/// |------|---------|
+/// | 0 | Success |
+/// | 1 | Unexpected internal / unclassified error |
+/// | 2 | Invalid command or input |
+/// | 3 | Configuration error |
+/// | 4 | Authorisation denied |
+/// | 5 | Scanner failure |
+/// | 6 | Persistence failure |
+/// | 7 | Provider-only failure with preserved local result (soft failure) |
+pub mod exit_code {
+    pub const SUCCESS: i32 = 0;
+    pub const INTERNAL: i32 = 1;
+    pub const INVALID_INPUT: i32 = 2;
+    pub const CONFIG: i32 = 3;
+    pub const AUTHORISATION: i32 = 4;
+    pub const SCANNER: i32 = 5;
+    pub const PERSISTENCE: i32 = 6;
+    pub const PROVIDER_SOFT: i32 = 7;
+}
+
+fn exit_code_for_error(err: &dyn std::error::Error) -> i32 {
+    let mut msg = err.to_string();
+    let mut source = err.source();
+    while let Some(s) = source {
+        msg.push(' ');
+        msg.push_str(&s.to_string());
+        source = s.source();
+    }
+    exit_code_for_message(&msg)
+}
+
+fn exit_code_for_message(msg: &str) -> i32 {
+    let lower = msg.to_lowercase();
+    if lower.contains("config") || lower.contains("parse config") || lower.contains("vest.toml") {
+        return exit_code::CONFIG;
+    }
+    if lower.contains("authoris")
+        || lower.contains("authoriz")
+        || lower.contains("denied")
+        || lower.contains("approval")
+        || lower.contains("safety")
+    {
+        return exit_code::AUTHORISATION;
+    }
+    if lower.contains("persist") || lower.contains("sqlite") || lower.contains("database") {
+        return exit_code::PERSISTENCE;
+    }
+    if lower.contains("scanner") || lower.contains("scan failed") {
+        return exit_code::SCANNER;
+    }
+    if lower.contains("unsupported shell")
+        || (lower.contains("unknown") && lower.contains("format"))
+        || lower.contains("invalid")
+    {
+        return exit_code::INVALID_INPUT;
+    }
+    exit_code::INTERNAL
+}
+
 #[tokio::main]
 async fn main() {
-    load_dotenv();
     load_dotenv();
     let cli = Cli::parse();
 
@@ -350,20 +418,27 @@ async fn main() {
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
 
-    fmt().with_env_filter(env_filter).init();
+    // Logs go to stderr so machine-readable stdout (JSON reports) stays clean.
+    fmt()
+        .with_env_filter(env_filter)
+        .with_writer(std::io::stderr)
+        .init();
 
     tracing::info!("VEST v{} starting up", env!("CARGO_PKG_VERSION"));
 
     if let Err(e) = dispatch(cli).await {
-        tracing::error!("Error: {}", e);
-        std::process::exit(1);
+        // Never print the raw error chain if it might echo secrets; prefer Display.
+        let display = e.to_string();
+        eprintln!("Error: {display}");
+        tracing::error!("command failed");
+        std::process::exit(exit_code_for_error(e.as_ref()));
     }
 }
 
 async fn dispatch(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
-        Commands::Scan(args) => commands::scan::run(args).await?,
-        Commands::Config(args) => commands::config::run(args).await?,
+        Commands::Scan(args) => commands::scan::run(args, &cli.config).await?,
+        Commands::Config(args) => commands::config::run(args, &cli.config).await?,
         Commands::Providers(args) => commands::providers::run(args).await?,
         Commands::Targets(args) => commands::targets::run(args).await?,
         Commands::Scans(args) => commands::scans::run(args).await?,
@@ -377,15 +452,64 @@ async fn dispatch(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 "zsh" => clap_complete::Shell::Zsh,
                 "fish" => clap_complete::Shell::Fish,
                 _ => {
-                    eprintln!(
+                    return Err(format!(
                         "Unsupported shell: {}. Supported: bash, zsh, fish",
                         args.shell
-                    );
-                    return Ok(());
+                    )
+                    .into());
                 }
             };
             clap_complete::generate(shell, &mut Cli::command(), "vest", &mut std::io::stdout());
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod exit_code_tests {
+    use super::*;
+
+    #[test]
+    fn maps_config_errors() {
+        assert_eq!(
+            exit_code_for_message("Failed to load config: parse error"),
+            exit_code::CONFIG
+        );
+        assert_eq!(
+            exit_code_for_message("Configuration error at /tmp/x.toml"),
+            exit_code::CONFIG
+        );
+    }
+
+    #[test]
+    fn maps_authorisation_errors() {
+        assert_eq!(
+            exit_code_for_message("policy denied 'read_file': filesystem scope"),
+            exit_code::AUTHORISATION
+        );
+        assert_eq!(
+            exit_code_for_message("approval required"),
+            exit_code::AUTHORISATION
+        );
+    }
+
+    #[test]
+    fn maps_scanner_and_persistence() {
+        assert_eq!(
+            exit_code_for_message("Scanner failure: memory unsupported"),
+            exit_code::SCANNER
+        );
+        assert_eq!(
+            exit_code_for_message("sqlite database locked"),
+            exit_code::PERSISTENCE
+        );
+    }
+
+    #[test]
+    fn maps_invalid_input() {
+        assert_eq!(
+            exit_code_for_message("Unsupported shell: foo"),
+            exit_code::INVALID_INPUT
+        );
+    }
 }

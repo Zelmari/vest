@@ -58,6 +58,9 @@ pub enum VestError {
     #[error("Unsupported format: {0}")]
     UnsupportedFormat(String),
 
+    #[error("Unsupported: {0}")]
+    Unsupported(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -185,6 +188,12 @@ mod tests {
     fn test_unsupported_format() {
         let err = VestError::UnsupportedFormat("pdf".into());
         assert_eq!(err.to_string(), "Unsupported format: pdf");
+    }
+
+    #[test]
+    fn test_unsupported() {
+        let err = VestError::Unsupported("feature not implemented".into());
+        assert_eq!(err.to_string(), "Unsupported: feature not implemented");
     }
 
     #[test]

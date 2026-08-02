@@ -1,10 +1,19 @@
-use std::collections::HashMap;
+//! Compatibility facade over [`crate::policy::PolicyEngine`].
+//!
+//! Tool-name substring matching is no longer authoritative. Prefer constructing
+//! [`NormalisedToolCall`] with an explicit [`ToolEffect`].
+
+use crate::net_scope::ApprovedNetworkScope;
+use crate::policy::{AuthorisationContext, NormalisedToolCall, PolicyEngine};
+use std::sync::Arc;
 use tokio::sync::RwLock;
+use vest_core::auth::{ApprovalDecision, DataEgressClass, ToolEffect};
 use vest_core::error::VestError;
 
 pub struct SafetyChecker {
+    pub policy: Arc<PolicyEngine>,
+    pub auth: RwLock<AuthorisationContext>,
     config: SafetyConfig,
-    approvals_granted: RwLock<HashMap<String, bool>>,
     rate_limiter: RwLock<RateLimiterState>,
 }
 
@@ -53,9 +62,15 @@ struct RateLimiterState {
 
 impl SafetyChecker {
     pub fn new(config: SafetyConfig) -> Self {
+        let mut auth = AuthorisationContext::new("default");
+        if let Ok(net) = ApprovedNetworkScope::new(config.allowed_networks.clone()) {
+            auth.network = net;
+        }
+        auth.interactive = false;
         Self {
+            policy: Arc::new(PolicyEngine::new()),
+            auth: RwLock::new(auth),
             config,
-            approvals_granted: RwLock::new(HashMap::new()),
             rate_limiter: RwLock::new(RateLimiterState {
                 tokens: 30.0,
                 last_refill: std::time::Instant::now(),
@@ -63,8 +78,11 @@ impl SafetyChecker {
         }
     }
 
+    /// Test-only permissive checker (still denies Unknown effects).
     pub fn permissive() -> Self {
         Self {
+            policy: Arc::new(PolicyEngine::new()),
+            auth: RwLock::new(AuthorisationContext::permissive_for_tests("permissive")),
             config: SafetyConfig {
                 write_approval: false,
                 exploit_approval: false,
@@ -72,7 +90,6 @@ impl SafetyChecker {
                 rate_limit_enabled: false,
                 ..Default::default()
             },
-            approvals_granted: RwLock::new(HashMap::new()),
             rate_limiter: RwLock::new(RateLimiterState {
                 tokens: f64::MAX,
                 last_refill: std::time::Instant::now(),
@@ -84,49 +101,42 @@ impl SafetyChecker {
         if allowed {
             Self::permissive()
         } else {
-            Self {
-                config: SafetyConfig::default(),
-                approvals_granted: RwLock::new(HashMap::new()),
-                rate_limiter: RwLock::new(RateLimiterState {
-                    tokens: 0.0,
-                    last_refill: std::time::Instant::now(),
-                }),
-            }
+            Self::new(SafetyConfig::default())
         }
     }
 
+    /// Evaluate a tool call. Prefer passing explicit `effect` via [`Self::approve_normalised`].
     pub fn approve_tool_call(
         &self,
         tool_name: &str,
-        _args: &serde_json::Value,
+        args: &serde_json::Value,
     ) -> Result<bool, VestError> {
-        let category = self.categorize_tool(tool_name);
+        // Legacy entry: map known tools explicitly; unknown → deny (fail closed).
+        let effect = explicit_effect_for_tool(tool_name).unwrap_or(ToolEffect::Unknown);
+        let call = NormalisedToolCall::from_parts(
+            tool_name,
+            effect,
+            DataEgressClass::PotentiallySecretBearing,
+            args,
+        );
+        self.approve_normalised(&call)
+    }
 
-        match category {
-            ActionCategory::MemoryWrite | ActionCategory::FileWrite => {
-                if self.config.write_approval {
-                    return Ok(self.check_approval_cache("write").unwrap_or(false));
+    pub fn approve_normalised(&self, call: &NormalisedToolCall) -> Result<bool, VestError> {
+        let auth = self
+            .auth
+            .try_read()
+            .map_err(|_| VestError::Internal("auth context lock poisoned".into()))?;
+        match self.policy.evaluate(&auth, call) {
+            ApprovalDecision::Allow => Ok(true),
+            ApprovalDecision::Deny { reason } => Err(VestError::ApprovalDenied(reason)),
+            ApprovalDecision::RequireInteractive { reason } => {
+                // Non-interactive fail-closed surfaces as denial unless caller grants.
+                if auth.interactive {
+                    Ok(false)
+                } else {
+                    Err(VestError::ApprovalDenied(reason))
                 }
-                Ok(true)
-            }
-            ActionCategory::Exploit => {
-                if self.config.exploit_approval {
-                    return Ok(self.check_approval_cache("exploit").unwrap_or(false));
-                }
-                Ok(true)
-            }
-            ActionCategory::NetworkWrite => {
-                if self.config.network_write_approval {
-                    return Ok(self.check_approval_cache("network_write").unwrap_or(false));
-                }
-                Ok(true)
-            }
-            ActionCategory::ReadOnly => Ok(true),
-            ActionCategory::Command => {
-                if self.config.write_approval {
-                    return Ok(self.check_approval_cache("command").unwrap_or(false));
-                }
-                Ok(true)
             }
         }
     }
@@ -156,17 +166,20 @@ impl SafetyChecker {
         }
     }
 
+    /// Structural target allow/block — exact host/origin or exact path equality, not substring.
     pub fn is_target_allowed(&self, target_name: &str) -> bool {
         if !self.config.blocked_targets.is_empty() {
             for blocked in &self.config.blocked_targets {
-                if target_name.contains(blocked) {
+                if ApprovedNetworkScope::host_equals(target_name, blocked) || target_name == blocked
+                {
                     return false;
                 }
             }
         }
         if !self.config.allowed_targets.is_empty() {
             for allowed in &self.config.allowed_targets {
-                if target_name.contains(allowed) {
+                if ApprovedNetworkScope::host_equals(target_name, allowed) || target_name == allowed
+                {
                     return true;
                 }
             }
@@ -175,9 +188,15 @@ impl SafetyChecker {
         true
     }
 
-    pub async fn grant_approval(&self, category: &str) {
-        let mut approvals = self.approvals_granted.write().await;
-        approvals.insert(category.to_string(), true);
+    pub async fn grant_approval_for(&self, call: &NormalisedToolCall) {
+        let auth = self.auth.read().await.clone();
+        self.policy.grant(&auth, call, false).await;
+    }
+
+    /// Legacy broad category grant — intentionally a no-op (does not bypass policy).
+    pub async fn grant_approval(&self, _category: &str) {
+        // Broad category caches were removed; use grant_approval_for with a
+        // NormalisedToolCall instead.
     }
 
     pub async fn request_approval(
@@ -187,47 +206,9 @@ impl SafetyChecker {
         _details: &str,
         _risk: &str,
     ) -> Result<bool, VestError> {
-        Ok(self.check_approval_cache(action).unwrap_or(false))
-    }
-
-    fn categorize_tool(&self, tool_name: &str) -> ActionCategory {
-        let name = tool_name.to_lowercase();
-        if name.contains("read")
-            || name.contains("list")
-            || name.contains("get")
-            || name.contains("show")
-        {
-            ActionCategory::ReadOnly
-        } else if name.contains("write_memory")
-            || name.contains("write_process")
-            || name.contains("inject")
-        {
-            ActionCategory::MemoryWrite
-        } else if name.contains("write_file")
-            || name.contains("modify_file")
-            || name.contains("create_file")
-        {
-            ActionCategory::FileWrite
-        } else if name.contains("exploit") || name.contains("poc") || name.contains("payload") {
-            ActionCategory::Exploit
-        } else if name.contains("network") || name.contains("send") || name.contains("request") {
-            ActionCategory::NetworkWrite
-        } else if name.contains("execute")
-            || name.contains("command")
-            || name.contains("shell")
-            || name.contains("run")
-        {
-            ActionCategory::Command
-        } else {
-            ActionCategory::ReadOnly
-        }
-    }
-
-    fn check_approval_cache(&self, category: &str) -> Option<bool> {
-        self.approvals_granted
-            .try_read()
-            .ok()
-            .and_then(|approvals| approvals.get(category).copied())
+        // Legacy category grant removed — require normalised grant.
+        let _ = action;
+        Ok(false)
     }
 
     pub fn config(&self) -> &SafetyConfig {
@@ -235,28 +216,43 @@ impl SafetyChecker {
     }
 
     pub fn with_overrides(&self, overrides: SafetyConfig) -> Self {
-        Self {
-            config: SafetyConfig {
-                write_approval: overrides.write_approval,
-                exploit_approval: overrides.exploit_approval,
-                network_write_approval: overrides.network_write_approval,
-                rate_limit_enabled: overrides.rate_limit_enabled,
-                rate_limit_requests_per_second: overrides.rate_limit_requests_per_second,
-                rate_limit_burst: overrides.rate_limit_burst,
-                sandbox_enabled: overrides.sandbox_enabled,
-                sandbox_image: overrides.sandbox_image,
-                max_scan_duration_seconds: overrides.max_scan_duration_seconds,
-                max_concurrent_exploits: overrides.max_concurrent_exploits,
-                allowed_targets: overrides.allowed_targets,
-                blocked_targets: overrides.blocked_targets,
-                allowed_networks: overrides.allowed_networks,
-            },
-            approvals_granted: RwLock::new(HashMap::new()),
-            rate_limiter: RwLock::new(RateLimiterState {
-                tokens: 30.0,
-                last_refill: std::time::Instant::now(),
-            }),
-        }
+        Self::new(overrides)
+    }
+
+    pub async fn set_authorisation_context(&self, ctx: AuthorisationContext) {
+        *self.auth.write().await = ctx;
+    }
+
+    pub fn policy(&self) -> &PolicyEngine {
+        &self.policy
+    }
+
+    pub fn auth_context(&self) -> AuthorisationContext {
+        self.auth
+            .try_read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| AuthorisationContext::new("default"))
+    }
+
+    /// Register an explicit effect for a tool name (used by tool-use runner).
+    pub fn register_tool_effect(&self, _tool_name: &str, _effect: ToolEffect) {
+        // Effects are taken from ToolDefinition at invoke time; kept for API compatibility.
+    }
+
+    pub fn evaluate_tool_call(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> ApprovalDecision {
+        let effect = explicit_effect_for_tool(tool_name).unwrap_or(ToolEffect::Unknown);
+        let call = NormalisedToolCall::from_parts(
+            tool_name,
+            effect,
+            DataEgressClass::PotentiallySecretBearing,
+            args,
+        );
+        let auth = self.auth_context();
+        self.policy.evaluate(&auth, &call)
     }
 }
 
@@ -266,14 +262,23 @@ impl Default for SafetyChecker {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActionCategory {
-    ReadOnly,
-    MemoryWrite,
-    FileWrite,
-    Exploit,
-    NetworkWrite,
-    Command,
+/// Explicit effect table for known built-in tools. Unknown names return None → deny.
+pub fn explicit_effect_for_tool(name: &str) -> Option<ToolEffect> {
+    match name {
+        "read_file" | "file_scan" | "scan_for_secrets" => Some(ToolEffect::LocalFileContentRead),
+        "list_files" => Some(ToolEffect::LocalMetadataRead),
+        "http_get" => Some(ToolEffect::PassiveNetworkRequest),
+        "http_post" => Some(ToolEffect::StateChangingNetworkRequest),
+        "web_scan" => Some(ToolEffect::ActiveNetworkProbe),
+        "browser_inspect" => Some(ToolEffect::PassiveNetworkRequest),
+        "memory_scan" => Some(ToolEffect::ProcessMemoryRead),
+        "read_memory" => Some(ToolEffect::ProcessMemoryRead),
+        "write_memory" | "write_process" | "inject" | "inject_dll" => Some(ToolEffect::LocalWrite),
+        "write_file" | "modify_file" | "create_file" => Some(ToolEffect::LocalWrite),
+        "execute_command" | "run_shell" | "shell_exec" => Some(ToolEffect::CommandExecution),
+        "list_processes" => Some(ToolEffect::ProcessMetadataRead),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -281,81 +286,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_safety_is_restrictive() {
-        let checker = SafetyChecker::new(SafetyConfig::default());
-        assert!(checker.config.write_approval);
-        assert!(checker.config.exploit_approval);
-        assert!(checker.config.network_write_approval);
+    fn unknown_tool_denied() {
+        let checker = SafetyChecker::default();
+        let result = checker.approve_tool_call("completely_unknown_tool", &serde_json::json!({}));
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_permissive_allows_all() {
+    fn http_post_not_auto_allowed() {
+        let checker = SafetyChecker::default();
+        let result = checker.approve_tool_call(
+            "http_post",
+            &serde_json::json!({"url": "http://127.0.0.1/", "data": {}}),
+        );
+        assert!(result.is_err() || matches!(result, Ok(false)));
+    }
+
+    #[test]
+    fn permissive_allows_known_effects() {
         let checker = SafetyChecker::permissive();
-        assert!(!checker.config.write_approval);
-        assert!(!checker.config.exploit_approval);
+        assert!(checker
+            .approve_tool_call("http_get", &serde_json::json!({"url": "http://127.0.0.1/"}))
+            .unwrap());
     }
 
     #[test]
-    fn test_categorize_read_only_tool() {
-        let checker = SafetyChecker::default();
-        assert_eq!(
-            checker.categorize_tool("read_memory"),
-            ActionCategory::ReadOnly
-        );
-        assert_eq!(
-            checker.categorize_tool("list_files"),
-            ActionCategory::ReadOnly
-        );
-        assert_eq!(
-            checker.categorize_tool("get_target"),
-            ActionCategory::ReadOnly
-        );
-    }
-
-    #[test]
-    fn test_categorize_write_tool() {
-        let checker = SafetyChecker::default();
-        assert_eq!(
-            checker.categorize_tool("write_memory"),
-            ActionCategory::MemoryWrite
-        );
-        assert_eq!(
-            checker.categorize_tool("inject_dll"),
-            ActionCategory::MemoryWrite
-        );
-    }
-
-    #[test]
-    fn test_categorize_exploit_tool() {
-        let checker = SafetyChecker::default();
-        assert_eq!(
-            checker.categorize_tool("exploit_buffer_overflow"),
-            ActionCategory::Exploit
-        );
-        assert_eq!(
-            checker.categorize_tool("generate_poc"),
-            ActionCategory::Exploit
-        );
-        assert_eq!(
-            checker.categorize_tool("send_payload"),
-            ActionCategory::Exploit
-        );
-    }
-
-    #[test]
-    fn test_categorize_command_tool() {
-        let checker = SafetyChecker::default();
-        assert_eq!(
-            checker.categorize_tool("execute_command"),
-            ActionCategory::Command
-        );
-        assert_eq!(
-            checker.categorize_tool("run_shell"),
-            ActionCategory::Command
-        );
-        assert_eq!(
-            checker.categorize_tool("shell_exec"),
-            ActionCategory::Command
+    fn target_allow_is_not_substring() {
+        let checker = SafetyChecker::new(SafetyConfig {
+            allowed_targets: vec!["example.com".into()],
+            ..Default::default()
+        });
+        assert!(checker.is_target_allowed("example.com"));
+        assert!(
+            !checker.is_target_allowed("example.com.evil.test"),
+            "prefix/substring host must not match"
         );
     }
 
@@ -368,101 +332,11 @@ mod tests {
             ..Default::default()
         });
         for _ in 0..5 {
-            assert!(
-                checker.check_rate_limit().await.is_ok(),
-                "Burst request should be allowed"
-            );
-        }
-        let result = checker.check_rate_limit().await;
-        assert!(matches!(result, Err(VestError::RateLimited(_))));
-    }
-
-    #[tokio::test]
-    async fn test_rate_limit_disabled_allows_all() {
-        let checker = SafetyChecker::permissive();
-        for _ in 0..1000 {
             assert!(checker.check_rate_limit().await.is_ok());
         }
-    }
-
-    #[test]
-    fn test_is_target_allowed_empty_lists() {
-        let checker = SafetyChecker::default();
-        assert!(checker.is_target_allowed("example.com"));
-        assert!(checker.is_target_allowed("anything.exe"));
-    }
-
-    #[test]
-    fn test_is_target_allowed_blocked() {
-        let checker = SafetyChecker::new(SafetyConfig {
-            blocked_targets: vec!["internal.company.com".into()],
-            ..Default::default()
-        });
-        assert!(!checker.is_target_allowed("internal.company.com"));
-        assert!(checker.is_target_allowed("public.company.com"));
-    }
-
-    #[test]
-    fn test_is_target_allowed_whitelist() {
-        let checker = SafetyChecker::new(SafetyConfig {
-            allowed_targets: vec!["test.com".into()],
-            ..Default::default()
-        });
-        assert!(checker.is_target_allowed("test.com"));
-        assert!(!checker.is_target_allowed("other.com"));
-    }
-
-    #[test]
-    fn test_approve_read_only_tool_always_ok() {
-        let checker = SafetyChecker::default();
-        assert!(checker
-            .approve_tool_call("read_memory", &serde_json::json!({}))
-            .unwrap());
-        assert!(checker
-            .approve_tool_call("list_files", &serde_json::json!({}))
-            .unwrap());
-    }
-
-    #[test]
-    fn test_approve_write_tool_needs_approval() {
-        let checker = SafetyChecker::new(SafetyConfig {
-            write_approval: true,
-            ..Default::default()
-        });
-        let result = checker
-            .approve_tool_call("write_memory", &serde_json::json!({"address": "0x1000"}))
-            .unwrap();
-        assert!(!result, "Write should not be approved without user consent");
-    }
-
-    #[test]
-    fn test_approve_write_tool_permissive() {
-        let checker = SafetyChecker::permissive();
-        let result = checker
-            .approve_tool_call("write_memory", &serde_json::json!({}))
-            .unwrap();
-        assert!(result, "Permissive mode should allow writes");
-    }
-
-    #[test]
-    fn test_categorize_unknown_tool_safe_default() {
-        let checker = SafetyChecker::default();
-        assert_eq!(
-            checker.categorize_tool("completely_unknown_tool"),
-            ActionCategory::ReadOnly
-        );
-    }
-
-    #[test]
-    fn test_categorize_network_write_tool() {
-        let checker = SafetyChecker::default();
-        assert_eq!(
-            checker.categorize_tool("send_http_request"),
-            ActionCategory::NetworkWrite
-        );
-        assert_eq!(
-            checker.categorize_tool("network_connect"),
-            ActionCategory::NetworkWrite
-        );
+        assert!(matches!(
+            checker.check_rate_limit().await,
+            Err(VestError::RateLimited(_))
+        ));
     }
 }

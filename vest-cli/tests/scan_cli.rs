@@ -50,6 +50,7 @@ fn scan_file_with_builtin_scanner_reports_and_stores_findings() {
 
     let output = Command::new(vest_bin())
         .env("VEST_HOME", &vest_home)
+        .env_remove("VEST_DB_PATH")
         .arg("scan")
         .arg(&fixture)
         .arg("--target-type")
@@ -97,6 +98,7 @@ fn scan_file_with_builtin_scanner_reports_and_stores_findings() {
     let scans_list = command_stdout(
         Command::new(vest_bin())
             .env("VEST_HOME", &vest_home)
+            .env_remove("VEST_DB_PATH")
             .arg("scans")
             .arg("list")
             .output()
@@ -111,6 +113,7 @@ fn scan_file_with_builtin_scanner_reports_and_stores_findings() {
     let scans_show = command_stdout(
         Command::new(vest_bin())
             .env("VEST_HOME", &vest_home)
+            .env_remove("VEST_DB_PATH")
             .arg("scans")
             .arg("show")
             .arg(&scans[0].id)
@@ -123,6 +126,7 @@ fn scan_file_with_builtin_scanner_reports_and_stores_findings() {
     let findings_list = command_stdout(
         Command::new(vest_bin())
             .env("VEST_HOME", &vest_home)
+            .env_remove("VEST_DB_PATH")
             .arg("findings")
             .arg("list")
             .arg("--scan-id")
@@ -136,6 +140,7 @@ fn scan_file_with_builtin_scanner_reports_and_stores_findings() {
     let report_stdout = command_stdout(
         Command::new(vest_bin())
             .env("VEST_HOME", &vest_home)
+            .env_remove("VEST_DB_PATH")
             .arg("report")
             .arg("generate")
             .arg(&scans[0].id)
@@ -159,6 +164,7 @@ fn providers_pull_checks_ollama() {
 
     let output = Command::new(vest_bin())
         .env("VEST_HOME", &vest_home)
+        .env_remove("VEST_DB_PATH")
         .arg("providers")
         .arg("pull")
         .arg("llama3.2")
@@ -207,8 +213,107 @@ fn completions_unsupported_shell_exits_gracefully() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
+        !output.status.success(),
+        "unsupported shell must be a non-zero exit"
+    );
+    assert!(
         stderr.contains("Unsupported shell"),
         "Should warn about unsupported shell: {stderr}"
+    );
+}
+
+#[test]
+fn malformed_config_via_c_flag_fails_closed() {
+    let root = temp_root("bad-config");
+    fs::create_dir_all(&root).unwrap();
+    let bad = root.join("bad.toml");
+    fs::write(&bad, "this is {{{ not toml\n").unwrap();
+
+    let output = Command::new(vest_bin())
+        .arg("-c")
+        .arg(&bad)
+        .arg("scan")
+        .arg("./examples/demo-target/vulnerable-files")
+        .arg("--target-type")
+        .arg("file")
+        .arg("--scanner")
+        .arg("files")
+        .arg("--provider")
+        .arg("none")
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "malformed present config must fail\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.to_lowercase().contains("config") || stderr.to_lowercase().contains("parse"),
+        "stderr should mention config/parse failure: {stderr}"
+    );
+}
+
+#[test]
+fn memory_scan_without_simulation_is_fatal() {
+    let root = temp_root("memory-unsup");
+    let vest_home = root.join("home");
+    fs::create_dir_all(&vest_home).unwrap();
+
+    let output = Command::new(vest_bin())
+        .env("VEST_HOME", &vest_home)
+        .env_remove("VEST_DB_PATH")
+        .arg("scan")
+        .arg("1")
+        .arg("--target-type")
+        .arg("process")
+        .arg("--scanner")
+        .arg("memory")
+        .arg("--provider")
+        .arg("none")
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "unsupported memory scan must fail closed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.to_lowercase().contains("unsupported")
+            || combined.to_lowercase().contains("scanner failure"),
+        "should report unsupported/scanner failure: {combined}"
+    );
+}
+
+#[test]
+fn set_key_never_echoes_secret() {
+    let output = Command::new(vest_bin())
+        .arg("providers")
+        .arg("set-key")
+        .arg("openai")
+        .arg("--key")
+        .arg("SUPER_SECRET_TEST_KEY_123")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains("SUPER_SECRET_TEST_KEY_123"),
+        "API key must never be printed: {combined}"
     );
 }
 
@@ -223,6 +328,7 @@ fn dry_run_does_not_create_database() {
 
     let output = Command::new(vest_bin())
         .env("VEST_HOME", &vest_home)
+        .env_remove("VEST_DB_PATH")
         .arg("scan")
         .arg(&fixture)
         .arg("--target-type")
