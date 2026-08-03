@@ -50,6 +50,7 @@ pub fn default_config() -> VestConfig {
             workspace_dir: "~/.vest".to_string(),
             auto_update_sinks: true,
             log_level: "info".to_string(),
+            include_report_evidence: false,
         },
         providers: None,
         agent: config::AgentConfig {

@@ -86,7 +86,7 @@ fn agent_http_post(
 }
 
 pub async fn run(
-    args: ScanArgs,
+    mut args: ScanArgs,
     config_path: impl AsRef<Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("\u{250c}{}\u{2510}", "\u{2500}".repeat(50));
@@ -206,6 +206,7 @@ pub async fn run(
         )
         .into_arc();
     let allow_active_probes = args.allow_active_probes || config.scanner.web.allow_active_probes;
+    args.include_evidence = args.include_evidence || config.general.include_report_evidence;
     let registry = build_tool_registry(Arc::clone(&session), allow_active_probes);
     let safety = build_safety(&args, &config, Arc::clone(&session)).await;
 
@@ -379,13 +380,25 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, Box<dyn st
         created_at: chrono::Utc::now(),
     };
 
-    let report = render_report(&args.format, &scan_session, &findings).await?;
+    let report = render_report(
+        &args.format,
+        &scan_session,
+        &findings,
+        args.include_evidence,
+    )
+    .await?;
     println!("{}", report);
 
     if let Some(ref output_path) = args.output {
         std::fs::write(
             output_path,
-            render_report(&args.format, &scan_session, &findings).await?,
+            render_report(
+                &args.format,
+                &scan_session,
+                &findings,
+                args.include_evidence,
+            )
+            .await?,
         )?;
         println!("\nReport saved to: {}", output_path);
     }
@@ -640,15 +653,18 @@ async fn render_report(
     format: &str,
     scan: &vest_core::types::ScanSession,
     findings: &[Finding],
+    include_evidence: bool,
 ) -> Result<String, VestError> {
     match format {
         "json" => {
-            vest_report::JsonReporter
+            vest_report::JsonReporter::new()
+                .include_evidence(include_evidence)
                 .generate_report(scan, findings)
                 .await
         }
         "markdown" | "md" => {
-            vest_report::MarkdownReporter
+            vest_report::MarkdownReporter::new()
+                .include_evidence(include_evidence)
                 .generate_report(scan, findings)
                 .await
         }

@@ -4,11 +4,11 @@
 //! allowlisted DTOs and explicit egress flags over hoping patterns catch all.
 
 use crate::policy::AuthorisationContext;
-use regex::Regex;
 use serde_json::{json, Value};
-use std::sync::OnceLock;
 use vest_core::auth::{DataEgressClass, ToolEffect};
 use vest_core::types::Finding;
+
+pub use vest_core::redact_secrets;
 
 const DEFAULT_MAX_TOOL_RESULT_CHARS: usize = 8_192;
 const MAX_EVIDENCE_EXCERPT: usize = 512;
@@ -46,34 +46,6 @@ pub fn bound_tool_result(value: &Value, max_chars: usize) -> Value {
         "max_chars": max_chars,
         "preview": s.chars().take(max_chars).collect::<String>(),
     })
-}
-
-/// Redact configured secrets and common credential patterns.
-///
-/// Limits: pattern matching is best-effort and will miss novel secret formats.
-pub fn redact_secrets(text: &str, known_secrets: &[String]) -> String {
-    let mut out = text.to_string();
-    for secret in known_secrets {
-        if secret.len() >= 8 {
-            out = out.replace(secret.as_str(), "[REDACTED_SECRET]");
-        }
-    }
-    static BEARER: OnceLock<Regex> = OnceLock::new();
-    static COOKIE: OnceLock<Regex> = OnceLock::new();
-    static ASSIGN: OnceLock<Regex> = OnceLock::new();
-    let bearer = BEARER.get_or_init(|| {
-        Regex::new(r"(?i)(authorization\s*:\s*bearer\s+)(\S+)").expect("bearer regex")
-    });
-    let cookie =
-        COOKIE.get_or_init(|| Regex::new(r"(?i)(cookie\s*:\s*)([^\r\n]+)").expect("cookie regex"));
-    let assign = ASSIGN.get_or_init(|| {
-        Regex::new(r#"(?i)((?:api[_-]?key|secret|password|token)\s*[=:]\s*["']?)([^\s"']+)"#)
-            .expect("assign regex")
-    });
-    out = bearer.replace_all(&out, "$1[REDACTED]").into_owned();
-    out = cookie.replace_all(&out, "$1[REDACTED]").into_owned();
-    out = assign.replace_all(&out, "$1[REDACTED]").into_owned();
-    out
 }
 
 /// Filter a tool result for insertion into remote model context.

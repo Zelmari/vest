@@ -137,6 +137,12 @@ pub struct ScanArgs {
     /// Off by default; OR'd with `scanner.web.allow_active_probes` in config.
     #[arg(long)]
     pub allow_active_probes: bool,
+
+    /// Include finding evidence/PoC in JSON and Markdown reports.
+    /// Off by default (REP-1); secrets are still redacted best-effort when enabled.
+    /// OR'd with `general.include_report_evidence` in config.
+    #[arg(long)]
+    pub include_evidence: bool,
 }
 
 #[derive(Subcommand)]
@@ -279,6 +285,10 @@ pub enum ReportArgs {
         /// Output report path
         #[arg(short = 'o', long)]
         output: Option<String>,
+        /// Include finding evidence/PoC in JSON and Markdown reports.
+        /// Off by default (REP-1); secrets are still redacted best-effort when enabled.
+        #[arg(long)]
+        include_evidence: bool,
     },
     /// Summary of all scans
     Summary,

@@ -1,10 +1,30 @@
+use crate::sanitize::{sanitize_evidence, sanitize_poc, ReportOptions};
 use crate::target::target_display;
 use async_trait::async_trait;
 use vest_core::error::VestError;
 use vest_core::traits::{ReportFormat, Reporter};
 use vest_core::types::{Finding, ScanSession, Severity};
 
-pub struct MarkdownReporter;
+/// Markdown report writer. Evidence/PoC omitted by default (REP-1).
+#[derive(Debug, Clone, Default)]
+pub struct MarkdownReporter {
+    options: ReportOptions,
+}
+
+impl MarkdownReporter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_options(options: ReportOptions) -> Self {
+        Self { options }
+    }
+
+    pub fn include_evidence(mut self, include: bool) -> Self {
+        self.options.include_evidence = include;
+        self
+    }
+}
 
 #[async_trait]
 impl Reporter for MarkdownReporter {
@@ -29,6 +49,12 @@ impl Reporter for MarkdownReporter {
             "**Duration:** {}\n\n",
             format_duration(scan.duration_ms)
         ));
+        if !self.options.include_evidence {
+            md.push_str(
+                "*Evidence and proof-of-concept details are omitted by default. \
+Use `--include-evidence` to include them (secrets are still redacted best-effort).*\n\n",
+            );
+        }
 
         md.push_str("## Summary\n\n");
         md.push_str("| Severity | Count |\n");
@@ -88,16 +114,19 @@ impl Reporter for MarkdownReporter {
 
             md.push_str(&format!("**Description:** {}\n\n", f.description));
 
-            let evidence_str = serde_json::to_string_pretty(&f.evidence).unwrap_or_default();
-            if evidence_str.len() > 4 {
-                md.push_str(&format!(
-                    "<details>\n<summary>Evidence</summary>\n\n```json\n{}\n```\n</details>\n\n",
-                    evidence_str
-                ));
-            }
+            if self.options.include_evidence {
+                let evidence = sanitize_evidence(&f.evidence, self.options);
+                let evidence_str = serde_json::to_string_pretty(&evidence).unwrap_or_default();
+                if evidence_str.len() > 4 {
+                    md.push_str(&format!(
+                        "<details>\n<summary>Evidence</summary>\n\n```json\n{}\n```\n</details>\n\n",
+                        evidence_str
+                    ));
+                }
 
-            if let Some(ref poc) = f.poc {
-                md.push_str(&format!("**Proof of Concept:**\n\n```\n{}\n```\n\n", poc));
+                if let Some(poc) = sanitize_poc(f.poc.as_deref(), self.options) {
+                    md.push_str(&format!("**Proof of Concept:**\n\n```\n{}\n```\n\n", poc));
+                }
             }
 
             if let Some(ref remediation) = f.remediation {
@@ -212,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_markdown_report_generation() {
-        let reporter = MarkdownReporter;
+        let reporter = MarkdownReporter::new();
         let scan = make_scan();
         let findings = vec![
             make_finding(Severity::High, "SQL Injection in login"),
@@ -230,11 +259,13 @@ mod tests {
         assert!(md.contains("SQL Injection"));
         assert!(md.contains("CWE-89"));
         assert!(md.contains("parameterized queries"));
+        assert!(!md.contains("Proof of Concept"));
+        assert!(!md.contains("<summary>Evidence</summary>"));
     }
 
     #[test]
     fn test_markdown_report_empty() {
-        let reporter = MarkdownReporter;
+        let reporter = MarkdownReporter::new();
         let scan = make_scan();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let md = rt.block_on(reporter.generate_report(&scan, &[])).unwrap();
@@ -243,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_markdown_report_uses_target_metadata() {
-        let reporter = MarkdownReporter;
+        let reporter = MarkdownReporter::new();
         let mut scan = make_scan();
         scan.metadata = serde_json::json!({
             "target": {
@@ -259,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_severity_icons_rendered() {
-        let reporter = MarkdownReporter;
+        let reporter = MarkdownReporter::new();
         let scan = make_scan();
         let findings = vec![
             make_finding(Severity::Critical, "Critical bug"),

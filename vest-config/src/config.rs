@@ -34,6 +34,11 @@ pub struct GeneralConfig {
 
     #[serde(default = "default_log_level")]
     pub log_level: String,
+
+    /// When true, JSON/Markdown reports include evidence and PoC (still redacted best-effort).
+    /// Default false (REP-1). Overridable with CLI `--include-evidence`.
+    #[serde(default)]
+    pub include_report_evidence: bool,
 }
 
 fn default_true() -> bool {

@@ -161,7 +161,7 @@ N5 → K3 → K3b → REP-1 → PROV-1 → K4 → K2 → K5b → K8 → POL-1 �
 - [x] N5 CLI web probes default off
 - [x] K3 agent HTTP → ScopedHttpClient
 - [x] K3b web_scan tool unified
-- [ ] REP-1 report secret redaction
+- [x] REP-1 report secret redaction
 - [x] PROV-1 Google key not in URL
 - [ ] K4 TargetContent egress gate
 - [ ] K2 interactive / exact grants

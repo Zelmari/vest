@@ -11,7 +11,8 @@ pub async fn run(args: ReportArgs) -> Result<(), Box<dyn std::error::Error>> {
             scan_id,
             format,
             output,
-        } => generate_report(&pool, scan_id, format, output).await,
+            include_evidence,
+        } => generate_report(&pool, scan_id, format, output, include_evidence).await,
         ReportArgs::Summary => scan_summary(&pool),
         ReportArgs::Compare { scan_a, scan_b } => compare_scans(&pool, scan_a, scan_b),
     }
@@ -22,6 +23,7 @@ async fn generate_report(
     scan_id: String,
     format: String,
     output: Option<String>,
+    include_evidence: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let conn = pool.conn();
     match scans::get_scan(conn, &scan_id) {
@@ -29,12 +31,14 @@ async fn generate_report(
             let finding_list = findings::list_findings_by_scan(conn, &scan_id).unwrap_or_default();
             let report = match format.as_str() {
                 "json" => {
-                    vest_report::JsonReporter
+                    vest_report::JsonReporter::new()
+                        .include_evidence(include_evidence)
                         .generate_report(&scan, &finding_list)
                         .await?
                 }
                 "markdown" | "md" => {
-                    vest_report::MarkdownReporter
+                    vest_report::MarkdownReporter::new()
+                        .include_evidence(include_evidence)
                         .generate_report(&scan, &finding_list)
                         .await?
                 }

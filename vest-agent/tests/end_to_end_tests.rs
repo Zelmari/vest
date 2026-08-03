@@ -253,7 +253,7 @@ async fn test_end_to_end_tooluse_scan_to_report() {
     assert!(report.contains("VEST Scan Report"));
     eprintln!("TEST 1: Terminal report generated ({} chars)", report.len());
 
-    let json_reporter = vest_report::JsonReporter;
+    let json_reporter = vest_report::JsonReporter::new();
     let json_report = json_reporter.generate_report(&scan, &stored).await.unwrap();
     let _parsed: serde_json::Value = serde_json::from_str(&json_report).unwrap();
     eprintln!("TEST 1: JSON report generated and validated");
@@ -314,7 +314,7 @@ async fn test_end_to_end_storage_full_workflow() {
     let fp = findings::get_finding(&conn, "st-f-0").unwrap();
     assert_eq!(fp.status, FindingStatus::FalsePositive);
 
-    let json_reporter = vest_report::JsonReporter;
+    let json_reporter = vest_report::JsonReporter::new();
     let json_report = json_reporter.generate_report(&updated, &all).await.unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_report).unwrap();
     assert_eq!(parsed["summary"]["total"].as_u64().unwrap(), 9);
@@ -373,7 +373,7 @@ async fn test_end_to_end_target_crud_chain() {
     assert!(terminal_report.contains("SQL Injection"));
     eprintln!("TEST 3: Target CRUD chain completed, terminal report verified");
 
-    let json_reporter = vest_report::JsonReporter;
+    let json_reporter = vest_report::JsonReporter::new();
     let json_report = json_reporter
         .generate_report(&scan, &scan_findings)
         .await
@@ -479,7 +479,7 @@ async fn test_end_to_end_all_severity_levels_report() {
     let stored = findings::list_findings_by_scan(&conn, scan_id).unwrap();
     assert_eq!(stored.len(), 5);
 
-    let json_reporter = vest_report::JsonReporter;
+    let json_reporter = vest_report::JsonReporter::new();
     let json_report = json_reporter.generate_report(&scan, &stored).await.unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_report).unwrap();
 
@@ -583,7 +583,7 @@ async fn test_end_to_end_empty_findings_report() {
     let stored = findings::list_findings_by_scan(&conn, scan_id).unwrap();
     assert!(stored.is_empty());
 
-    let json_reporter = vest_report::JsonReporter;
+    let json_reporter = vest_report::JsonReporter::new();
     let json_report = json_reporter.generate_report(&scan, &stored).await.unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_report).unwrap();
     assert_eq!(parsed["summary"]["total"].as_u64().unwrap(), 0);
@@ -761,7 +761,7 @@ async fn test_end_to_end_report_format_types() {
         vest_core::traits::ReportFormat::Terminal
     );
 
-    let json = vest_report::JsonReporter;
+    let json = vest_report::JsonReporter::new();
     assert_eq!(json.format_type(), vest_core::traits::ReportFormat::Json);
 
     eprintln!("TEST 11: Report format types verified");

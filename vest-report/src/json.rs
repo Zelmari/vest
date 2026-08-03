@@ -1,3 +1,4 @@
+use crate::sanitize::{sanitize_evidence, sanitize_poc, ReportOptions};
 use crate::target::report_target;
 use async_trait::async_trait;
 use serde::Serialize;
@@ -64,7 +65,26 @@ struct JsonFinding {
     metadata: serde_json::Value,
 }
 
-pub struct JsonReporter;
+/// JSON report writer. Evidence/PoC omitted by default (REP-1).
+#[derive(Debug, Clone, Default)]
+pub struct JsonReporter {
+    options: ReportOptions,
+}
+
+impl JsonReporter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_options(options: ReportOptions) -> Self {
+        Self { options }
+    }
+
+    pub fn include_evidence(mut self, include: bool) -> Self {
+        self.options.include_evidence = include;
+        self
+    }
+}
 
 #[async_trait]
 impl Reporter for JsonReporter {
@@ -117,9 +137,9 @@ impl Reporter for JsonReporter {
                     cvss_score: f.cvss_score,
                     cwe_id: f.cwe_id.clone(),
                     cve_id: f.cve_id.clone(),
-                    evidence: f.evidence.clone(),
+                    evidence: sanitize_evidence(&f.evidence, self.options),
                     location: f.location.clone(),
-                    poc: f.poc.clone(),
+                    poc: sanitize_poc(f.poc.as_deref(), self.options),
                     remediation: f.remediation.clone(),
                     source: f
                         .metadata
@@ -216,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_json_report_generation() {
-        let reporter = JsonReporter;
+        let reporter = JsonReporter::new();
         let scan = make_scan();
         let findings = vec![
             make_finding(
@@ -245,7 +265,7 @@ mod tests {
 
     #[test]
     fn test_json_report_empty_findings() {
-        let reporter = JsonReporter;
+        let reporter = JsonReporter::new();
         let scan = make_scan();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let json = rt.block_on(reporter.generate_report(&scan, &[])).unwrap();
@@ -255,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_json_report_uses_target_metadata() {
-        let reporter = JsonReporter;
+        let reporter = JsonReporter::new();
         let mut scan = make_scan();
         scan.metadata = serde_json::json!({
             "target": {

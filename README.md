@@ -132,6 +132,7 @@ What is real today:
 - Local file content and process memory are **not** sent to remote models by default.
 - CLI web scans are passive by default; active probes are opt-in (**N5**).
 - Agent `http_get` / `http_post` use `ScopedHttpClient` (redirect re-auth). `web_scan` goes through `WebScanner::inspect_url` with the same active-probe gating as CLI web scans (**K3**/**K3b**).
+- JSON/Markdown reports omit evidence and PoC by default; opt in with `--include-evidence` (still redacted best-effort) (**REP-1**).
 - `vest sandbox` Docker helpers are convenience only — not verified OS isolation.
 
 What is **not** finished:
@@ -153,7 +154,7 @@ vest config | providers | targets | scans | findings | report | tools | sandbox
 vest completions <bash|zsh|fish>
 ```
 
-Useful flags: `--scanner`, `--target-type`, `--provider`, `--mode`, `--format`, `--output`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`.
+Useful flags: `--scanner`, `--target-type`, `--provider`, `--mode`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`.
 
 `--no-approval` means **do not prompt; deny approval-required operations**. It is not “allow everything.”
 
