@@ -17,8 +17,8 @@ Regex redaction is **best-effort** and will miss novel secret formats. Prefer al
 | `LocalMetadata` | Paths, sizes, file counts | Allowed (metadata only) |
 | `LocalContent` | File bytes / full file-scan content | **Denied** unless `allow_local_content_egress` |
 | `TargetMetadata` | Host/port/header names | Allowed (metadata) |
-| `TargetContent` | HTTP bodies / crawl content | Redacted/bounded; still treated carefully — not a free pass |
-| `PotentiallySecretBearing` | Writes / command output | Restricted / redacted |
+| `TargetContent` | HTTP bodies / crawl content | **Denied** (metadata stub: status, content-type, length, hash) unless `allow_target_content_egress` |
+| `PotentiallySecretBearing` | Writes / command output | **Denied** (stub) unless `allow_potentially_secret_bearing_egress` |
 | `CredentialMaterial` | Keys, tokens | **Prohibited** |
 | `ProcessMemory` | Memory scan output | **Denied** unless `allow_process_memory_egress` |
 | `Prohibited` | Unknown tools / unsafe classes | **Denied** |
@@ -31,14 +31,16 @@ In a normal `AuthorisationContext`:
 
 - `allow_local_content_egress = false`
 - `allow_process_memory_egress = false`
+- `allow_target_content_egress = false`
+- `allow_potentially_secret_bearing_egress = false`
 - `allow_evidence_egress = false`
 
-When local content or process memory would otherwise be returned to the model, Vest substitutes an `egress_denied` JSON stub (reason + class + limited metadata) instead of raw bytes.
+When a class that `requires_explicit_egress_approval` would otherwise be returned to the model without its flag, Vest substitutes an `egress_denied` JSON stub (reason + class + limited metadata) instead of raw bytes. TargetContent stubs include status, content-type, length, and a body hash.
 
 ## Tool-result path
 
 1. Classify from `ToolEffect` (`classify_tool_result`) and take the more restrictive of registry `egress_class` vs effect-derived class.
-2. `filter_for_model` — deny prohibited/credentials; gate local content / process memory; bound size (default ~8 KiB chars); redact known secrets and common patterns.
+2. `filter_for_model` — deny prohibited/credentials; gate local content / process memory / target content / potentially secret-bearing; bound size (default ~8 KiB chars); redact known secrets and common patterns when a flag allows egress.
 3. Only the filtered value may enter conversation history / provider messages.
 
 ## Validator / finding path

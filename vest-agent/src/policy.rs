@@ -21,6 +21,10 @@ pub struct AuthorisationContext {
     pub interactive: bool,
     pub allow_local_content_egress: bool,
     pub allow_process_memory_egress: bool,
+    /// When true, HTTP/crawl response bodies may reach the model (still bounded + redacted).
+    pub allow_target_content_egress: bool,
+    /// When true, command/write tool output may reach the model (still bounded + redacted).
+    pub allow_potentially_secret_bearing_egress: bool,
     pub allow_evidence_egress: bool,
     /// Test/escape hatch: auto-allow effects that pass scope checks.
     pub permissive_effects: bool,
@@ -36,6 +40,8 @@ impl AuthorisationContext {
             interactive: false,
             allow_local_content_egress: false,
             allow_process_memory_egress: false,
+            allow_target_content_egress: false,
+            allow_potentially_secret_bearing_egress: false,
             allow_evidence_egress: false,
             permissive_effects: false,
             known_secrets: Vec::new(),
@@ -51,6 +57,8 @@ impl AuthorisationContext {
             interactive: true,
             allow_local_content_egress: true,
             allow_process_memory_egress: false,
+            allow_target_content_egress: true,
+            allow_potentially_secret_bearing_egress: false,
             allow_evidence_egress: false,
             permissive_effects: true,
             known_secrets: Vec::new(),

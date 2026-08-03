@@ -19,6 +19,8 @@ pub struct ExecutionSession {
     pub allow_memory_simulation: bool,
     pub allow_local_content_egress: bool,
     pub allow_process_memory_egress: bool,
+    pub allow_target_content_egress: bool,
+    pub allow_potentially_secret_bearing_egress: bool,
     pub allow_evidence_egress: bool,
     /// When true, auto-allow effects that pass scope checks (tests only).
     pub permissive_effects: bool,
@@ -38,6 +40,8 @@ impl ExecutionSession {
             allow_memory_simulation: false,
             allow_local_content_egress: false,
             allow_process_memory_egress: false,
+            allow_target_content_egress: false,
+            allow_potentially_secret_bearing_egress: false,
             allow_evidence_egress: false,
             permissive_effects: false,
         }
@@ -65,6 +69,16 @@ impl ExecutionSession {
         self
     }
 
+    pub fn with_target_content_egress(mut self, allow: bool) -> Self {
+        self.allow_target_content_egress = allow;
+        self
+    }
+
+    pub fn with_potentially_secret_bearing_egress(mut self, allow: bool) -> Self {
+        self.allow_potentially_secret_bearing_egress = allow;
+        self
+    }
+
     pub fn into_arc(self) -> Arc<Self> {
         Arc::new(self)
     }
@@ -77,6 +91,8 @@ impl ExecutionSession {
             .with_interactive(self.interactive);
         auth.allow_local_content_egress = self.allow_local_content_egress;
         auth.allow_process_memory_egress = self.allow_process_memory_egress;
+        auth.allow_target_content_egress = self.allow_target_content_egress;
+        auth.allow_potentially_secret_bearing_egress = self.allow_potentially_secret_bearing_egress;
         auth.allow_evidence_egress = self.allow_evidence_egress;
         auth.permissive_effects = self.permissive_effects;
         auth

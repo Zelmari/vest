@@ -42,7 +42,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K2 | **Open** | `RequireInteractive` → deny; no stdin prompt; `--approve-*` flips legacy booleans | Interactive prompt + opaque grant | acceptance 3–4 | pending |
 | K3 | **Fixed** | Agent tools used `ureq` in `scan.rs` | `http_get`/`http_post` via `ScopedHttpClient`; redirect re-auth | `agent_http_scoped_client.rs` | `5a5fc2c` |
 | K3b | **Fixed** | `web_scan` reimplemented probes via `ureq` | `WebScanner::inspect_url`; probes gated like CLI | `agent_http_scoped_client.rs` | `5a5fc2c` |
-| K4 | **Partial** | LocalContent/ProcessMemory blocked; TargetContent may redact-only | Align filter_for_model with contract | egress tests | pending |
+| K4 | **Fixed** | TargetContent/PotentiallySecretBearing were redact-only | Default stub/metadata; flags for opt-in egress | `target_content_egress_tests.rs` | (this commit) |
 | K5 | **Fixed** | Was forgeable `ApprovalDecision::Allow` | Opaque `ApprovedToolCall` | policy/approved tests | `1951cd2` |
 | K6 | **Fixed** | Was `DefaultHasher` on selected keys | SHA-256 over material args | policy tests | `1951cd2` |
 | K7 | **Fixed** | Was `TOOL_FS_SCOPE` OnceLock | `ExecutionSession` Arc captured by tools | session unit test | `0f76c32` |
@@ -81,7 +81,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 4 Opaque capabilities | **done** | `ApprovedToolCall` + SHA-256 digests |
 | 5 ScopedHttpClient | **done** (agent tools) | agent `http_get`/`http_post` on ScopedHttpClient; WebScanner still has its own client (WEB-1) |
 | 6 Filesystem tools | pending | |
-| 7 Egress | pending | polish / TargetContent alignment |
+| 7 Egress | **done** (K4) | TargetContent/PSB gated; LocalContent/ProcessMemory unchanged |
 | 8 Config/.env | done | allowlist |
 | 9–20 | pending / partial | docs + acceptance updated; many code phases open |
 
@@ -92,4 +92,4 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 - Process memory: simulation/unsupported only.
 - Regex redaction is best-effort.
 - No independent external audit.
-- Interactive approval (K2) and TargetContent egress (K4) remain the loudest operator-facing control-plane gaps.
+- Interactive approval (K2) remains the loudest operator-facing control-plane gap.

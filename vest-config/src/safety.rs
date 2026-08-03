@@ -77,6 +77,16 @@ pub struct SafetyConfig {
     #[serde(default)]
     pub allow_model_egress_process_memory: bool,
 
+    /// When true, HTTP/crawl response bodies may be sent to a remote model (still bounded + redacted).
+    /// Default false — action auth for PassiveNetworkRequest ≠ TargetContent egress.
+    #[serde(default)]
+    pub allow_model_egress_target_content: bool,
+
+    /// When true, command/write tool output may be sent to a remote model (still bounded + redacted).
+    /// Default false.
+    #[serde(default)]
+    pub allow_model_egress_potentially_secret_bearing: bool,
+
     /// When true, bounded finding evidence excerpts may be included in validator prompts.
     #[serde(default)]
     pub allow_model_egress_evidence: bool,
@@ -124,6 +134,8 @@ impl Default for SafetyConfig {
             allowed_networks: Vec::new(),
             allow_model_egress_local_content: false,
             allow_model_egress_process_memory: false,
+            allow_model_egress_target_content: false,
+            allow_model_egress_potentially_secret_bearing: false,
             allow_model_egress_evidence: false,
         }
     }

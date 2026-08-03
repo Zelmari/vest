@@ -74,7 +74,7 @@ In the tool-use pattern, every parsed tool call is evaluated regardless of that 
 
 - `ApprovedFilesystemScope` from the scan target (and any explicitly authorised roots)
 - `ApprovedNetworkScope` from the authorised URL/host origin
-- Egress flags (`allow_local_content_egress`, `allow_process_memory_egress`, `allow_evidence_egress`) — default restrictive
+- Egress flags (`allow_local_content_egress`, `allow_process_memory_egress`, `allow_target_content_egress`, `allow_potentially_secret_bearing_egress`, `allow_evidence_egress`) — default restrictive
 - `permissive_effects` — test/escape hatch only; unknown effects still deny
 
 ## Unknown tools

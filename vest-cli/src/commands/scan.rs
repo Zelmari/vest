@@ -204,6 +204,10 @@ pub async fn run(
             config.safety.allow_model_egress_process_memory,
             config.safety.allow_model_egress_evidence,
         )
+        .with_target_content_egress(config.safety.allow_model_egress_target_content)
+        .with_potentially_secret_bearing_egress(
+            config.safety.allow_model_egress_potentially_secret_bearing,
+        )
         .into_arc();
     let allow_active_probes = args.allow_active_probes || config.scanner.web.allow_active_probes;
     args.include_evidence = args.include_evidence || config.general.include_report_evidence;

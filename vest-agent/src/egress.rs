@@ -5,6 +5,7 @@
 
 use crate::policy::AuthorisationContext;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use vest_core::auth::{DataEgressClass, ToolEffect};
 use vest_core::types::Finding;
 
@@ -48,39 +49,103 @@ pub fn bound_tool_result(value: &Value, max_chars: usize) -> Value {
     })
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Metadata-only stub for TargetContent when egress is not explicitly allowed.
+fn target_content_metadata_stub(value: &Value) -> Value {
+    let obj = value.as_object();
+    let body = obj
+        .and_then(|o| o.get("body").or_else(|| o.get("content")))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let body_bytes = match &body {
+        Value::String(s) => s.as_bytes().to_vec(),
+        Value::Null => Vec::new(),
+        other => serde_json::to_vec(other).unwrap_or_default(),
+    };
+    let length = obj
+        .and_then(|o| o.get("body_size").or_else(|| o.get("size")))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(body_bytes.len() as u64);
+    let content_type = obj.and_then(|o| {
+        o.get("content_type")
+            .or_else(|| o.get("content-type"))
+            .cloned()
+    });
+    let status = obj.and_then(|o| o.get("status").cloned());
+
+    json!({
+        "egress_denied": true,
+        "reason": "target content bodies are not sent to remote models by default",
+        "class": "target_content",
+        "metadata": {
+            "status": status,
+            "content_type": content_type,
+            "length": length,
+            "body_sha256": sha256_hex(&body_bytes),
+        }
+    })
+}
+
 /// Filter a tool result for insertion into remote model context.
 pub fn filter_for_model(
     value: &Value,
     class: DataEgressClass,
     ctx: &AuthorisationContext,
 ) -> Result<Value, String> {
+    if matches!(class, DataEgressClass::CredentialMaterial) {
+        return Err("credential material must not egress to models".into());
+    }
     if class.is_prohibited() {
         return Err("egress prohibited for this data class".into());
     }
-    if matches!(class, DataEgressClass::ProcessMemory) && !ctx.allow_process_memory_egress {
-        return Ok(json!({
-            "egress_denied": true,
-            "reason": "process memory is not sent to remote models by default",
-            "class": "process_memory",
-        }));
-    }
-    if matches!(class, DataEgressClass::LocalContent) && !ctx.allow_local_content_egress {
-        return Ok(json!({
-            "egress_denied": true,
-            "reason": "local file content is not sent to remote models by default",
-            "class": "local_content",
-            "metadata": value.as_object().map(|o| {
-                json!({
-                    "path": o.get("path"),
-                    "size": o.get("size"),
-                    "files_scanned": o.get("files_scanned"),
-                    "total_findings": o.get("total_findings"),
-                })
-            }),
-        }));
-    }
-    if matches!(class, DataEgressClass::CredentialMaterial) {
-        return Err("credential material must not egress to models".into());
+
+    // Classes that require_explicit_egress_approval: stub/deny unless session flag is set.
+    if class.requires_explicit_egress_approval() {
+        if matches!(class, DataEgressClass::ProcessMemory) && !ctx.allow_process_memory_egress {
+            return Ok(json!({
+                "egress_denied": true,
+                "reason": "process memory is not sent to remote models by default",
+                "class": "process_memory",
+            }));
+        }
+        if matches!(class, DataEgressClass::LocalContent) && !ctx.allow_local_content_egress {
+            return Ok(json!({
+                "egress_denied": true,
+                "reason": "local file content is not sent to remote models by default",
+                "class": "local_content",
+                "metadata": value.as_object().map(|o| {
+                    json!({
+                        "path": o.get("path"),
+                        "size": o.get("size"),
+                        "files_scanned": o.get("files_scanned"),
+                        "total_findings": o.get("total_findings"),
+                    })
+                }),
+            }));
+        }
+        if matches!(class, DataEgressClass::TargetContent) && !ctx.allow_target_content_egress {
+            return Ok(target_content_metadata_stub(value));
+        }
+        if matches!(class, DataEgressClass::PotentiallySecretBearing)
+            && !ctx.allow_potentially_secret_bearing_egress
+        {
+            return Ok(json!({
+                "egress_denied": true,
+                "reason": "potentially secret-bearing data is not sent to remote models by default",
+                "class": "potentially_secret_bearing",
+                "metadata": value.as_object().map(|o| {
+                    json!({
+                        "exit_code": o.get("exit_code"),
+                        "path": o.get("path"),
+                        "bytes_written": o.get("bytes_written"),
+                    })
+                }),
+            }));
+        }
     }
 
     let bounded = bound_tool_result(value, DEFAULT_MAX_TOOL_RESULT_CHARS);
@@ -155,6 +220,34 @@ mod tests {
         let value = json!({"bytes": "MEMORY_SENTINEL_AABBCC"});
         let filtered = filter_for_model(&value, DataEgressClass::ProcessMemory, &ctx).unwrap();
         assert!(!filtered.to_string().contains("MEMORY_SENTINEL"));
+    }
+
+    #[test]
+    fn target_content_blocked_by_default() {
+        let ctx = AuthorisationContext::new("s");
+        let value = json!({
+            "status": 200,
+            "content_type": "text/html",
+            "body": "TARGET_BODY_SENTINEL_do_not_egress",
+            "body_size": 34,
+        });
+        let filtered = filter_for_model(&value, DataEgressClass::TargetContent, &ctx).unwrap();
+        let s = filtered.to_string();
+        assert!(!s.contains("TARGET_BODY_SENTINEL"));
+        assert!(filtered["egress_denied"].as_bool().unwrap());
+        assert_eq!(filtered["metadata"]["status"], 200);
+        assert_eq!(filtered["metadata"]["length"], 34);
+        assert!(filtered["metadata"]["body_sha256"].as_str().unwrap().len() == 64);
+    }
+
+    #[test]
+    fn potentially_secret_bearing_blocked_by_default() {
+        let ctx = AuthorisationContext::new("s");
+        let value = json!({"stdout": "SECRET_CMD_OUTPUT_SENTINEL", "exit_code": 0});
+        let filtered =
+            filter_for_model(&value, DataEgressClass::PotentiallySecretBearing, &ctx).unwrap();
+        assert!(!filtered.to_string().contains("SECRET_CMD_OUTPUT_SENTINEL"));
+        assert!(filtered["egress_denied"].as_bool().unwrap());
     }
 
     #[test]
