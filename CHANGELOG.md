@@ -21,6 +21,9 @@ where practical for a pre-1.0 experimental toolkit.
 
 ### Cleared recently (on `main`)
 
+- **M1 — real `--resume`:** scans create a `running` row + SQLite per-scanner checkpoints before scanners run; `vest scan --resume <SCAN_ID>` continues remaining scanners and finalizes by update (`resume_cli.rs`).
+- **M2 — `vest policy explain`:** operator-facing explanation of effects, evaluation order, tool registry, CLI pre-grants, and grant/deny simulation (`policy_explain_cli.rs`).
+- **M3 — nuclei scanner:** `nuclei` as first-class `--scanner nuclei` behind the same two-key active-probe consent; config under `[scanner.nuclei]` (`nuclei_scanner_cli.rs`).
 - **N5:** CLI web scan is passive by default; active probes opt-in via config or `--allow-active-probes`.
 - **K3 / K3b:** Agent `http_get` / `http_post` use `ScopedHttpClient`; `web_scan` uses `WebScanner::inspect_url` with the same probe gating (no bare `ureq` for those tools).
 - **K2:** `--approve-writes` / `--approve-exploits` / `--approve-effect` mint effect+session grants; TTY one-shot Allow when interactive; `--no-approval` and non-TTY without grants remain fail-closed deny.
@@ -34,7 +37,7 @@ where practical for a pre-1.0 experimental toolkit.
 ### Still open (honest)
 
 - Scanner heuristics populate `severity_score_estimate` (not labelled as CVSS).
-- DNS rebinding / connection-time IP binding incomplete (see backlog B1 / standing R3).
+- DNS rebinding: `deny_private_targets` ships resolve-and-deny + reqwest DNS pin (B1); connect-time socket pin and non-gated HTTP paths remain (standing R3).
 
 See [docs/clearance-plan.md](docs/clearance-plan.md) for the ordered remaining list.
 

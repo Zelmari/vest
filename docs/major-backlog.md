@@ -2,7 +2,8 @@
 
 **Branch:** `main` only  
 **Method:** Implement one major at a time; commit at each meaningful change; keep CI green.  
-**Commits:** Zelmari only — no `Co-authored-by: Cursor`.
+**Commits:** Zelmari only — no `Co-authored-by: Cursor`.  
+**Status:** M1–M3 complete @ `9148199`. The prose below is the historical plan record; the queue is done. Next open queue: `docs/standing-backlog.md`.
 
 ## Why these three
 
@@ -85,8 +86,8 @@ Standing non-claims (R1–R6) remain out of scope. Memory stays unsupported/simu
 ## Loop prompt
 
 ```
-On main only. Read docs/major-backlog.md. Take the first unchecked acceptance item
-under the first incomplete major (M1→M2→M3). Implement + tests, fmt/clippy/relevant
-tests, mark checkbox, commit (Zelmari only, no Co-authored-by Cursor). Continue
-until all majors and housekeeping are done.
+On main only. Read AGENTS.md, then docs/CURRENT.md, then docs/standing-backlog.md.
+Take the first unchecked item. Implement + tests as needed, fmt/clippy/relevant tests,
+update docs, commit (Zelmari only, no Co-authored-by Cursor). Continue until queue empty.
+Do not invent scope beyond the standing backlog.
 ```

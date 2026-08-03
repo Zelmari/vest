@@ -33,6 +33,7 @@ an AI provider.
 two-key consent: allow (`scanner.web.allow_active_probes` or `--allow-active-probes`)
 **and** `--confirm-active-probes` or `--approve-exploits`. Config/allow alone is not enough.
 Crawl/fetch HTTP goes through `ScopedHttpClient` (**WEB-1** cleared).
+Active scans (probes, nuclei) are never the default; they require explicit flags and the two-key consent (**M3**).
 
 ### C — Active authorised checks — **mostly works**
 
@@ -47,6 +48,7 @@ Crawl/fetch HTTP goes through `ScopedHttpClient` (**WEB-1** cleared).
 pre-grant via `--approve-exploits` / `--approve-effect active_network_probe`, or
 allow once on a TTY. Non-TTY without grants → deny. Builtin CLI scanner probes
 use the same two-key consent (allow + confirm/approve-exploits) (**B5**).
+First-class nuclei scans (`--scanner nuclei`, never a default target type) use the same two-key consent (**M3**).
 
 ### D — AI-assisted interpretation — **mostly works**
 
@@ -72,12 +74,14 @@ use the same two-key consent (allow + confirm/approve-exploits) (**B5**).
 - Exit codes: typed `VestError::cli_exit_code()` on scan/completions; legacy string fallback is last-resort for remaining untyped subcommands.
 - JSON on stdout is the intended machine path; keep diagnostics on stderr.
 - CI gates: `--fail-on-severity <level>` and `--fail-on-new` (compare titles to previous scan for same logical target); exit **8** on gate hit (`fail_on_cli.rs`).
+- `vest policy explain` simulates grant/deny decisions offline for operator review (**M2**).
 
 ### G — Degraded operation — **mostly works** (scan path)
 
 - Provider / agent soft failure: scanner findings preserved, report/DB written, process exits **7**.
 - Partial scanner failure: successful scanner findings preserved, report/DB written, process exits **5**.
 - Total scanner failure remains a hard non-zero error (no false success).
+- Interrupted scans resume via `vest scan --resume <SCAN_ID>` from SQLite per-scanner checkpoints (agent phase not checkpointed) (**M1**).
 - Not every non-scan subcommand path is proven to the same matrix.
 
 ### H — Large targets — **partial**

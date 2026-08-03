@@ -2,6 +2,7 @@
 
 **Branch / tip:** `main` @ current HEAD (product-hardening commits landed; do not treat old branch names as required)  
 **Baseline commit:** `37733b1` (main after merge of verified security pass + README)  
+**Tip / current:** `9148199` — post-clearance majors M1 (`--resume` + SQLite checkpoints), M2 (`vest policy explain`), M3 (nuclei `--scanner nuclei`) shipped; see `docs/major-backlog.md`.  
 **Toolchain:** rustc/cargo 1.96.1 (as recorded at start of this pass)  
 **Started:** 2026-08-03  
 
@@ -66,7 +67,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 |----|-------|--------|
 | N1 | Dry-run returns before config load / scope display | **Fixed** — load/validate config, detect target, resolve scopes, print plan (scanners/probes/provider/scopes); no DB/network/scanner side effects; invalid type/config → non-zero; `dry_run_contract.rs` | `02dc51e` |
 | N2 | `config validate` historically soft-failed | **Verified** — fail-closed: malformed / invalid safety → non-zero (exit 3); valid config → 0; `config show` refuses silent defaults on present bad file | `config_cli.rs` (`validate_rejects_malformed_config_with_nonzero_exit`, `validate_rejects_invalid_safety_bounds`, `show_fails_closed_on_present_malformed_file`) | re-verified after `1a03661` |
-| N3 | No `vest doctor` / `policy explain` | **Fixed** — `vest doctor` prints config/VEST_HOME/sqlite/provider-key presence/posture/policy; fail-closed on bad config; `policy explain` still optional | `doctor_cli.rs` | `f83e640` |
+| N3 | No `vest doctor` / `policy explain` | **Fixed** — `vest doctor` prints config/VEST_HOME/sqlite/provider-key presence/posture/policy; fail-closed on bad config; `policy explain` shipped (M2, `policy_explain_cli.rs`) | `doctor_cli.rs` | `f83e640` / `169b11d` |
 | N4 | No explicit `--offline` / `--no-ai` flags (provider none only) | **Fixed** — `--offline` / `--no-ai` force provider `none`; safer default is `none` when no provider configured | `offline_cli.rs` | `f83e640` |
 | N5 | CLI web scan forces `with_allow_active_probes(true)` | **Fixed** — default off; two-key consent (allow + `--confirm-active-probes`/`--approve-exploits`); `scan_web_cli` probe-hit tests (**B5**) |
 | CLI-EXIT-7 | Provider/agent soft fail exited 0 | **Fixed** — preserve findings/report then exit 7 (`VestError::Provider`/`Agent`) | `exit_codes_strict.rs` | `f83e640` |
@@ -101,6 +102,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 7 Egress | **done** (K4) | TargetContent/PSB gated; LocalContent/ProcessMemory unchanged |
 | 8 Config/.env | **done** | key allowlist + CFG-1 zero-budget reject |
 | 9–20 | partial | exits/doctor/offline/providers/NUC-1/STOR/K16 landed; WEB-1/HTTP-1/WEB-2 practical cleared; B1 resolve-and-deny/pin on ScopedHttpClient when deny_private_targets; standing DNS-rebinding residual remains |
+| 21 M1–M3 | done | real `--resume` + SQLite checkpoints; `vest policy explain` + simulation; nuclei `--scanner nuclei` (major-backlog) |
 
 ## Remaining limitations (standing)
 

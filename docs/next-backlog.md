@@ -3,6 +3,7 @@
 **Branch:** `main` only  
 **Started tip:** `2afc753`  
 **Completed tip:** `6656021` — all A/B/C/D checkboxes cleared  
+**Status:** Queue complete; post-queue majors M1–M3 shipped @ `9148199`. Next open queue: `docs/standing-backlog.md`.  
 **Method:** Clear items one-by-one; commit at each meaningful change; keep CI green.  
 **Standing non-claims (R1–R6):** not in this queue.
 
@@ -30,7 +31,7 @@
 | # | ID | Item | Status |
 |---|----|------|--------|
 | 11 | C1 | CI baseline / fail-on-new (compare + exit) | done |
-| 12 | C2 | Finish or hide `--resume` | done |
+| 12 | C2 | Finish or hide `--resume` | done — superseded by M1: real `--resume` + SQLite checkpoints shipped (`docs/major-backlog.md`) |
 | 13 | C3 | SARIF export | done |
 | 14 | C4 | Profile discovery (`--list-profiles` / dry-run clarity) | done |
 
@@ -54,7 +55,7 @@
 - [x] B4 Nuclei template constraint
 - [x] B5 Active probe consent
 - [x] C1 Fail-on-new baseline (`--fail-on-severity` / `--fail-on-new`, exit 8)
-- [x] C2 Resume (hidden from help; fail-closed unimplemented — no SQLite checkpoint)
+- [x] C2 Resume (superseded by M1 — real `--resume` + SQLite checkpoints shipped; flag visible in scan help)
 - [x] C3 SARIF
 - [x] C4 Profile discovery (`vest scan --list-profiles`; dry-run names selected profile)
 - [x] D1 Tool extraction

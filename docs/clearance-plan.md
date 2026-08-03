@@ -3,6 +3,7 @@
 **Branch:** `main` only (no feature branches)  
 **Baseline tip when plan written:** `fe1d041`  
 **Last cleared:** clearance queue complete; CI green @ `bea7e12`  
+**Post-clearance majors:** M1 (real `--resume` + SQLite checkpoints), M2 (`vest policy explain`), M3 (nuclei `--scanner nuclei`) shipped @ `9148199`. Next open queue: `docs/standing-backlog.md`.  
 **Method:** Clear items one-by-one; each item gets code + regression tests + ledger update; keep CI green.  
 **Living suite:** extend tests as behaviour changes (see Wave T).  
 **Loop:** agent clearance loop continues until the open queue is empty and CI is green.
@@ -70,7 +71,7 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 | 16 | **CLI-EXIT-7** | Provider/agent soft failure → exit 7 while preserving findings | **Done** — finalize then exit 7 | `exit_codes_strict.rs` |
 | 17 | **CLI-PARTIAL** | Partial scanner failure policy (non-zero or explicit degraded) | **Done** — any scanner fatal → exit 5 after preserve | `exit_codes_strict.rs` |
 | 18 | **N4** | `--offline` / `--no-ai` (and/or safer default than ollama) | **Done** — flags force `none`; no-provider default is `none` | `offline_cli.rs` |
-| 19 | **N3** | `vest doctor` (+ optional `policy explain`) | **Done** — diagnostics + fail-closed bad config (`policy explain` still optional) | `doctor_cli.rs` |
+| 19 | **N3** | `vest doctor` + `policy explain` | **Done** — diagnostics + fail-closed bad config; `policy explain` shipped (M2) | `doctor_cli.rs` / `policy_explain_cli.rs` |
 | 20 | **CFG-1** | Validate agent/provider/network zeros; tighten unknown fields | **Done** — `load_config` rejects zeros; deny_unknown on sections | config torture |
 | 21 | **PROV-2** | `SecretString` for provider keys; redacted Debug all backends | **Done** — OpenAI-compat/Anthropic/Google store `SecretString`; expose only at headers | provider secret sentinel tests |
 | 22 | **PROV-3** | Apply `timeout_seconds` to clients + sequential fallback | **Done** — Hang → Timeout; fallback wraps per-provider timeout | fallback timeout tests |
@@ -103,7 +104,7 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 | 35 | **BIN-1** | Binary scanner size cap + spawn_blocking | Bounded | binary |
 | 36 | **POL-2** | Shrink public permissive APIs to test-only | `#[cfg(test)]` / test-utils | compile/lint |
 | 37 | **CLI-SOFT** | Soft-ok subcommands (findings/config/tools) → proper exits | **Done** — findings missing / unknown config key / unknown tools → exit 2 | `cli_soft_dead.rs` |
-| 38 | **CLI-DEAD** | `--resume` / approve flags: implement or error “unimplemented” | **Done** — `--resume` hidden from help + fail-closed unimplemented (no checkpoint storage; approve flags already wired) | `cli_soft_dead.rs` |
+| 38 | **CLI-DEAD** | `--resume` / approve flags: implement or error “unimplemented” | **Done** — superseded by M1: real `--resume` + SQLite checkpoints shipped; approve flags wired | `resume_cli.rs` / `cli_soft_dead.rs` |
 | 39 | **N2** | Re-verify config validate fail-closed → mark verified | **Done** — ledger N2 verified via `config_cli.rs` | `config_cli.rs` |
 | 40 | **ACCEPT-12/13** | Storage failure + cancellation acceptance | **Done** — storage fail → exit 6; parallel drop cancels in-flight | `acceptance_storage_cancel.rs` + fallback cancel test |
 
@@ -198,7 +199,7 @@ N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓
 - [x] R3-lite IP deny option
 - [x] BIN-1 binary bounds
 - [x] POL-2 permissive API hygiene
-- [x] CLI-SOFT / CLI-DEAD
+- [x] CLI-SOFT / CLI-DEAD (superseded by M1 resume)
 - [x] N2 verified
 - [x] ACCEPT-12/13
 
