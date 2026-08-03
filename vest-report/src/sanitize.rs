@@ -49,6 +49,14 @@ pub fn sanitize_poc(poc: Option<&str>, options: ReportOptions) -> Option<String>
     poc.map(|text| redact_secrets(text, &[]))
 }
 
+/// Neutralize markdown code-fence breakouts in untrusted finding text (REP-2).
+///
+/// Breaks every triple-backtick sequence with zero-width spaces so content
+/// embedded inside ` ``` ` / ` ```json ` blocks cannot close the surrounding fence.
+pub fn escape_markdown_fences(text: &str) -> String {
+    text.replace("```", "`\u{200b}`\u{200b}`")
+}
+
 fn sanitize_value(value: &mut Value) {
     match value {
         Value::String(s) => {
@@ -153,5 +161,13 @@ mod tests {
         .unwrap();
         assert!(!poc.contains("VEST_REPORT_SECRET_SENTINEL_9f3a"));
         assert!(poc.contains("REDACTED"));
+    }
+
+    #[test]
+    fn escape_markdown_fences_breaks_triple_backticks() {
+        let escaped = escape_markdown_fences("before\n```\nafter\n``````done");
+        assert!(!escaped.contains("```"));
+        assert!(escaped.contains("`\u{200b}`\u{200b}`"));
+        assert_eq!(escape_markdown_fences("no fences here"), "no fences here");
     }
 }

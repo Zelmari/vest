@@ -2,7 +2,7 @@
 
 **Branch:** `main` only (no feature branches)  
 **Baseline tip when plan written:** `fe1d041`  
-**Last cleared tip:** `a05b291` (PROV-3 / PROV-4; CFG-1 @ `c426801`; queue through Wave 2 except PROV-2)
+**Last cleared tip:** PROV-2 (SecretString providers; after PROV-3/PROV-4 @ `a05b291`)
 **Method:** Clear items one-by-one; each item gets code + regression tests + ledger update; keep CI green.  
 **Living suite:** extend tests as behaviour changes (see Wave T).  
 **Loop:** agent clearance loop continues until the open queue is empty and CI is green.
@@ -72,7 +72,7 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 | 18 | **N4** | `--offline` / `--no-ai` (and/or safer default than ollama) | **Done** — flags force `none`; no-provider default is `none` | `offline_cli.rs` |
 | 19 | **N3** | `vest doctor` (+ optional `policy explain`) | **Done** — diagnostics + fail-closed bad config (`policy explain` still optional) | `doctor_cli.rs` |
 | 20 | **CFG-1** | Validate agent/provider/network zeros; tighten unknown fields | **Done** — `load_config` rejects zeros; deny_unknown on sections | config torture |
-| 21 | **PROV-2** | `SecretString` for provider keys; redacted Debug all backends | No sentinel in Debug/errors | provider secret tests |
+| 21 | **PROV-2** | `SecretString` for provider keys; redacted Debug all backends | **Done** — OpenAI-compat/Anthropic/Google store `SecretString`; expose only at headers | provider secret sentinel tests |
 | 22 | **PROV-3** | Apply `timeout_seconds` to clients + sequential fallback | **Done** — Hang → Timeout; fallback wraps per-provider timeout | fallback timeout tests |
 | 23 | **PROV-4** | Google `list_models` fail-closed on HTTP errors | **Done** — Err not Ok(default) | google provider tests |
 
@@ -85,7 +85,7 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 | 24 | **STOR-1** | No panic on corrupt rows; no silent JSON wipe | `StorageError` | storage edge |
 | 25 | **STOR-2** | Never fall back to `:memory:` on bad path encoding | Hard error | db path test |
 | 26 | **STOR-3** | Transactional scan finalize; `rows_affected==0` → NotFound | Atomic + NotFound | storage + CLI |
-| 27 | **NUC-1** | Nuclei: no cwd binary hijack; check exit; timeout; template root | Safe subprocess | vest-tools nuclei |
+| 27 | **NUC-1** | Nuclei: no cwd binary hijack; check exit; timeout; template root | **Done** — absolute `~/.vest/tools` / PATH only; exit+timeout; `-t` under allowlisted root | vest-tools nuclei fake-binary tests |
 | 28 | **K16** | Rename heuristic score away from CVSS in types/reports/scanners | No “CVSS” for heuristics | severity rename + report |
 | 29 | **REP-2** | Markdown fence escape for untrusted PoC/evidence | Safe MD | report injection |
 | 30 | **CLI-SANDBOX** | Deny dangerous docker passthrough flags | Reject `--privileged` etc. | sandbox tests |
@@ -150,7 +150,7 @@ Keep documented forever unless architecture truly changes:
 ```
 N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓ → K5b ✓ → K8 ✓ → POL-1 ✓ → K11 ✓ → K9 ✓
 → BRW-1 ✓ → N1 ✓ → K14 ✓ → CLI-EXIT-7 ✓ → CLI-PARTIAL ✓ → N4 ✓ → N3 ✓ → CFG-1 ✓
-→ PROV-2 → PROV-3 ✓ → PROV-4 ✓ → STOR-1 → STOR-2 → STOR-3 → NUC-1 → K16 → REP-2
+→ PROV-2 → PROV-3 ✓ → PROV-4 ✓ → STOR-1 → STOR-2 → STOR-3 → NUC-1 ✓ → K16 → REP-2
 → CLI-SANDBOX → HTTP-1 → WEB-1 → WEB-2 → R3-lite → BIN-1 → POL-2
 → CLI-SOFT → CLI-DEAD → N2 → ACCEPT-12/13
 ```
@@ -181,13 +181,13 @@ N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓
 - [x] N4 offline flag/default
 - [x] N3 doctor
 - [x] CFG-1 config validate zeros
-- [ ] PROV-2 SecretString providers
+- [x] PROV-2 SecretString providers
 - [x] PROV-3 timeouts wired
 - [x] PROV-4 google list_models
 - [ ] STOR-1/2/3 persistence
-- [ ] NUC-1 nuclei safety
+- [x] NUC-1 nuclei safety
 - [ ] K16 severity rename
-- [ ] REP-2 markdown escape
+- [x] REP-2 markdown escape
 - [ ] CLI-SANDBOX docker deny
 - [ ] HTTP-1/WEB-1/WEB-2 client unify
 - [ ] R3-lite IP deny option

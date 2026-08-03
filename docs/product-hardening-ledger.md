@@ -71,10 +71,13 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | CLI-EXIT-7 | Provider/agent soft fail exited 0 | **Fixed** — preserve findings/report then exit 7 (`VestError::Provider`/`Agent`) | `exit_codes_strict.rs` | `f83e640` |
 | CLI-PARTIAL | Partial scanner fatals exited 0 | **Fixed** — preserve successful scanner findings then exit 5; total fail stays hard error | `exit_codes_strict.rs` | `f83e640` |
 | PROV-1 | Google API key in URL query (`?key=`) | **Fixed** — `x-goog-api-key` header for generateContent/list_models; transport/HTTP errors scrub key; sentinel tests in `vest-providers/src/google.rs` |
+| PROV-2 | Provider API keys stored as bare `String` (Debug/log leak risk) | **Fixed** — OpenAI-compat/`Option<SecretString>`, Anthropic/Google `SecretString`; redacted Debug; `expose()` only at header construction; sentinel Debug/error tests |
 | CFG-1 | Agent/provider/network zero budgets accepted | **Fixed** — `load_config`/`validate_config` reject zeros; deny_unknown on agent/provider/network | `c426801` |
 | PROV-3 | Provider timeout_seconds unused; sequential fallback unbounded | **Fixed** — reqwest clients use timeout; NextOnFailure/NextOnRateLimit wrap per-provider timeout | `a05b291` |
 | PROV-4 | Google list_models returns Ok(default) on HTTP errors | **Fixed** — fail-closed Err on non-2xx; sentinel scrub test | `a05b291` |
+| NUC-1 | Nuclei cwd binary hijack; ignored exit; no timeout; open `-t` | **Fixed** — absolute `~/.vest/tools/nuclei` or `which`; exit+timeout kill; templates under `~/.vest/tools/nuclei-templates` | vest-tools nuclei fake-binary tests | pending |
 | REP-1 | JSON/MD reports embed raw evidence/PoC (incl. `match_preview` secrets) by default | **Fixed** — omit evidence/PoC by default; `--include-evidence` / `general.include_report_evidence` opt-in with best-effort redaction; `vest-report/tests/secret_redaction.rs` |
+| REP-2 | Untrusted PoC/evidence can break markdown code fences via ` ``` ` | **Fixed** — escape triple backticks in evidence/PoC when rendering Markdown; `vest-report/tests/markdown_fence_escape.rs` |
 | POL-1 | Missing/non-string path/url skipped FS/net scope checks for scoped effects | **Fixed** — deny before handler when material target absent or wrong type; `adversarial_policy_tests.rs` + policy unit tests | `f918a47` |
 
 | BRW-1 | Browser path walk unbounded; CDP navigate/`json/version` loosely bounded; handler dropped | **Fixed** — `collect_files_bounded` + symlink-off defaults; reject `file://` navigate; cap CDP version body; keep handler task alive; `browser_adversarial.rs` | `04c161e` |
@@ -92,7 +95,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 6 Filesystem tools | **done** (K8/K9) | bounded `read_file`; symlink follow contained under root |
 | 7 Egress | **done** (K4) | TargetContent/PSB gated; LocalContent/ProcessMemory unchanged |
 | 8 Config/.env | **done** | key allowlist + CFG-1 zero-budget reject |
-| 9–20 | partial | exits/doctor/offline/providers timeouts landed; STOR/NUC/K16/WEB/HTTP still open |
+| 9–20 | partial | exits/doctor/offline/providers timeouts/NUC-1 landed; STOR/K16/WEB/HTTP still open |
 
 ## Remaining limitations (standing)
 

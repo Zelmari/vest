@@ -1,4 +1,4 @@
-use crate::sanitize::{sanitize_evidence, sanitize_poc, ReportOptions};
+use crate::sanitize::{escape_markdown_fences, sanitize_evidence, sanitize_poc, ReportOptions};
 use crate::target::target_display;
 use async_trait::async_trait;
 use vest_core::error::VestError;
@@ -120,12 +120,15 @@ Use `--include-evidence` to include them (secrets are still redacted best-effort
                 if evidence_str.len() > 4 {
                     md.push_str(&format!(
                         "<details>\n<summary>Evidence</summary>\n\n```json\n{}\n```\n</details>\n\n",
-                        evidence_str
+                        escape_markdown_fences(&evidence_str)
                     ));
                 }
 
                 if let Some(poc) = sanitize_poc(f.poc.as_deref(), self.options) {
-                    md.push_str(&format!("**Proof of Concept:**\n\n```\n{}\n```\n\n", poc));
+                    md.push_str(&format!(
+                        "**Proof of Concept:**\n\n```\n{}\n```\n\n",
+                        escape_markdown_fences(&poc)
+                    ));
                 }
             }
 
