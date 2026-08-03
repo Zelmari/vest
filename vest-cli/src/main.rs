@@ -122,8 +122,8 @@ pub struct ScanArgs {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Resume a previous scan
-    #[arg(long)]
+    /// Resume a previous scan (not implemented; hidden until checkpoint storage exists)
+    #[arg(long, hide = true, value_name = "SCAN_ID")]
     pub resume: Option<String>,
 
     /// Target type (process, binary, web, network, browser, file)

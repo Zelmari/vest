@@ -103,7 +103,7 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 | 35 | **BIN-1** | Binary scanner size cap + spawn_blocking | Bounded | binary |
 | 36 | **POL-2** | Shrink public permissive APIs to test-only | `#[cfg(test)]` / test-utils | compile/lint |
 | 37 | **CLI-SOFT** | Soft-ok subcommands (findings/config/tools) → proper exits | **Done** — findings missing / unknown config key / unknown tools → exit 2 | `cli_soft_dead.rs` |
-| 38 | **CLI-DEAD** | `--resume` / approve flags: implement or error “unimplemented” | **Done** — `--resume` errors unimplemented (approve flags already wired) | `cli_soft_dead.rs` |
+| 38 | **CLI-DEAD** | `--resume` / approve flags: implement or error “unimplemented” | **Done** — `--resume` hidden from help + fail-closed unimplemented (no checkpoint storage; approve flags already wired) | `cli_soft_dead.rs` |
 | 39 | **N2** | Re-verify config validate fail-closed → mark verified | **Done** — ledger N2 verified via `config_cli.rs` | `config_cli.rs` |
 | 40 | **ACCEPT-12/13** | Storage failure + cancellation acceptance | **Done** — storage fail → exit 6; parallel drop cancels in-flight | `acceptance_storage_cancel.rs` + fallback cancel test |
 

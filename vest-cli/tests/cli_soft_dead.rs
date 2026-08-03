@@ -111,3 +111,27 @@ fn resume_flag_errors_unimplemented() {
         combined(&output)
     );
 }
+#[test]
+fn resume_flag_hidden_from_scan_help() {
+    let root = temp_root("dead-resume-help");
+    let vest_home = root.join("home");
+    fs::create_dir_all(&vest_home).unwrap();
+
+    let output = vest_cmd(&vest_home)
+        .arg("scan")
+        .arg("--help")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "scan --help failed:\n{}",
+        combined(&output)
+    );
+    let help = combined(&output).to_lowercase();
+    assert!(
+        !help.contains("--resume"),
+        "--resume must be hidden from clap help until resume is implemented:\n{}",
+        combined(&output)
+    );
+}

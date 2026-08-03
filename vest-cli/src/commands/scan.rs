@@ -145,8 +145,12 @@ pub async fn run(
     mut args: ScanArgs,
     config_path: impl AsRef<Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if args.resume.is_some() {
-        return Err(VestError::Unsupported("--resume is not implemented".into()).into());
+    if let Some(ref scan_id) = args.resume {
+        // Scans are persisted only at finalize; SQLite has no resumable checkpoint.
+        return Err(VestError::Unsupported(format!(
+            "--resume is not implemented (no checkpoint for scan id '{scan_id}')"
+        ))
+        .into());
     }
 
     let machine = is_machine_format(&args.format);
