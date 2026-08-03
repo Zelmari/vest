@@ -3,9 +3,11 @@
 //! Agent tools and [`crate::web::WebScanner`] share this type for authorise,
 //! manual redirects, and body budgets (no parallel client policy stacks).
 
+use crate::net_safety::ensure_connect_addrs_allowed;
 use crate::web::NetworkScope;
 use futures_util::StreamExt;
 use reqwest::{Client, Method, Response, StatusCode};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use url::Url;
@@ -74,26 +76,28 @@ pub struct ScopedHttpClient {
     client: Client,
     scope: NetworkScope,
     budgets: HttpClientBudgets,
+    /// When true, resolve the hop host before connect and deny private/metadata IPs (B1).
+    deny_private_targets: bool,
 }
 
 impl ScopedHttpClient {
     pub fn try_new(scope: NetworkScope, budgets: HttpClientBudgets) -> Result<Self, VestError> {
-        let client = Client::builder()
-            .timeout(budgets.request_timeout)
-            .connect_timeout(budgets.connect_timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .danger_accept_invalid_certs(false)
-            .build()
-            .map_err(|e| {
-                VestError::Config(format!(
-                    "failed to construct scoped HTTP client (refusing weaker defaults): {e}"
-                ))
-            })?;
+        let client = build_base_client(&budgets, None)?;
         Ok(Self {
             client,
             scope,
             budgets,
+            deny_private_targets: false,
         })
+    }
+
+    pub fn with_deny_private_targets(mut self, deny: bool) -> Self {
+        self.deny_private_targets = deny;
+        self
+    }
+
+    pub fn deny_private_targets(&self) -> bool {
+        self.deny_private_targets
     }
 
     pub fn scope(&self) -> &NetworkScope {
@@ -218,7 +222,8 @@ impl ScopedHttpClient {
                 }
             }
 
-            let mut request = self.client.request(method.clone(), current.clone());
+            let client = self.connect_client_for_url(&current).await?;
+            let mut request = client.request(method.clone(), current.clone());
             if let Some(ua) = opts.user_agent {
                 request = request.header(reqwest::header::USER_AGENT, ua);
             }
@@ -301,6 +306,41 @@ impl ScopedHttpClient {
             });
         }
     }
+
+    /// When `deny_private_targets` is set: resolve host, fail closed on private/metadata
+    /// addresses, and prefer a reqwest DNS pin to the allowed snapshot for this hop.
+    async fn connect_client_for_url(&self, url: &Url) -> Result<Client, VestError> {
+        if !self.deny_private_targets {
+            return Ok(self.client.clone());
+        }
+        let host = url
+            .host_str()
+            .ok_or_else(|| VestError::Scan("URL missing host".into()))?;
+        let port = url
+            .port_or_known_default()
+            .ok_or_else(|| VestError::Scan("URL missing effective port".into()))?;
+        let addrs = ensure_connect_addrs_allowed(host, port).await?;
+        build_base_client(&self.budgets, Some((host, addrs)))
+    }
+}
+
+fn build_base_client(
+    budgets: &HttpClientBudgets,
+    pin: Option<(&str, Vec<SocketAddr>)>,
+) -> Result<Client, VestError> {
+    let mut builder = Client::builder()
+        .timeout(budgets.request_timeout)
+        .connect_timeout(budgets.connect_timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .danger_accept_invalid_certs(false);
+    if let Some((host, addrs)) = pin {
+        builder = builder.resolve_to_addrs(host, &addrs);
+    }
+    builder.build().map_err(|e| {
+        VestError::Config(format!(
+            "failed to construct scoped HTTP client (refusing weaker defaults): {e}"
+        ))
+    })
 }
 
 fn redirect_switches_to_get(status: StatusCode) -> bool {
@@ -499,6 +539,53 @@ mod tests {
         let (status, body) = client.get_text(&base).await.unwrap();
         assert_eq!(status, 200);
         assert_eq!(body.len(), 1024);
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn deny_private_targets_blocks_literal_metadata_and_loopback_before_connect() {
+        let meta_scope =
+            NetworkScope::from_url(&Url::parse("http://169.254.169.254/").unwrap()).unwrap();
+        let meta = ScopedHttpClient::try_new(meta_scope, HttpClientBudgets::default())
+            .unwrap()
+            .with_deny_private_targets(true);
+        let err = meta
+            .get_text("http://169.254.169.254/latest/meta-data/")
+            .await
+            .expect_err("metadata IP must deny");
+        assert!(
+            err.to_string().contains("deny_private_targets")
+                || err.to_string().contains("169.254.169.254"),
+            "got: {err}"
+        );
+
+        let loop_scope =
+            NetworkScope::from_url(&Url::parse("http://127.0.0.1:9/").unwrap()).unwrap();
+        let loopback = ScopedHttpClient::try_new(loop_scope, HttpClientBudgets::default())
+            .unwrap()
+            .with_deny_private_targets(true);
+        let err = loopback
+            .get_text("http://127.0.0.1:9/")
+            .await
+            .expect_err("loopback must deny");
+        assert!(
+            err.to_string().contains("127.0.0.1")
+                || err.to_string().contains("deny_private_targets"),
+            "got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn deny_private_targets_off_allows_loopback_literal() {
+        let handler: MockHttpHandler = Arc::new(|_req| (200u16, vec![], b"ok".to_vec()));
+        let (port, stop) = spawn_server(handler).await;
+        let base = format!("http://127.0.0.1:{port}/");
+        let scope = NetworkScope::from_url(&Url::parse(&base).unwrap()).unwrap();
+        let client = ScopedHttpClient::try_new(scope, HttpClientBudgets::default()).unwrap();
+        assert!(!client.deny_private_targets());
+        let (status, body) = client.get_text(&base).await.unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body, "ok");
         stop.store(true, Ordering::Relaxed);
     }
 

@@ -99,12 +99,12 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 6 Filesystem tools | **done** (K8/K9) | bounded `read_file`; symlink follow contained under root |
 | 7 Egress | **done** (K4) | TargetContent/PSB gated; LocalContent/ProcessMemory unchanged |
 | 8 Config/.env | **done** | key allowlist + CFG-1 zero-budget reject |
-| 9–20 | partial | exits/doctor/offline/providers/NUC-1/STOR/K16 landed; WEB-1/HTTP-1/WEB-2 practical cleared; standing gaps remain (DNS rebinding / connect-time IP pin, etc.) |
+| 9–20 | partial | exits/doctor/offline/providers/NUC-1/STOR/K16 landed; WEB-1/HTTP-1/WEB-2 practical cleared; B1 resolve-and-deny/pin on ScopedHttpClient when deny_private_targets; standing DNS-rebinding residual remains |
 
 ## Remaining limitations (standing)
 
 - Experimental product; not production-grade / fully sandboxed.
-- DNS rebinding / connection-time IP binding incomplete.
+- DNS rebinding residual: B1 adds resolve-and-deny + reqwest DNS pin on ScopedHttpClient when `deny_private_targets` is on; not a full connect-time socket pin.
 - Process memory: simulation/unsupported only.
 - Regex redaction is best-effort.
 - No independent external audit.

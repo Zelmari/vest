@@ -136,12 +136,12 @@ What is real today:
 - Approval-required tools: exact CLI pre-grant (`--approve-writes` / `--approve-exploits` / `--approve-effect`) or TTY one-shot Allow; non-TTY without grants and `--no-approval` deny (**K2**).
 - Agent/provider/network zero budgets are rejected at config load (**CFG-1**).
 - `vest sandbox` Docker helpers are convenience only — not verified OS isolation.
-- Optional `safety.deny_private_targets` (default **false**) rejects loopback / RFC1918 / link-local / known metadata hosts for scan targets and scoped URLs (**R3-lite**). Private targets remain allowed unless you opt in.
+- Optional `safety.deny_private_targets` (default **false**) rejects loopback / RFC1918 / link-local / known metadata hosts for scan targets and scoped URLs, and on `ScopedHttpClient` resolves the hop host before connect (fail-closed + reqwest DNS pin when enabled) (**R3-lite** / **B1**). Private targets remain allowed unless you opt in.
 
 What is **not** finished:
 
 - Full multi-step interactive approval UX (K2 is CLI grants + TTY one-shot only).
-- DNS rebinding / connection-time IP binding is incomplete (literal private/metadata deny is optional via R3-lite above).
+- DNS rebinding residual: with `deny_private_targets`, ScopedHttpClient resolves and pins allowed IPs via reqwest; TOCTOU rebind remains possible without a stronger connect-time socket pin, and other HTTP paths may not share that gate.
 
 Details: [docs/security-model.md](docs/security-model.md), [docs/agent-tool-policy.md](docs/agent-tool-policy.md), [docs/model-data-boundary.md](docs/model-data-boundary.md), [docs/data-flow.md](docs/data-flow.md).  
 Clearance order: [docs/clearance-plan.md](docs/clearance-plan.md).  

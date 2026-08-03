@@ -19,7 +19,7 @@
 ### Wave B — Security residuals
 | # | ID | Item | Status |
 |---|----|------|--------|
-| 6 | B1 | Connect-time IP pin when `deny_private_targets` | pending |
+| 6 | B1 | Connect-time IP pin when `deny_private_targets` | done |
 | 7 | B2 | Provider HTTP: no auto-redirect | done |
 | 8 | B3 | CDP WS loopback pin + browser_inspect effect honesty | done |
 | 9 | B4 | Nuclei: always constrain `-t` / disable update-check | done |
@@ -47,7 +47,7 @@
 - [x] A3 Profile/mode reject
 - [x] A4 Profile safety wire/delete
 - [x] A5 CI locked/all-features
-- [ ] B1 Connect-time IP pin
+- [x] B1 Connect-time IP pin
 - [x] B2 Provider redirect-none
 - [x] B3 CDP loopback pin
 - [x] B4 Nuclei template constraint

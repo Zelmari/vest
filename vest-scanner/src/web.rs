@@ -162,6 +162,8 @@ pub struct WebScanner {
     pub max_redirects: u32,
     pub allow_active_probes: bool,
     pub max_concurrent_requests: usize,
+    /// Propagated to [`ScopedHttpClient`] for connect-time private/metadata deny (B1).
+    pub deny_private_targets: bool,
     semaphore: Arc<Semaphore>,
 }
 
@@ -184,13 +186,14 @@ impl WebScanner {
             max_redirects: 5,
             allow_active_probes: false,
             max_concurrent_requests,
+            deny_private_targets: false,
             semaphore: Arc::new(Semaphore::new(max_concurrent_requests)),
         }
     }
 
     /// Build the shared scoped HTTP policy client for this scanner's budgets.
     fn scoped_client(&self, scope: NetworkScope) -> Result<ScopedHttpClient, VestError> {
-        ScopedHttpClient::try_new(
+        Ok(ScopedHttpClient::try_new(
             scope,
             HttpClientBudgets {
                 connect_timeout: Duration::from_millis(self.connect_timeout_ms),
@@ -199,7 +202,8 @@ impl WebScanner {
                 max_body_bytes: self.max_response_bytes,
                 body_limit_policy: BodyLimitPolicy::Reject,
             },
-        )
+        )?
+        .with_deny_private_targets(self.deny_private_targets))
     }
 
     pub fn with_crawl_depth(mut self, depth: u32) -> Self {
@@ -234,6 +238,11 @@ impl WebScanner {
 
     pub fn with_allow_active_probes(mut self, allow: bool) -> Self {
         self.allow_active_probes = allow;
+        self
+    }
+
+    pub fn with_deny_private_targets(mut self, deny: bool) -> Self {
+        self.deny_private_targets = deny;
         self
     }
 

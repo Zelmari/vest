@@ -1,7 +1,8 @@
 //! Network origin scope matching using parsed URLs (not substring checks).
 
-use std::net::IpAddr;
 use url::Url;
+
+pub use vest_scanner::{is_private_or_metadata_host, is_private_or_metadata_target};
 
 /// Authorised network origins (scheme + host + effective port).
 #[derive(Debug, Clone, Default)]
@@ -174,86 +175,6 @@ impl ApprovedNetworkScope {
             }
         }
     }
-}
-
-/// True for loopback, RFC1918, link-local, unspecified, and known cloud-metadata hostnames.
-///
-/// This is a literal-host check only (no DNS resolution). Full DNS-rebinding prevention
-/// remains incomplete (see standing limitation R3); enable via `safety.deny_private_targets`.
-pub fn is_private_or_metadata_host(host: &str) -> bool {
-    let host = host
-        .trim()
-        .trim_matches(|c| c == '[' || c == ']')
-        .to_ascii_lowercase();
-    let host = host.split('%').next().unwrap_or(host.as_str());
-
-    match host {
-        "metadata"
-        | "metadata.google.internal"
-        | "metadata.goog"
-        | "metadata.aws.internal"
-        | "kubernetes.default"
-        | "kubernetes.default.svc"
-        | "kubernetes.default.svc.cluster.local" => return true,
-        _ => {}
-    }
-
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return ip_is_denied_private_or_metadata(ip);
-    }
-    false
-}
-
-fn ip_is_denied_private_or_metadata(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                // Carrier-grade NAT 100.64.0.0/10
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 0x40)
-        }
-        IpAddr::V6(v6) => {
-            if v6.is_loopback() || v6.is_unique_local() || v6.is_unspecified() {
-                return true;
-            }
-            // fe80::/10 link-local
-            if (v6.segments()[0] & 0xffc0) == 0xfe80 {
-                return true;
-            }
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return ip_is_denied_private_or_metadata(IpAddr::V4(v4));
-            }
-            false
-        }
-    }
-}
-
-/// Extract a host from a URL or bare host/IP and apply [`is_private_or_metadata_host`].
-pub fn is_private_or_metadata_target(host_or_url: &str) -> bool {
-    let raw = host_or_url.trim();
-    if raw.contains("://") {
-        if let Ok(url) = Url::parse(raw) {
-            if let Some(host) = url.host_str() {
-                return is_private_or_metadata_host(host);
-            }
-        }
-        return false;
-    }
-    // Bare host:port → host
-    let host = if raw.starts_with('[') {
-        raw.split(']').next().unwrap_or(raw).trim_start_matches('[')
-    } else {
-        raw.split('/')
-            .next()
-            .unwrap_or(raw)
-            .split(':')
-            .next()
-            .unwrap_or(raw)
-    };
-    is_private_or_metadata_host(host)
 }
 
 fn parse_flexible_origin(raw: &str) -> Result<Url, NetScopeError> {
