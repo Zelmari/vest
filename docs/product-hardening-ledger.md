@@ -71,6 +71,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | CLI-EXIT-7 | Provider/agent soft fail exited 0 | **Fixed** — preserve findings/report then exit 7 (`VestError::Provider`/`Agent`) | `exit_codes_strict.rs` | `f83e640` |
 | CLI-PARTIAL | Partial scanner fatals exited 0 | **Fixed** — preserve successful scanner findings then exit 5; total fail stays hard error | `exit_codes_strict.rs` | `f83e640` |
 | PROV-1 | Google API key in URL query (`?key=`) | **Fixed** — `x-goog-api-key` header for generateContent/list_models; transport/HTTP errors scrub key; sentinel tests in `vest-providers/src/google.rs` |
+| CFG-1 | Agent/provider/network zero budgets accepted | **Fixed** — `load_config`/`validate_config` reject zeros; deny_unknown on agent/provider/network |
 | REP-1 | JSON/MD reports embed raw evidence/PoC (incl. `match_preview` secrets) by default | **Fixed** — omit evidence/PoC by default; `--include-evidence` / `general.include_report_evidence` opt-in with best-effort redaction; `vest-report/tests/secret_redaction.rs` |
 | POL-1 | Missing/non-string path/url skipped FS/net scope checks for scoped effects | **Fixed** — deny before handler when material target absent or wrong type; `adversarial_policy_tests.rs` + policy unit tests | `f918a47` |
 

@@ -181,7 +181,7 @@ N5 → K3 → K3b → REP-1 → PROV-1 → K4 → K2 → K5b → K8 → POL-1 �
 - [x] CLI-PARTIAL scanner policy
 - [x] N4 offline flag/default
 - [x] N3 doctor
-- [ ] CFG-1 config validate zeros
+- [x] CFG-1 config validate zeros
 - [ ] PROV-2 SecretString providers
 - [ ] PROV-3 timeouts wired
 - [ ] PROV-4 google list_models

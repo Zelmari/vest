@@ -84,7 +84,11 @@ fn default_thinking_enabled() -> bool {
     false
 }
 
+/// Agent concurrency / iteration budgets.
+///
+/// Unknown fields are rejected so typos cannot silently disable budgets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     #[serde(default = "default_pattern")]
     pub default_pattern: String,
@@ -105,6 +109,21 @@ pub struct AgentConfig {
     pub hunter: Option<AgentRoleConfig>,
     pub validator: Option<AgentRoleConfig>,
     pub reporter: Option<AgentRoleConfig>,
+}
+
+impl AgentConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_concurrent_agents == 0 {
+            return Err("agent.max_concurrent_agents must be non-zero".into());
+        }
+        if self.max_llm_iterations == 0 {
+            return Err("agent.max_llm_iterations must be non-zero".into());
+        }
+        if self.token_budget_per_scan == 0 {
+            return Err("agent.token_budget_per_scan must be non-zero".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -354,7 +373,11 @@ impl Default for BrowserScannerConfig {
     }
 }
 
+/// Network capture bounds.
+///
+/// Unknown fields are rejected so typos cannot silently disable capture limits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkScannerConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -381,6 +404,15 @@ impl Default for NetworkScannerConfig {
             packet_capture_max_mb: 500,
             protocol_analysis_llm: true,
         }
+    }
+}
+
+impl NetworkScannerConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.packet_capture_max_mb == 0 {
+            return Err("scanner.network.packet_capture_max_mb must be non-zero".into());
+        }
+        Ok(())
     }
 }
 
@@ -465,6 +497,22 @@ pub struct ProfileConfig {
     pub max_llm_iterations: Option<u32>,
     pub token_budget_per_scan: Option<u64>,
     pub safety: Option<ProfileSafetyOverride>,
+}
+
+impl ProfileConfig {
+    pub fn validate(&self, name: &str) -> Result<(), String> {
+        if self.max_llm_iterations == Some(0) {
+            return Err(format!(
+                "profiles.{name}.max_llm_iterations must be non-zero when set"
+            ));
+        }
+        if self.token_budget_per_scan == Some(0) {
+            return Err(format!(
+                "profiles.{name}.token_budget_per_scan must be non-zero when set"
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -851,6 +899,7 @@ allowed_networks = []
 
     #[test]
     fn test_parse_toml_with_zero_values() {
+        // Serde still parses zeros; load_config/validate_config must reject them (CFG-1).
         let toml_str = r#"
 [general]
 [agent]
@@ -868,6 +917,49 @@ allowed_networks = []
         let config: VestConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.agent.max_concurrent_agents, 0);
         assert_eq!(config.safety.max_scan_duration_seconds, 0);
+        assert!(config.agent.validate().is_err());
+        assert!(crate::validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn agent_network_provider_validate_reject_zeros() {
+        let mut agent = AgentConfig {
+            default_pattern: "pipeline".into(),
+            max_concurrent_agents: 1,
+            max_llm_iterations: 1,
+            token_budget_per_scan: 1,
+            thinking_enabled: false,
+            recon: None,
+            hunter: None,
+            validator: None,
+            reporter: None,
+        };
+        assert!(agent.validate().is_ok());
+        agent.max_concurrent_agents = 0;
+        assert!(agent.validate().unwrap_err().contains("max_concurrent_agents"));
+
+        let mut net = NetworkScannerConfig::default();
+        assert!(net.validate().is_ok());
+        net.packet_capture_max_mb = 0;
+        assert!(net
+            .validate()
+            .unwrap_err()
+            .contains("packet_capture_max_mb"));
+
+        let mut prov = ProviderConfig {
+            api_key_env: None,
+            api_base: None,
+            default_model: None,
+            organization_id: None,
+            timeout_seconds: Some(30),
+            max_retries: None,
+            retry_delay_ms: None,
+            max_tokens_default: None,
+            thinking_enabled: None,
+        };
+        assert!(prov.validate("openai").is_ok());
+        prov.timeout_seconds = Some(0);
+        assert!(prov.validate("openai").unwrap_err().contains("timeout_seconds"));
     }
 
     #[test]
