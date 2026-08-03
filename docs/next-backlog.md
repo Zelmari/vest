@@ -13,7 +13,7 @@
 | 1 | A1 | JSON-clean stdout (banners/progress → stderr when `-f json`) | done |
 | 2 | A2 | Docs sync (WEB-1 / passive web / ledger drift) | done |
 | 3 | A3 | Reject unknown `--profile` / invalid `--mode` | done |
-| 4 | A4 | Wire or delete unused profile `safety` overrides | pending |
+| 4 | A4 | Wire or delete unused profile `safety` overrides | done |
 | 5 | A5 | CI: `--locked` + `--all-features`; smarter flake strategy | done |
 
 ### Wave B — Security residuals
@@ -45,7 +45,7 @@
 - [x] A1 JSON stdout
 - [x] A2 Docs sync
 - [x] A3 Profile/mode reject
-- [ ] A4 Profile safety wire/delete
+- [x] A4 Profile safety wire/delete
 - [x] A5 CI locked/all-features
 - [ ] B1 Connect-time IP pin
 - [ ] B2 Provider redirect-none

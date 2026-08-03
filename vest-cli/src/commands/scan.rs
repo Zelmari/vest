@@ -352,7 +352,7 @@ pub async fn run(
         .into_arc();
     args.include_evidence = args.include_evidence || config.general.include_report_evidence;
     let registry = build_tool_registry(Arc::clone(&session), allow_active_probes);
-    let safety = build_safety(&args, &config, Arc::clone(&session)).await?;
+    let safety = build_safety(&args, &config, profile, Arc::clone(&session)).await?;
 
     ui_line!(machine, "\u{2502} {:^48} \u{2502}", "Running scan...");
     ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
@@ -1363,18 +1363,40 @@ fn scopes_from_target(target: &Target) -> (ApprovedFilesystemScope, ApprovedNetw
     (fs, net)
 }
 
+/// Merge optional profile `safety` overrides onto base `[safety]` approval flags.
+/// Only `Some` fields override; unset profile fields keep the base value.
+fn merge_profile_safety_approvals(
+    base_write: bool,
+    base_exploit: bool,
+    profile: Option<&vest_config::ProfileConfig>,
+) -> (bool, bool) {
+    let over = profile.and_then(|p| p.safety.as_ref());
+    (
+        over.and_then(|s| s.write_approval).unwrap_or(base_write),
+        over.and_then(|s| s.exploit_approval)
+            .unwrap_or(base_exploit),
+    )
+}
+
 async fn build_safety(
     args: &ScanArgs,
     config: &vest_config::VestConfig,
+    profile: Option<&vest_config::ProfileConfig>,
     session: Arc<ExecutionSession>,
 ) -> Result<Arc<vest_agent::SafetyChecker>, Box<dyn std::error::Error>> {
     use vest_agent::safety::SafetyConfig;
 
+    let (write_approval, exploit_approval) = merge_profile_safety_approvals(
+        config.safety.write_approval,
+        config.safety.exploit_approval,
+        profile,
+    );
+
     // `--no-approval` means: never prompt; deny approval-required ops.
     // It must NOT install an unrestricted / test-only permissive context (K1).
     let safety_config = SafetyConfig {
-        write_approval: config.safety.write_approval,
-        exploit_approval: config.safety.exploit_approval,
+        write_approval,
+        exploit_approval,
         network_write_approval: config.safety.network_write_approval,
         rate_limit_enabled: !args.no_rate_limit && config.safety.rate_limit_enabled,
         rate_limit_requests_per_second: args
@@ -1554,3 +1576,79 @@ mod agent_http_scoped_client;
 #[cfg(test)]
 #[path = "agent_read_file_bounded.rs"]
 mod agent_read_file_bounded;
+
+#[cfg(test)]
+mod profile_safety_tests {
+    use super::merge_profile_safety_approvals;
+    use vest_config::{ProfileConfig, ProfileSafetyOverride};
+
+    fn profile_with_safety(write: Option<bool>, exploit: Option<bool>) -> ProfileConfig {
+        ProfileConfig {
+            description: None,
+            pattern: None,
+            phases: None,
+            agents: None,
+            scanners: None,
+            max_llm_iterations: None,
+            token_budget_per_scan: None,
+            safety: Some(ProfileSafetyOverride {
+                write_approval: write,
+                exploit_approval: exploit,
+            }),
+        }
+    }
+
+    #[test]
+    fn no_profile_keeps_base_approvals() {
+        assert_eq!(
+            merge_profile_safety_approvals(true, true, None),
+            (true, true)
+        );
+        assert_eq!(
+            merge_profile_safety_approvals(false, true, None),
+            (false, true)
+        );
+    }
+
+    #[test]
+    fn profile_without_safety_keeps_base() {
+        let profile = ProfileConfig {
+            description: None,
+            pattern: None,
+            phases: None,
+            agents: None,
+            scanners: None,
+            max_llm_iterations: None,
+            token_budget_per_scan: None,
+            safety: None,
+        };
+        assert_eq!(
+            merge_profile_safety_approvals(true, true, Some(&profile)),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn profile_overrides_both_approval_flags() {
+        // Matches vest.toml [profiles.bug_bounty] intent: disable approvals.
+        let profile = profile_with_safety(Some(false), Some(false));
+        assert_eq!(
+            merge_profile_safety_approvals(true, true, Some(&profile)),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn partial_override_leaves_unset_field() {
+        let write_only = profile_with_safety(Some(false), None);
+        assert_eq!(
+            merge_profile_safety_approvals(true, true, Some(&write_only)),
+            (false, true)
+        );
+        let exploit_only = profile_with_safety(None, Some(false));
+        assert_eq!(
+            merge_profile_safety_approvals(true, true, Some(&exploit_only)),
+            (true, false)
+        );
+    }
+}
