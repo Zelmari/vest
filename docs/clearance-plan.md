@@ -2,7 +2,7 @@
 
 **Branch:** `main` only (no feature branches)  
 **Baseline tip when plan written:** `fe1d041`  
-**Last cleared:** BRW-1 @   
+**Last cleared:** BRW-1 @ `04c161e`  
 **Method:** Clear items one-by-one; each item gets code + regression tests + ledger update; keep CI green.  
 **Living suite:** extend tests as behaviour changes (see Wave T).  
 **Loop:** agent clearance loop continues until the open queue is empty and CI is green.
