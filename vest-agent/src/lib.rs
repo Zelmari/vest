@@ -12,6 +12,7 @@ pub mod planner;
 pub mod policy;
 pub mod safety;
 pub mod session;
+pub mod tool_error;
 pub mod tool_registry;
 pub mod validator;
 
@@ -36,5 +37,6 @@ pub use policy::{
 };
 pub use safety::{explicit_effect_for_tool, SafetyChecker, SafetyConfig};
 pub use session::ExecutionSession;
+pub use tool_error::ToolError;
 pub use tool_registry::ToolRegistry;
 pub use validator::{enrich_finding_heuristic, ValidationDecision, Validator};

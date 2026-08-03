@@ -3,6 +3,7 @@ use crate::context::ToolDefinition;
 use crate::egress::{classify_tool_result, filter_for_model};
 use crate::interactive_approval::prompt_tty_one_shot_allow;
 use crate::policy::{AuthorisationContext, NormalisedToolCall, PolicyEngine};
+use crate::tool_error::ToolError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use vest_core::{ApprovalDecision, DataEgressClass};
@@ -12,8 +13,9 @@ pub struct ToolRegistry {
 }
 
 pub struct RegisteredTool {
+    pub handler:
+        Arc<dyn Fn(serde_json::Value) -> Result<serde_json::Value, ToolError> + Send + Sync>,
     pub definition: ToolDefinition,
-    pub handler: Arc<dyn Fn(serde_json::Value) -> Result<serde_json::Value, String> + Send + Sync>,
 }
 
 impl ToolRegistry {
@@ -26,7 +28,10 @@ impl ToolRegistry {
     pub fn register(
         &mut self,
         definition: ToolDefinition,
-        handler: impl Fn(serde_json::Value) -> Result<serde_json::Value, String> + Send + Sync + 'static,
+        handler: impl Fn(serde_json::Value) -> Result<serde_json::Value, ToolError>
+            + Send
+            + Sync
+            + 'static,
     ) {
         self.tools.insert(
             definition.name.clone(),
@@ -56,17 +61,17 @@ impl ToolRegistry {
         args: serde_json::Value,
         approval: &ApprovedToolCall,
         ctx: &AuthorisationContext,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<serde_json::Value, ToolError> {
         if approval.tool_id() != name {
-            return Err(format!(
-                "tool '{name}' execution denied: capability is for '{}'",
-                approval.tool_id()
+            return Err(ToolError::capability_denied(
+                name,
+                format!("capability is for '{}'", approval.tool_id()),
             ));
         }
         let tool = self
             .tools
             .get(name)
-            .ok_or_else(|| format!("Tool '{name}' not found"))?;
+            .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
         let call = NormalisedToolCall::from_parts(
             name,
             tool.definition.effect,
@@ -74,19 +79,21 @@ impl ToolRegistry {
             &args,
         );
         if !approval.matches_call(&call, &ctx.session_id) {
-            return Err(format!(
-                "tool '{name}' execution denied: capability does not match exact call"
+            return Err(ToolError::capability_denied(
+                name,
+                "capability does not match exact call",
             ));
         }
         if !approval.consume() {
-            return Err(format!(
-                "tool '{name}' execution denied: one-shot capability already consumed"
+            return Err(ToolError::capability_denied(
+                name,
+                "one-shot capability already consumed",
             ));
         }
         let raw = (tool.handler)(args)?;
         let from_effect = classify_tool_result(tool.definition.effect, &raw);
         let class = more_restrictive(tool.definition.egress_class, from_effect);
-        filter_for_model(&raw, class, ctx)
+        filter_for_model(&raw, class, ctx).map_err(ToolError::handler)
     }
 
     /// Thin wrapper over the live hot path (K5b):
@@ -97,11 +104,11 @@ impl ToolRegistry {
         ctx: &AuthorisationContext,
         name: &str,
         args: serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<serde_json::Value, ToolError> {
         let tool = self
             .tools
             .get(name)
-            .ok_or_else(|| format!("Tool '{name}' not found"))?;
+            .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
 
         let call = NormalisedToolCall::from_parts(
             name,
@@ -114,11 +121,11 @@ impl ToolRegistry {
             Err(ApprovalDecision::RequireInteractive { reason }) if ctx.interactive => {
                 if prompt_tty_one_shot_allow(&call, &reason) {
                     policy.grant_sync(ctx, &call, true);
-                    policy.authorise(ctx, &call).map_err(|decision| {
-                        format_authorise_denial(name, &decision, ctx.interactive)
-                    })?
+                    policy
+                        .authorise(ctx, &call)
+                        .map_err(|decision| authorise_denial(name, &decision, ctx.interactive))?
                 } else {
-                    return Err(format_authorise_denial(
+                    return Err(authorise_denial(
                         name,
                         &ApprovalDecision::RequireInteractive { reason },
                         ctx.interactive,
@@ -126,7 +133,7 @@ impl ToolRegistry {
                 }
             }
             Err(decision) => {
-                return Err(format_authorise_denial(name, &decision, ctx.interactive));
+                return Err(authorise_denial(name, &decision, ctx.interactive));
             }
         };
         self.execute_authorised(name, args, &approval, ctx)
@@ -138,10 +145,10 @@ impl ToolRegistry {
         &self,
         name: &str,
         _args: serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        Err(format!(
+    ) -> Result<serde_json::Value, ToolError> {
+        Err(ToolError::handler(format!(
             "ToolRegistry::execute is not a policy bypass; use invoke() for '{name}'"
-        ))
+        )))
     }
 }
 
@@ -151,8 +158,8 @@ impl Default for ToolRegistry {
     }
 }
 
-fn format_authorise_denial(name: &str, decision: &ApprovalDecision, interactive: bool) -> String {
-    match decision {
+fn authorise_denial(name: &str, decision: &ApprovalDecision, interactive: bool) -> ToolError {
+    let message = match decision {
         ApprovalDecision::Deny { reason } => {
             format!("policy denied '{name}': {reason}")
         }
@@ -166,7 +173,8 @@ fn format_authorise_denial(name: &str, decision: &ApprovalDecision, interactive:
         ApprovalDecision::Allow => {
             format!("policy denied '{name}': unexpected Allow without capability")
         }
-    }
+    };
+    ToolError::approval_denied(message)
 }
 
 fn more_restrictive(a: DataEgressClass, b: DataEgressClass) -> DataEgressClass {

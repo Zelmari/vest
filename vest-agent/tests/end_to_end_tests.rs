@@ -187,7 +187,7 @@ async fn test_end_to_end_tooluse_scan_to_report() {
             ToolEffect::ProcessMemoryRead,
             DataEgressClass::ProcessMemory,
         ),
-        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        |args: serde_json::Value| -> Result<serde_json::Value, vest_agent::ToolError> {
             let addr = args
                 .get("address")
                 .and_then(|v| v.as_str())
@@ -203,7 +203,7 @@ async fn test_end_to_end_tooluse_scan_to_report() {
             ToolEffect::ProcessMetadataRead,
             DataEgressClass::LocalMetadata,
         ),
-        |_args: serde_json::Value| -> Result<serde_json::Value, String> {
+        |_args: serde_json::Value| -> Result<serde_json::Value, vest_agent::ToolError> {
             Ok(serde_json::json!({"regions": [
                 {"name": "game.exe", "perms": "RX"},
                 {"name": "heap", "perms": "RW"}
@@ -517,7 +517,7 @@ async fn test_end_to_end_multi_tool_registry() {
                 ToolEffect::PureComputation,
                 DataEgressClass::PublicNonSensitive,
             ),
-            move |args: serde_json::Value| -> Result<serde_json::Value, String> {
+            move |args: serde_json::Value| -> Result<serde_json::Value, vest_agent::ToolError> {
                 Ok(serde_json::json!({"result": format!("tool_{}_result", i), "input": args}))
             },
         );
@@ -672,7 +672,7 @@ async fn test_end_to_end_orchestrator_tooluse() {
             ToolEffect::LocalMetadataRead,
             DataEgressClass::LocalMetadata,
         ),
-        |_args: serde_json::Value| -> Result<serde_json::Value, String> {
+        |_args: serde_json::Value| -> Result<serde_json::Value, vest_agent::ToolError> {
             Ok(serde_json::json!({
                 "target_info": {"os": "Linux", "arch": "x86_64"},
                 "vulnerabilities": []
@@ -687,7 +687,7 @@ async fn test_end_to_end_orchestrator_tooluse() {
             ToolEffect::ActiveNetworkProbe,
             DataEgressClass::TargetMetadata,
         ),
-        |_args: serde_json::Value| -> Result<serde_json::Value, String> {
+        |_args: serde_json::Value| -> Result<serde_json::Value, vest_agent::ToolError> {
             Ok(serde_json::json!({"ports": [80, 443, 8080]}))
         },
     );

@@ -98,6 +98,21 @@ impl VestError {
             | VestError::Json(_) => 1,
         }
     }
+
+    /// Soft provider/agent failure for degraded scans (CLI exit 7).
+    ///
+    /// [`VestError::ApprovalDenied`] is preserved so authorisation stays exit 4.
+    pub fn into_provider_soft_failure(self) -> Self {
+        match self {
+            VestError::Provider(_)
+            | VestError::Agent(_)
+            | VestError::ValidationFailed { .. }
+            | VestError::ApprovalDenied(_) => self,
+            other => VestError::Provider(format!(
+                "provider/agent soft failure; scanner findings preserved: {other}"
+            )),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -113,6 +128,13 @@ mod exit_code_unit_tests {
         assert_eq!(VestError::Provider("x".into()).cli_exit_code(), 7);
         assert_eq!(VestError::InvalidInput("x".into()).cli_exit_code(), 2);
         assert_eq!(VestError::FindingsGate("high".into()).cli_exit_code(), 8);
+    }
+
+    #[test]
+    fn provider_soft_failure_preserves_approval_denied_exit_4() {
+        let soft = VestError::ApprovalDenied("policy denied".into()).into_provider_soft_failure();
+        assert!(matches!(soft, VestError::ApprovalDenied(_)));
+        assert_eq!(soft.cli_exit_code(), 4);
     }
 }
 

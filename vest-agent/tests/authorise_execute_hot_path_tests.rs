@@ -59,7 +59,7 @@ fn forgeable_allow_alone_cannot_execute_handler() {
     // Legacy execute shim is not a bypass.
     let err = registry.execute("echo", serde_json::json!({})).unwrap_err();
     assert!(
-        err.contains("not a policy bypass") || err.contains("invoke"),
+        err.to_string().contains("not a policy bypass") || err.to_string().contains("invoke"),
         "{err}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -70,7 +70,10 @@ fn forgeable_allow_alone_cannot_execute_handler() {
     let err = registry
         .invoke(&policy, &ctx, "not_registered", serde_json::json!({}))
         .unwrap_err();
-    assert!(err.contains("not found") || err.contains("denied"), "{err}");
+    assert!(
+        err.to_string().contains("not found") || err.to_string().contains("denied"),
+        "{err}"
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
@@ -111,7 +114,7 @@ fn capability_tool_id_mismatch_fails_and_handler_not_run() {
         .execute_authorised("echo", serde_json::json!({}), &approval, &ctx)
         .unwrap_err();
     assert!(
-        err.contains("capability is for") || err.contains("denied"),
+        err.to_string().contains("capability is for") || err.to_string().contains("denied"),
         "{err}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -159,7 +162,7 @@ fn capability_arg_mismatch_fails_and_handler_not_run() {
         )
         .unwrap_err();
     assert!(
-        err.contains("does not match") || err.contains("denied"),
+        err.to_string().contains("does not match") || err.to_string().contains("denied"),
         "{err}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -268,7 +271,7 @@ fn session_mismatch_rejects_capability() {
         .execute_authorised("echo", args, &approval, &ctx_b)
         .unwrap_err();
     assert!(
-        err.contains("does not match") || err.contains("denied"),
+        err.to_string().contains("does not match") || err.to_string().contains("denied"),
         "{err}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);

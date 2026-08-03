@@ -79,7 +79,7 @@ fn credential_material_hard_errors() {
         &ctx,
     )
     .unwrap_err();
-    let lower = err.to_lowercase();
+    let lower = err.to_string().to_lowercase();
     assert!(
         lower.contains("credential") || lower.contains("prohibited") || lower.contains("egress"),
         "{err}"

@@ -449,13 +449,9 @@ pub async fn run(
 }
 
 /// Map provider/agent failures onto exit 7 while findings are preserved.
+/// Approval denials stay typed (exit 4) via [`VestError::into_provider_soft_failure`].
 fn provider_soft_error(err: VestError) -> VestError {
-    match err {
-        VestError::Provider(_) | VestError::Agent(_) | VestError::ValidationFailed { .. } => err,
-        other => VestError::Provider(format!(
-            "provider/agent soft failure; scanner findings preserved: {other}"
-        )),
-    }
+    err.into_provider_soft_failure()
 }
 
 fn scanner_failure_error(errors: &[VestError]) -> VestError {
@@ -568,7 +564,7 @@ fn load_previous_findings_for_target(
             }
         }
     }
-    previous_scans.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    previous_scans.sort_by_key(|b| std::cmp::Reverse(b.created_at));
     let Some(prev) = previous_scans.into_iter().next() else {
         return Ok(None);
     };

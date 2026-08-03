@@ -70,7 +70,8 @@ fn path_escape_via_dotdot_is_denied_and_handler_not_run() {
         )
         .unwrap_err();
     assert!(
-        err.to_lowercase().contains("filesystem") || err.to_lowercase().contains("denied"),
+        err.to_string().to_lowercase().contains("filesystem")
+            || err.to_string().to_lowercase().contains("denied"),
         "{err}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0, "handler must not run");
@@ -83,7 +84,10 @@ fn path_escape_via_dotdot_is_denied_and_handler_not_run() {
             serde_json::json!({"path": inside.join("..").join("outside.txt").to_string_lossy()}),
         )
         .unwrap_err();
-    assert!(err2.to_lowercase().contains("filesystem") || err2.to_lowercase().contains("denied"));
+    assert!(
+        err2.to_string().to_lowercase().contains("filesystem")
+            || err2.to_string().to_lowercase().contains("denied")
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
@@ -106,7 +110,7 @@ fn absolute_path_outside_root_denied() {
             serde_json::json!({"path": "/etc/passwd"}),
         )
         .unwrap_err();
-    assert!(!err.is_empty());
+    assert!(!err.to_string().is_empty());
 }
 
 #[test]
@@ -132,7 +136,10 @@ fn network_host_prefix_collision_denied() {
             serde_json::json!({"url": "http://example.com.evil/"}),
         )
         .unwrap_err();
-    assert!(err.to_lowercase().contains("network") || err.to_lowercase().contains("denied"));
+    assert!(
+        err.to_string().to_lowercase().contains("network")
+            || err.to_string().to_lowercase().contains("denied")
+    );
     assert_eq!(ran.load(Ordering::SeqCst), 0);
 
     let _ok = registry
@@ -163,7 +170,8 @@ fn claimed_get_with_post_method_fails_closed_non_interactive() {
         )
         .unwrap_err();
     assert!(
-        err.to_lowercase().contains("denied") || err.to_lowercase().contains("approval"),
+        err.to_string().to_lowercase().contains("denied")
+            || err.to_string().to_lowercase().contains("approval"),
         "{err}"
     );
 }
@@ -176,7 +184,9 @@ fn unknown_tool_denied_even_with_permissive_context() {
     let err = registry
         .invoke(&policy, &ctx, "totally_fake_tool", serde_json::json!({}))
         .unwrap_err();
-    assert!(err.contains("not found") || err.to_lowercase().contains("denied"));
+    assert!(
+        err.to_string().contains("not found") || err.to_string().to_lowercase().contains("denied")
+    );
 }
 
 #[test]
@@ -189,7 +199,7 @@ fn execute_shim_is_not_a_policy_bypass() {
         .execute("read_file", serde_json::json!({"path": "/etc/passwd"}))
         .unwrap_err();
     assert!(
-        err.contains("not a policy bypass") || err.contains("invoke"),
+        err.to_string().contains("not a policy bypass") || err.to_string().contains("invoke"),
         "{err}"
     );
 }
@@ -210,7 +220,7 @@ fn missing_path_denied_before_handler_even_when_permissive() {
         .invoke(&policy, &ctx, "read_file", serde_json::json!({}))
         .unwrap_err();
     assert!(
-        err.to_lowercase().contains("missing path"),
+        err.to_string().to_lowercase().contains("missing path"),
         "expected missing-path deny, got: {err}"
     );
     assert_eq!(ran.load(Ordering::SeqCst), 0, "handler must not run");
@@ -237,7 +247,7 @@ fn non_string_path_denied_before_handler() {
             .invoke(&policy, &ctx, "read_file", args)
             .unwrap_err();
         assert!(
-            err.to_lowercase().contains("must be a string"),
+            err.to_string().to_lowercase().contains("must be a string"),
             "expected non-string path deny, got: {err}"
         );
         assert_eq!(ran.load(Ordering::SeqCst), 0, "handler must not run");
@@ -260,7 +270,7 @@ fn missing_or_non_string_url_denied_before_handler() {
         .invoke(&policy, &ctx, "http_get", serde_json::json!({}))
         .unwrap_err();
     assert!(
-        err.to_lowercase().contains("missing url"),
+        err.to_string().to_lowercase().contains("missing url"),
         "expected missing-url deny, got: {err}"
     );
     assert_eq!(ran.load(Ordering::SeqCst), 0);
@@ -274,7 +284,7 @@ fn missing_or_non_string_url_denied_before_handler() {
         )
         .unwrap_err();
     assert!(
-        err2.to_lowercase().contains("must be a string"),
+        err2.to_string().to_lowercase().contains("must be a string"),
         "expected non-string url deny, got: {err2}"
     );
     assert_eq!(ran.load(Ordering::SeqCst), 0, "handler must not run");
@@ -309,7 +319,7 @@ fn local_write_missing_path_denied_before_handler() {
         )
         .unwrap_err();
     assert!(
-        err.to_lowercase().contains("must be a string"),
+        err.to_string().to_lowercase().contains("must be a string"),
         "expected non-string path deny, got: {err}"
     );
     assert_eq!(ran.load(Ordering::SeqCst), 0, "handler must not run");

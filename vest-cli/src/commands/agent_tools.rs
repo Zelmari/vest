@@ -6,7 +6,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vest_agent::{resolve_read_path, ExecutionSession};
+use vest_agent::{resolve_read_path, ExecutionSession, ToolError};
 use vest_core::error::VestError;
 use vest_core::{truncate_chars, DataEgressClass, ToolEffect};
 use vest_scanner::{HttpClientBudgets, ScopedHttpClient};
@@ -15,17 +15,17 @@ use vest_scanner::{HttpClientBudgets, ScopedHttpClient};
 /// Matches the tool description ("up to 10KB").
 const AGENT_READ_FILE_MAX_BYTES: u64 = 10_240;
 
-fn resolve_tool_path(session: &ExecutionSession, path: &str) -> Result<PathBuf, String> {
+fn resolve_tool_path(session: &ExecutionSession, path: &str) -> Result<PathBuf, ToolError> {
     resolve_read_path(&session.filesystem, Path::new(path))
-        .map_err(|e| format!("filesystem scope: {e}"))
+        .map_err(|e| VestError::ApprovalDenied(format!("filesystem scope: {e}")).into())
 }
 
-fn authorise_tool_url(session: &ExecutionSession, url: &str) -> Result<(), String> {
+fn authorise_tool_url(session: &ExecutionSession, url: &str) -> Result<(), ToolError> {
     session
         .network
         .authorise_url(url)
         .map(|_| ())
-        .map_err(|e| format!("network scope: {e}"))
+        .map_err(|e| VestError::ApprovalDenied(format!("network scope: {e}")).into())
 }
 
 /// Build a [`ScopedHttpClient`] bound to the authorised origin of `url`.
@@ -36,32 +36,33 @@ fn scoped_client_for_url(
     session: &ExecutionSession,
     url: &str,
     max_body_bytes: usize,
-) -> Result<ScopedHttpClient, String> {
+) -> Result<ScopedHttpClient, ToolError> {
     let authorised = session
         .network
         .authorise_url(url)
-        .map_err(|e| format!("network scope: {e}"))?;
+        .map_err(|e| VestError::ApprovalDenied(format!("network scope: {e}")))?;
     let scope = vest_scanner::web::NetworkScope::from_url(&authorised)
-        .map_err(|e| format!("network scope: {e}"))?;
+        .map_err(|e| ToolError::handler(format!("network scope: {e}")))?;
     let budgets = HttpClientBudgets {
         max_body_bytes,
         ..HttpClientBudgets::default()
     };
     ScopedHttpClient::try_new(scope, budgets)
         .map(|c| c.with_deny_private_targets(session.network.deny_private_targets()))
-        .map_err(|e| e.to_string())
+        .map_err(ToolError::from)
 }
 
-fn block_on_scoped<F, T>(fut: F) -> Result<T, String>
+fn block_on_scoped<F, T>(fut: F) -> Result<T, ToolError>
 where
     F: std::future::Future<Output = Result<T, VestError>>,
 {
     let handle = tokio::runtime::Handle::current();
-    tokio::task::block_in_place(|| handle.block_on(fut)).map_err(|e| e.to_string())
+    // Preserve VestError variants (do not stringify) for CLI exit mapping.
+    tokio::task::block_in_place(|| handle.block_on(fut)).map_err(ToolError::from)
 }
 
 /// Agent `http_get` implementation (session-scoped, redirect-safe).
-fn agent_http_get(session: &ExecutionSession, url: &str) -> Result<serde_json::Value, String> {
+fn agent_http_get(session: &ExecutionSession, url: &str) -> Result<serde_json::Value, ToolError> {
     let client = scoped_client_for_url(session, url, 8_192)?;
     let (status, body) = block_on_scoped(client.get_text(url))?;
     let truncated = truncate_chars(&body, 8000);
@@ -78,9 +79,10 @@ fn agent_http_post(
     session: &ExecutionSession,
     url: &str,
     data: &serde_json::Value,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ToolError> {
     let client = scoped_client_for_url(session, url, 4_096)?;
-    let body_str = serde_json::to_string(data).map_err(|e| format!("Failed to serialize: {e}"))?;
+    let body_str = serde_json::to_string(data)
+        .map_err(|e| ToolError::handler(format!("Failed to serialize: {e}")))?;
     let (status, body) = block_on_scoped(client.post_text(url, &body_str, "application/json"))?;
     let truncated = truncate_chars(&body, 4000);
     Ok(serde_json::json!({
@@ -92,14 +94,16 @@ fn agent_http_post(
 }
 
 /// Sync bounded read used by [`agent_read_file`] (and the blocking pool).
-fn read_file_capped(path: &Path) -> Result<serde_json::Value, String> {
-    let meta = std::fs::metadata(path).map_err(|e| format!("Cannot read file: {e}"))?;
-    let mut file = std::fs::File::open(path).map_err(|e| format!("Cannot read file: {e}"))?;
+fn read_file_capped(path: &Path) -> Result<serde_json::Value, ToolError> {
+    let meta = std::fs::metadata(path)
+        .map_err(|e| ToolError::handler(format!("Cannot read file: {e}")))?;
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| ToolError::handler(format!("Cannot read file: {e}")))?;
     let mut buf = Vec::with_capacity(AGENT_READ_FILE_MAX_BYTES as usize);
     file.by_ref()
         .take(AGENT_READ_FILE_MAX_BYTES)
         .read_to_end(&mut buf)
-        .map_err(|e| format!("Cannot read file: {e}"))?;
+        .map_err(|e| ToolError::handler(format!("Cannot read file: {e}")))?;
     let text = String::from_utf8_lossy(&buf);
     Ok(serde_json::json!({
         "path": path.display().to_string(),
@@ -111,14 +115,14 @@ fn read_file_capped(path: &Path) -> Result<serde_json::Value, String> {
 }
 
 /// Agent `read_file` implementation (session-scoped, byte-capped, off async worker).
-fn agent_read_file(session: &ExecutionSession, path: &str) -> Result<serde_json::Value, String> {
+fn agent_read_file(session: &ExecutionSession, path: &str) -> Result<serde_json::Value, ToolError> {
     let resolved = resolve_tool_path(session, path)?;
     let handle = tokio::runtime::Handle::current();
     tokio::task::block_in_place(|| {
         handle.block_on(async move {
             tokio::task::spawn_blocking(move || read_file_capped(&resolved))
                 .await
-                .map_err(|e| format!("read_file task failed: {e}"))?
+                .map_err(|e| ToolError::handler(format!("read_file task failed: {e}")))?
         })
     })
 }
@@ -150,11 +154,11 @@ pub(crate) fn build_tool_registry(
             effect: ToolEffect::ActiveNetworkProbe,
             egress_class: DataEgressClass::TargetContent,
         },
-        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let url = args
                 .get("url")
                 .and_then(|v| v.as_str())
-                .ok_or("url parameter required")?;
+                .ok_or_else(|| ToolError::handler("url parameter required"))?;
             authorise_tool_url(&session_web, url)?;
 
             // Same gating as CLI web scan: default off unless config/flag opts in.
@@ -169,7 +173,7 @@ pub(crate) fn build_tool_registry(
             let (page, config_findings) = tokio::task::block_in_place(|| {
                 handle.block_on(async { scanner.inspect_url(url).await })
             })
-            .map_err(|e| format!("web_scan failed: {e}"))?;
+            .map_err(|e| ToolError::handler(format!("web_scan failed: {e}")))?;
 
             let links = page.links.clone();
             let forms = page.forms.clone();
@@ -223,13 +227,13 @@ pub(crate) fn build_tool_registry(
             effect: ToolEffect::LocalFileContentRead,
             egress_class: DataEgressClass::LocalContent,
         },
-        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let path_str = args.get("path")
                 .and_then(|v| v.as_str())
-                .ok_or("path parameter required")?;
+                .ok_or_else(|| ToolError::handler("path parameter required"))?;
             let path = resolve_tool_path(&session_file, path_str)?;
             if !path.exists() {
-                return Err(format!("Path not found: {}", path.display()));
+                return Err(ToolError::handler(format!("Path not found: {}", path.display())));
             }
 
             let scanner = vest_scanner::files::FileScanner::new();
@@ -237,7 +241,7 @@ pub(crate) fn build_tool_registry(
                 &path,
                 &scanner.limits,
             )
-            .map_err(|e| format!("Failed to collect files: {}", e))?;
+            .map_err(|e| ToolError::handler(format!("Failed to collect files: {}", e)))?;
             if outcome.truncated {
                 tracing::warn!(
                     "file_scan traversal truncated: {:?}",
@@ -296,7 +300,7 @@ pub(crate) fn build_tool_registry(
             effect: ToolEffect::ProcessMemoryRead,
             egress_class: DataEgressClass::ProcessMemory,
         },
-        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let pid: u32 = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
             if !session_mem.allow_memory_simulation {
                 return Ok(serde_json::json!({
@@ -360,11 +364,11 @@ pub(crate) fn build_tool_registry(
             effect: ToolEffect::PassiveNetworkRequest,
             egress_class: DataEgressClass::TargetContent,
         },
-        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let url = args
                 .get("url")
                 .and_then(|v| v.as_str())
-                .ok_or("url parameter required")?;
+                .ok_or_else(|| ToolError::handler("url parameter required"))?;
             agent_http_get(&session_http_get, url)
         },
     );
@@ -379,11 +383,11 @@ pub(crate) fn build_tool_registry(
             effect: ToolEffect::StateChangingNetworkRequest,
             egress_class: DataEgressClass::TargetContent,
         },
-        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let url = args
                 .get("url")
                 .and_then(|v| v.as_str())
-                .ok_or("url parameter required")?;
+                .ok_or_else(|| ToolError::handler("url parameter required"))?;
             let data = args.get("data").cloned().unwrap_or(serde_json::json!({}));
             agent_http_post(&session_http_post, url, &data)
         },
@@ -399,11 +403,11 @@ pub(crate) fn build_tool_registry(
             effect: ToolEffect::LocalFileContentRead,
             egress_class: DataEgressClass::LocalContent,
         },
-        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let path = args
                 .get("path")
                 .and_then(|v| v.as_str())
-                .ok_or("path parameter required")?;
+                .ok_or_else(|| ToolError::handler("path parameter required"))?;
             agent_read_file(&session_read, path)
         },
     );
@@ -418,11 +422,11 @@ pub(crate) fn build_tool_registry(
             effect: ToolEffect::LocalMetadataRead,
             egress_class: DataEgressClass::LocalMetadata,
         },
-        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
             let resolved = resolve_tool_path(&session_list, path)?;
             let entries: Vec<String> = std::fs::read_dir(&resolved)
-                .map_err(|e| format!("Cannot read directory: {}", e))?
+                .map_err(|e| ToolError::handler(format!("Cannot read directory: {}", e)))?
                 .filter_map(|e| e.ok())
                 .map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
@@ -453,15 +457,16 @@ pub(crate) fn build_tool_registry(
             effect: ToolEffect::ActiveNetworkProbe,
             egress_class: DataEgressClass::TargetContent,
         },
-        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let url = args.get("url")
                 .and_then(|v| v.as_str())
-                .ok_or("url parameter required")?;
+                .ok_or_else(|| ToolError::handler("url parameter required"))?;
             authorise_tool_url(&session_browser, url)?;
             let handle = tokio::runtime::Handle::current();
             tokio::task::block_in_place(|| {
                 handle.block_on(vest_scanner::browser::BrowserScanner::inspect_page(url))
             })
+            .map_err(ToolError::from)
         },
     );
 
@@ -475,10 +480,10 @@ pub(crate) fn build_tool_registry(
             effect: ToolEffect::LocalFileContentRead,
             egress_class: DataEgressClass::PotentiallySecretBearing,
         },
-        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let content = args.get("content")
                 .and_then(|v| v.as_str())
-                .ok_or("content parameter required")?;
+                .ok_or_else(|| ToolError::handler("content parameter required"))?;
             let source = args.get("source")
                 .and_then(|v| v.as_str())
                 .unwrap_or("inline");

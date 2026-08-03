@@ -136,14 +136,15 @@ async fn agent_http_get_cross_origin_redirect_does_not_return_evil_body() {
     stop.store(true, Ordering::Relaxed);
     evil_stop.store(true, Ordering::Relaxed);
 
-    let err_l = err.to_lowercase();
+    let err_s = err.to_string();
+    let err_l = err_s.to_lowercase();
     assert!(
         err_l.contains("outside") || err_l.contains("origin") || err_l.contains("scope"),
-        "expected scope/origin denial, got: {err}"
+        "expected scope/origin denial, got: {err_s}"
     );
     assert!(
-        !err.contains("SECRET_SHOULD_NOT_BE_FETCHED"),
-        "error must not include evil body: {err}"
+        !err_s.contains("SECRET_SHOULD_NOT_BE_FETCHED"),
+        "error must not include evil body: {err_s}"
     );
 }
 
@@ -158,9 +159,10 @@ async fn agent_http_post_cross_origin_redirect_does_not_return_evil_body() {
     stop.store(true, Ordering::Relaxed);
     evil_stop.store(true, Ordering::Relaxed);
 
+    let err_s = err.to_string();
     assert!(
-        !err.contains("SECRET_SHOULD_NOT_BE_FETCHED"),
-        "error must not include evil body: {err}"
+        !err_s.contains("SECRET_SHOULD_NOT_BE_FETCHED"),
+        "error must not include evil body: {err_s}"
     );
 }
 
@@ -206,7 +208,9 @@ async fn web_scan_tool_passive_by_default_skips_env_git_probes() {
 }
 
 fn invoke_web_scan_with_retry(
-    handler: &Arc<dyn Fn(serde_json::Value) -> Result<serde_json::Value, String> + Send + Sync>,
+    handler: &Arc<
+        dyn Fn(serde_json::Value) -> Result<serde_json::Value, vest_agent::ToolError> + Send + Sync,
+    >,
     url: &str,
 ) -> serde_json::Value {
     let mut last_err = None;
@@ -218,7 +222,7 @@ fn invoke_web_scan_with_retry(
                 thread::sleep(Duration::from_millis(40));
             }
             Err(e) if attempt + 1 < 12 => {
-                last_err = Some(e);
+                last_err = Some(e.to_string());
                 thread::sleep(Duration::from_millis(40));
             }
             Err(e) => panic!("web_scan failed after retries: {e}"),
