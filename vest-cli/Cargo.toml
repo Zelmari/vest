@@ -31,6 +31,13 @@ vest-storage = { workspace = true }
 vest-report = { workspace = true }
 vest-tools = { workspace = true }
 
+[dev-dependencies]
+rusqlite.workspace = true
+chrono.workspace = true
+serde_json.workspace = true
+vest-core = { workspace = true }
+vest-storage = { workspace = true }
+
 [features]
 browser = []
 default = ["browser"]

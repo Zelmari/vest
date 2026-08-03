@@ -30,11 +30,11 @@ Standing non-claims (R1–R6) remain out of scope. Memory stays unsupported/simu
 - Reject resume of `completed` scans; optional target match if TARGET provided.
 
 ### Acceptance
-- [ ] Storage APIs + migration for checkpoints
-- [ ] Early `start_scan` + mid-scan persist + finalize update
-- [ ] `--resume` works; help shows the flag
-- [ ] Tests: storage checkpoint; CLI resume path; update soft-dead tests
-- [ ] Docs touch (README / product contract one-liner)
+- [x] Storage APIs + migration for checkpoints
+- [x] Early `start_scan` + mid-scan persist + finalize update
+- [x] `--resume` works; help shows the flag
+- [x] Tests: storage checkpoint; CLI resume path; update soft-dead tests
+- [x] Docs touch (README / product contract one-liner)
 
 ---
 
@@ -78,8 +78,9 @@ Standing non-claims (R1–R6) remain out of scope. Memory stays unsupported/simu
 
 ## Housekeeping (do first)
 
-- [ ] Harden `.gitignore` (SARIF/reports, agent debris, common secrets)
-- [ ] Remove GitHub `cursoragent` contributor: delete stale remote branch `product/real-world-hardening` (still has `Co-authored-by: Cursor`); verify `main` has zero co-author trailers; prune
+- [x] Harden `.gitignore` (SARIF/reports, agent debris, common secrets)
+- [x] Remove GitHub `cursoragent` contributor: delete stale remote branch `product/real-world-hardening` (still has `Co-authored-by: Cursor`); verify `main` has zero co-author trailers; prune
+  - Note: GitHub Insights may lag; local/remote refs no longer contain Cursor co-author trailers.
 
 ## Loop prompt
 

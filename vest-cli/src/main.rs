@@ -56,8 +56,11 @@ pub enum Commands {
 
 #[derive(Args)]
 pub struct ScanArgs {
-    /// Target to scan (URL, path, PID, host:port). Not required with `--list-profiles`.
-    #[arg(value_name = "TARGET", required_unless_present = "list_profiles")]
+    /// Target to scan (URL, path, PID, host:port). Not required with `--list-profiles` or `--resume`.
+    #[arg(
+        value_name = "TARGET",
+        required_unless_present_any = ["list_profiles", "resume"]
+    )]
     pub target: Option<String>,
 
     /// List known scan profiles from config (name + short note) and exit
@@ -126,8 +129,8 @@ pub struct ScanArgs {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Resume a previous scan (not implemented; hidden until checkpoint storage exists)
-    #[arg(long, hide = true, value_name = "SCAN_ID")]
+    /// Resume a previous incomplete scan by id (scanner-level checkpoints)
+    #[arg(long, value_name = "SCAN_ID")]
     pub resume: Option<String>,
 
     /// Target type (process, binary, web, network, browser, file)

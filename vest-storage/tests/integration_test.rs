@@ -285,14 +285,8 @@ mod integration_tests {
 
         checkpoints::upsert_scanner_checkpoint(&conn, "scan-cp", "files", "completed", None)
             .unwrap();
-        checkpoints::upsert_scanner_checkpoint(
-            &conn,
-            "scan-cp",
-            "web",
-            "failed",
-            Some("timeout"),
-        )
-        .unwrap();
+        checkpoints::upsert_scanner_checkpoint(&conn, "scan-cp", "web", "failed", Some("timeout"))
+            .unwrap();
         // Idempotent upsert
         checkpoints::upsert_scanner_checkpoint(&conn, "scan-cp", "files", "completed", None)
             .unwrap();

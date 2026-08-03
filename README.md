@@ -150,13 +150,16 @@ Historical snapshot (do not treat as current status): [docs/security-hardening-a
 
 ```text
 vest scan <TARGET>
+vest scan --resume <SCAN_ID>
 vest scan --list-profiles
 vest doctor
 vest config | providers | targets | scans | findings | report | tools | sandbox
 vest completions <bash|zsh|fish>
 ```
 
-Useful flags: `--scanner`, `--target-type`, `--provider`, `--offline` / `--no-ai`, `--mode`, `--profile`, `--list-profiles`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`, `--approve-writes`, `--approve-exploits`, `--approve-effect`, `--allow-active-probes`, `--confirm-active-probes`, `--fail-on-severity <level>`, `--fail-on-new`.
+Useful flags: `--scanner`, `--target-type`, `--provider`, `--offline` / `--no-ai`, `--mode`, `--profile`, `--list-profiles`, `--resume`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`, `--approve-writes`, `--approve-exploits`, `--approve-effect`, `--allow-active-probes`, `--confirm-active-probes`, `--fail-on-severity <level>`, `--fail-on-new`.
+
+Live scans create a `running` row and checkpoint after each successful scanner. If a scan is interrupted, `vest scan --resume <SCAN_ID>` continues remaining scanners (agent phase is not checkpointed). Completed scans cannot be resumed.
 
 When no provider is configured and `--provider` is omitted, the scan default is **`none`** (scanner-only). `--offline` and `--no-ai` force the same.
 

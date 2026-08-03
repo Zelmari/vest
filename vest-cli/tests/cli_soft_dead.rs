@@ -74,46 +74,8 @@ fn tools_install_unknown_exits_invalid_input() {
 }
 
 #[test]
-fn resume_flag_errors_unimplemented() {
-    let root = temp_root("dead-resume");
-    let vest_home = root.join("home");
-    let cfg = root.join("vest.toml");
-    let fixture = root.join("f.txt");
-    fs::create_dir_all(&vest_home).unwrap();
-    write_minimal_config(&cfg);
-    fs::write(&fixture, "password = \"x\"\n").unwrap();
-
-    let output = vest_cmd(&vest_home)
-        .arg("-c")
-        .arg(&cfg)
-        .arg("scan")
-        .arg(&fixture)
-        .arg("--target-type")
-        .arg("file")
-        .arg("--scanner")
-        .arg("files")
-        .arg("--provider")
-        .arg("none")
-        .arg("--resume")
-        .arg("some-scan-id")
-        .output()
-        .unwrap();
-
-    assert!(
-        !output.status.success(),
-        " --resume must not silently succeed\n{}",
-        combined(&output)
-    );
-    let text = combined(&output).to_lowercase();
-    assert!(
-        text.contains("not implemented") || text.contains("unimplemented"),
-        "expected unimplemented error, got:\n{}",
-        combined(&output)
-    );
-}
-#[test]
-fn resume_flag_hidden_from_scan_help() {
-    let root = temp_root("dead-resume-help");
+fn resume_flag_shown_in_scan_help() {
+    let root = temp_root("resume-help");
     let vest_home = root.join("home");
     fs::create_dir_all(&vest_home).unwrap();
 
@@ -130,8 +92,8 @@ fn resume_flag_hidden_from_scan_help() {
     );
     let help = combined(&output).to_lowercase();
     assert!(
-        !help.contains("--resume"),
-        "--resume must be hidden from clap help until resume is implemented:\n{}",
+        help.contains("--resume"),
+        "--resume should appear in scan help:\n{}",
         combined(&output)
     );
 }

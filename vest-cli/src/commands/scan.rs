@@ -40,12 +40,8 @@ pub async fn run(
         return print_known_profiles(config_path.as_ref());
     }
 
-    if let Some(ref scan_id) = args.resume {
-        // Scans are persisted only at finalize; SQLite has no resumable checkpoint.
-        return Err(VestError::Unsupported(format!(
-            "--resume is not implemented (no checkpoint for scan id '{scan_id}')"
-        ))
-        .into());
+    if let Some(scan_id) = args.resume.clone() {
+        return resume_scan(args, scan_id, config_path).await;
     }
 
     let target_display = args
@@ -272,6 +268,21 @@ pub async fn run(
         return Ok(());
     }
 
+    let scan_started_at = chrono::Utc::now();
+    let scan_id = start_running_scan(
+        &target,
+        scan_mode,
+        &provider_name,
+        &model,
+        &scanner_names,
+        scan_started_at,
+    )?;
+    ui_line!(
+        machine,
+        "\u{2502} Scan id:     {:<35} \u{2502}",
+        truncate_for_box(&scan_id, 35)
+    );
+
     let interactive = !args.no_approval && std::io::IsTerminal::is_terminal(&std::io::stdin());
     let session = ExecutionSession::new(fs_scope.clone(), net_scope.clone(), interactive)
         .with_memory_simulation(args.allow_memory_simulation)
@@ -300,6 +311,12 @@ pub async fn run(
         args.allow_memory_simulation,
         allow_active_probes,
         machine,
+        &BTreeSet::new(),
+        Vec::new(),
+        Some(CheckpointSink {
+            scan_id: &scan_id,
+            target_id: &target.id,
+        }),
     )
     .await?;
 
@@ -394,12 +411,14 @@ pub async fn run(
     let finalize_result = match finalize_scan(FinalizeScanInput {
         args: &args,
         target: &target,
+        scan_id: &scan_id,
         scan_mode,
         scan_status,
         provider_name: &provider_name,
         model: &model,
         scanner_names: &scanner_names,
         findings: findings.clone(),
+        started_at: scan_started_at,
         start,
     })
     .await
@@ -470,13 +489,20 @@ fn scanner_failure_error(errors: &[VestError]) -> VestError {
 struct FinalizeScanInput<'a> {
     args: &'a ScanArgs,
     target: &'a Target,
+    scan_id: &'a str,
     scan_mode: ScanMode,
     scan_status: ScanStatus,
     provider_name: &'a str,
     model: &'a str,
     scanner_names: &'a [String],
     findings: Vec<Finding>,
+    started_at: chrono::DateTime<chrono::Utc>,
     start: std::time::Instant,
+}
+
+struct CheckpointSink<'a> {
+    scan_id: &'a str,
+    target_id: &'a str,
 }
 
 fn parse_fail_on_severity(raw: Option<&str>) -> Result<Option<Severity>, VestError> {
@@ -619,12 +645,14 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<FinalizeScanResul
     let FinalizeScanInput {
         args,
         target,
+        scan_id,
         scan_mode,
         scan_status,
         provider_name,
         model,
         scanner_names,
         findings,
+        started_at,
         start,
     } = input;
     let machine = is_machine_format(&args.format);
@@ -641,8 +669,10 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<FinalizeScanResul
     );
 
     let (critical, high, medium, low, info) = severity_counts(&findings);
+    let completed_at = chrono::Utc::now();
+    let agent_model = (provider_name != "none").then(|| format!("{}/{}", provider_name, model));
     let scan_session = vest_core::types::ScanSession {
-        id: vest_core::ids::new_id(),
+        id: scan_id.to_string(),
         target_id: target.id.clone(),
         mode: scan_mode,
         config: serde_json::json!({
@@ -650,12 +680,10 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<FinalizeScanResul
             "model": model,
             "scanners": scanner_names,
         }),
-        status: scan_status,
-        agent_model: (provider_name != "none").then(|| format!("{}/{}", provider_name, model)),
-        started_at: Some(
-            chrono::Utc::now() - chrono::Duration::from_std(elapsed).unwrap_or_default(),
-        ),
-        completed_at: Some(chrono::Utc::now()),
+        status: scan_status.clone(),
+        agent_model: agent_model.clone(),
+        started_at: Some(started_at),
+        completed_at: Some(completed_at),
         duration_ms: Some(elapsed.as_millis() as i64),
         total_findings: findings.len() as u64,
         critical_count: critical as u64,
@@ -675,7 +703,7 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<FinalizeScanResul
                 "metadata": target.metadata,
             }
         }),
-        created_at: chrono::Utc::now(),
+        created_at: started_at,
     };
 
     let report = render_report(
@@ -703,33 +731,46 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<FinalizeScanResul
         ui_line!(machine, "\nReport saved to: {}", output_path);
     }
 
-    let db_path = get_db_path();
-    let pool = vest_storage::ConnectionPool::new(&db_path)
-        .map_err(|e| VestError::Storage(e.to_string()))?;
-    vest_storage::schema::run_migrations(pool.conn())
-        .map_err(|e| VestError::Storage(e.to_string()))?;
-
-    // Atomic persist: target + scan + findings commit together or not at all (STOR-3).
+    let pool = open_scan_db()?;
+    // Atomic finalize: replace findings with final set + update scan row (STOR-3).
     let tx = pool
         .conn()
         .unchecked_transaction()
         .map_err(|e| VestError::Storage(e.to_string()))?;
-    vest_storage::targets::insert_target(&tx, target)
-        .map_err(|e| VestError::Storage(e.to_string()))?;
-    vest_storage::scans::insert_scan(&tx, &scan_session)
-        .map_err(|e| VestError::Storage(e.to_string()))?;
+    tx.execute(
+        "DELETE FROM findings WHERE scan_id = ?1",
+        rusqlite::params![scan_id],
+    )
+    .map_err(|e| VestError::Storage(e.to_string()))?;
     for finding in &findings {
         let mut f = finding.clone();
-        f.scan_id = scan_session.id.clone();
+        f.scan_id = scan_id.to_string();
         f.target_id = target.id.clone();
         vest_storage::findings::insert_finding(&tx, &f)
             .map_err(|e| VestError::Storage(e.to_string()))?;
     }
+    vest_storage::scans::update_scan_finalize(
+        &tx,
+        scan_id,
+        &vest_storage::scans::ScanFinalizeUpdate {
+            status: &scan_status,
+            completed_at,
+            duration_ms: elapsed.as_millis() as i64,
+            total_findings: findings.len() as u64,
+            critical_count: critical as u64,
+            high_count: high as u64,
+            medium_count: medium as u64,
+            low_count: low as u64,
+            info_count: info as u64,
+            agent_model: agent_model.as_deref(),
+        },
+    )
+    .map_err(|e| VestError::Storage(e.to_string()))?;
     tx.commit().map_err(|e| VestError::Storage(e.to_string()))?;
 
     Ok(FinalizeScanResult {
         stored: findings.len(),
-        scan_id: scan_session.id,
+        scan_id: scan_id.to_string(),
     })
 }
 
@@ -743,12 +784,25 @@ async fn run_builtin_scanners(
     allow_memory_simulation: bool,
     allow_active_probes: bool,
     machine: bool,
+    skip: &BTreeSet<String>,
+    mut all_findings: Vec<Finding>,
+    checkpoint: Option<CheckpointSink<'_>>,
 ) -> Result<(Vec<Finding>, Vec<VestError>), VestError> {
-    let mut all_findings = Vec::new();
     let mut fatal_errors: Vec<VestError> = Vec::new();
     let mut ran_ok = 0usize;
 
     for scanner_name in scanner_names {
+        if skip.contains(scanner_name) {
+            ran_ok += 1;
+            ui_line!(
+                machine,
+                "\u{2502} {:<12} {:<28} \u{2502}",
+                scanner_name,
+                "skipped (checkpoint)"
+            );
+            continue;
+        }
+
         let result = match scanner_name.as_str() {
             "web" if config.scanner.web.enabled => {
                 let w = &config.scanner.web;
@@ -830,6 +884,9 @@ async fn run_builtin_scanners(
                     scanner_name,
                     format!("{} finding(s)", findings.len())
                 );
+                if let Some(ref sink) = checkpoint {
+                    persist_scanner_checkpoint(sink, scanner_name, &findings)?;
+                }
                 all_findings.append(&mut findings);
             }
             Err(e) => {
@@ -1349,6 +1406,390 @@ fn get_db_path() -> String {
     let dir = format!("{}/.vest", home);
     std::fs::create_dir_all(&dir).ok();
     format!("{}/vest.db", dir)
+}
+
+fn open_scan_db() -> Result<vest_storage::ConnectionPool, VestError> {
+    let db_path = get_db_path();
+    let pool = vest_storage::ConnectionPool::new(&db_path)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    vest_storage::schema::run_migrations(pool.conn())
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    Ok(pool)
+}
+
+fn start_running_scan(
+    target: &Target,
+    scan_mode: ScanMode,
+    provider_name: &str,
+    model: &str,
+    scanner_names: &[String],
+    started_at: chrono::DateTime<chrono::Utc>,
+) -> Result<String, VestError> {
+    let pool = open_scan_db()?;
+    let scan_id = vest_core::ids::new_id();
+    let scan_session = vest_core::types::ScanSession {
+        id: scan_id.clone(),
+        target_id: target.id.clone(),
+        mode: scan_mode,
+        config: serde_json::json!({
+            "provider": provider_name,
+            "model": model,
+            "scanners": scanner_names,
+        }),
+        status: ScanStatus::Running,
+        agent_model: (provider_name != "none").then(|| format!("{}/{}", provider_name, model)),
+        started_at: Some(started_at),
+        completed_at: None,
+        duration_ms: None,
+        total_findings: 0,
+        critical_count: 0,
+        high_count: 0,
+        medium_count: 0,
+        low_count: 0,
+        info_count: 0,
+        metadata: serde_json::json!({
+            "target": {
+                "id": target.id,
+                "name": target.name,
+                "type": target.target_type.to_string(),
+                "path": target.path,
+                "url": target.url_str,
+                "pid": target.pid,
+                "host": target.host,
+                "metadata": target.metadata,
+            }
+        }),
+        created_at: started_at,
+    };
+
+    let tx = pool
+        .conn()
+        .unchecked_transaction()
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    vest_storage::targets::insert_target(&tx, target)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    vest_storage::scans::insert_scan(&tx, &scan_session)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    tx.commit().map_err(|e| VestError::Storage(e.to_string()))?;
+    Ok(scan_id)
+}
+
+fn persist_scanner_checkpoint(
+    sink: &CheckpointSink<'_>,
+    scanner_name: &str,
+    findings: &[Finding],
+) -> Result<(), VestError> {
+    let pool = open_scan_db()?;
+    let tx = pool
+        .conn()
+        .unchecked_transaction()
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    for finding in findings {
+        let mut f = finding.clone();
+        f.scan_id = sink.scan_id.to_string();
+        f.target_id = sink.target_id.to_string();
+        vest_storage::findings::insert_finding(&tx, &f)
+            .map_err(|e| VestError::Storage(e.to_string()))?;
+    }
+    vest_storage::checkpoints::upsert_scanner_checkpoint(
+        &tx,
+        sink.scan_id,
+        scanner_name,
+        "completed",
+        None,
+    )
+    .map_err(|e| VestError::Storage(e.to_string()))?;
+    tx.commit().map_err(|e| VestError::Storage(e.to_string()))?;
+    Ok(())
+}
+
+async fn resume_scan(
+    mut args: ScanArgs,
+    scan_id: String,
+    config_path: impl AsRef<Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let machine = is_machine_format(&args.format);
+    ui_line!(machine, "\u{250c}{}\u{2510}", "\u{2500}".repeat(50));
+    ui_line!(machine, "\u{2502} {:^48} \u{2502}", "VEST SCAN RESUME");
+    ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+    ui_line!(
+        machine,
+        "\u{2502} Scan id:     {:<35} \u{2502}",
+        truncate_for_box(&scan_id, 35)
+    );
+
+    let pool = open_scan_db()?;
+    let scan = vest_storage::scans::get_scan(pool.conn(), &scan_id).map_err(|e| match e {
+        vest_storage::StorageError::NotFound(m) => VestError::InvalidInput(m),
+        other => VestError::Storage(other.to_string()),
+    })?;
+
+    match scan.status {
+        ScanStatus::Completed | ScanStatus::Cancelled => {
+            return Err(VestError::InvalidInput(format!(
+                "Scan '{scan_id}' is {} and cannot be resumed",
+                scan.status
+            ))
+            .into());
+        }
+        ScanStatus::Pending | ScanStatus::Running | ScanStatus::Paused | ScanStatus::Failed => {}
+    }
+
+    let target = vest_storage::targets::get_target(pool.conn(), &scan.target_id).map_err(|e| {
+        VestError::Storage(format!("Failed to load target for scan '{scan_id}': {e}"))
+    })?;
+
+    if args.target.is_some() {
+        let provided = detect_target(&args)?;
+        if !same_logical_target(&provided, &target) {
+            return Err(VestError::InvalidInput(
+                "TARGET does not match the target stored for this scan id".into(),
+            )
+            .into());
+        }
+    }
+
+    let config_path = config_path.as_ref();
+    let config = if config_path.exists() {
+        vest_config::load_config(config_path).map_err(|e| {
+            VestError::Config(format!(
+                "Failed to load config {}: {e}. Refusing silent defaults for a present file.",
+                config_path.display()
+            ))
+        })?
+    } else {
+        vest_config::default_config()
+    };
+
+    let profile = match args.profile.as_ref() {
+        None => None,
+        Some(name) => Some(config.profiles.get(name).ok_or_else(|| {
+            VestError::InvalidInput(format!(
+                "Unknown profile '{name}'. Define [profiles.{name}] in config or omit --profile."
+            ))
+        })?),
+    };
+
+    let provider_name = scan
+        .config
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("none")
+        .to_string();
+    let model = scan
+        .config
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("none")
+        .to_string();
+    let scanner_names: Vec<String> = scan
+        .config
+        .get("scanners")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if scanner_names.is_empty() {
+        return Err(VestError::InvalidInput(format!(
+            "Scan '{scan_id}' has no frozen scanner list to resume"
+        ))
+        .into());
+    }
+
+    let completed = vest_storage::checkpoints::list_completed_scanner_names(pool.conn(), &scan_id)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let skip: BTreeSet<String> = completed.into_iter().collect();
+    let existing_findings = vest_storage::findings::list_findings_by_scan(pool.conn(), &scan_id)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+
+    vest_storage::scans::update_scan_status(pool.conn(), &scan_id, &ScanStatus::Running)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+
+    ui_line!(
+        machine,
+        "\u{2502} Target:      {:<35} \u{2502}",
+        truncate_for_box(&target.name, 35)
+    );
+    ui_line!(
+        machine,
+        "\u{2502} Scanners:    {:<35} \u{2502}",
+        truncate_for_box(&scanner_names.join(", "), 35)
+    );
+    ui_line!(
+        machine,
+        "\u{2502} Completed:   {:<35} \u{2502}",
+        truncate_for_box(
+            &if skip.is_empty() {
+                "(none)".to_string()
+            } else {
+                skip.iter().cloned().collect::<Vec<_>>().join(", ")
+            },
+            35
+        )
+    );
+
+    let probes_allowed = args.allow_active_probes || config.scanner.web.allow_active_probes;
+    let probes_confirmed = args.confirm_active_probes || args.approve_exploits;
+    let allow_active_probes = probes_allowed && probes_confirmed;
+    let (fs_scope, net_scope) = scopes_from_target(&target);
+    let net_scope = net_scope.with_deny_private_targets(config.safety.deny_private_targets);
+    let fail_on_severity = parse_fail_on_severity(args.fail_on_severity.as_deref())?;
+
+    if args.dry_run {
+        ui_line!(
+            machine,
+            "\u{2502} {:^48} \u{2502}",
+            "DRY RUN - would resume remaining scanners"
+        );
+        ui_line!(machine, "\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+        return Ok(());
+    }
+
+    let interactive = !args.no_approval && std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let session = ExecutionSession::new(fs_scope.clone(), net_scope.clone(), interactive)
+        .with_memory_simulation(args.allow_memory_simulation)
+        .with_egress(
+            config.safety.allow_model_egress_local_content,
+            config.safety.allow_model_egress_process_memory,
+            config.safety.allow_model_egress_evidence,
+        )
+        .with_target_content_egress(config.safety.allow_model_egress_target_content)
+        .with_potentially_secret_bearing_egress(
+            config.safety.allow_model_egress_potentially_secret_bearing,
+        )
+        .into_arc();
+    args.include_evidence = args.include_evidence || config.general.include_report_evidence;
+    let registry = build_tool_registry(Arc::clone(&session), allow_active_probes);
+    let safety = build_safety(&args, &config, profile, Arc::clone(&session)).await?;
+
+    ui_line!(machine, "\u{2502} {:^48} \u{2502}", "Resuming scanners...");
+    ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+
+    let start = std::time::Instant::now();
+    let scan_started_at = scan.started_at.unwrap_or_else(chrono::Utc::now);
+    let (mut findings, scanner_fatals) = run_builtin_scanners(
+        &scanner_names,
+        &target,
+        &config,
+        args.allow_memory_simulation,
+        allow_active_probes,
+        machine,
+        &skip,
+        existing_findings,
+        Some(CheckpointSink {
+            scan_id: &scan_id,
+            target_id: &target.id,
+        }),
+    )
+    .await?;
+
+    let mut degraded: Option<VestError> = None;
+    if !scanner_fatals.is_empty() {
+        degraded = Some(scanner_failure_error(&scanner_fatals));
+    }
+
+    if provider_name == "none" {
+        ui_line!(
+            machine,
+            "\u{2502} {:^48} \u{2502}",
+            "Agent disabled; scanner-only scan"
+        );
+        for finding in &mut findings {
+            vest_agent::enrich_finding_heuristic(finding);
+        }
+    } else {
+        match crate::commands::providers::create_provider(&provider_name, &model, &config) {
+            Ok(provider) => {
+                let max_iterations = profile
+                    .and_then(|p| p.max_llm_iterations)
+                    .unwrap_or(config.agent.max_llm_iterations);
+                let orchestrator = vest_agent::Orchestrator::new(
+                    provider,
+                    Arc::new(registry),
+                    model.clone(),
+                    scan.mode,
+                    safety,
+                )
+                .with_max_iterations(max_iterations)
+                .with_initial_findings(findings.clone());
+                match orchestrator.run(&target).await {
+                    Ok(mut agent_findings) => {
+                        for finding in &mut agent_findings {
+                            mark_finding_source(finding, "agent", None);
+                        }
+                        findings = agent_findings;
+                    }
+                    Err(e) => {
+                        for finding in &mut findings {
+                            vest_agent::enrich_finding_heuristic(finding);
+                        }
+                        if degraded.is_none() {
+                            degraded = Some(provider_soft_error(e));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                if degraded.is_none() {
+                    degraded = Some(provider_soft_error(e));
+                }
+            }
+        }
+    }
+
+    dedupe_findings(&mut findings);
+    let scan_status = if degraded.is_some() {
+        ScanStatus::Failed
+    } else {
+        ScanStatus::Completed
+    };
+
+    let finalize_result = match finalize_scan(FinalizeScanInput {
+        args: &args,
+        target: &target,
+        scan_id: &scan_id,
+        scan_mode: scan.mode,
+        scan_status,
+        provider_name: &provider_name,
+        model: &model,
+        scanner_names: &scanner_names,
+        findings: findings.clone(),
+        started_at: scan_started_at,
+        start,
+    })
+    .await
+    {
+        Ok(result) => {
+            ui_line!(
+                machine,
+                "\u{2502} Stored:      {:<35} \u{2502}",
+                result.stored
+            );
+            result
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    if let Some(err) = degraded {
+        ui_line!(machine, "\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+        return Err(err.into());
+    }
+
+    if let Some(err) = evaluate_ci_gates(
+        fail_on_severity,
+        args.fail_on_new,
+        &target,
+        &finalize_result.scan_id,
+        &findings,
+    )? {
+        return Err(err.into());
+    }
+
+    ui_line!(machine, "\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+    Ok(())
 }
 
 #[cfg(test)]
