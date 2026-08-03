@@ -135,7 +135,7 @@ What is real today:
 What is **not** finished:
 
 - There is **no interactive approval prompt**. When policy returns `RequireInteractive`, the tool is denied. `--no-approval` means the same: do not prompt; deny approval-required ops.
-- Agent HTTP helpers in the CLI tool registry still use `ureq` directly in places; they are not fully migrated to `ScopedHttpClient`.
+- Agent `http_get` / `http_post` use `ScopedHttpClient` (redirect re-auth). `web_scan` goes through `WebScanner::inspect_url` with the same active-probe gating as CLI web scans.
 - DNS rebinding / connection-time IP binding is incomplete.
 - No `vest doctor` / `--offline` flag yet (`--provider none` is the offline-ish path).
 

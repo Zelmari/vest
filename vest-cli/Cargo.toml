@@ -20,7 +20,6 @@ rusqlite.workspace = true
 toml.workspace = true
 toml_edit.workspace = true
 chrono.workspace = true
-ureq = { workspace = true }
 
 vest-core = { workspace = true }
 vest-config = { workspace = true }

@@ -8,7 +8,8 @@ use vest_agent::{
 use vest_core::error::VestError;
 use vest_core::traits::{Reporter, Scanner};
 use vest_core::types::{Finding, ScanMode, ScanStatus, Severity, Target, TargetType};
-use vest_core::{DataEgressClass, ToolEffect};
+use vest_core::{truncate_chars, DataEgressClass, ToolEffect};
+use vest_scanner::{HttpClientBudgets, ScopedHttpClient};
 
 fn resolve_tool_path(session: &ExecutionSession, path: &str) -> Result<PathBuf, String> {
     resolve_read_path(&session.filesystem, Path::new(path))
@@ -21,6 +22,67 @@ fn authorise_tool_url(session: &ExecutionSession, url: &str) -> Result<(), Strin
         .authorise_url(url)
         .map(|_| ())
         .map_err(|e| format!("network scope: {e}"))
+}
+
+/// Build a [`ScopedHttpClient`] bound to the authorised origin of `url`.
+///
+/// Initial URL must pass the session network scope; redirects are re-authorised
+/// against that same origin by ScopedHttpClient (fail-closed on escape).
+fn scoped_client_for_url(
+    session: &ExecutionSession,
+    url: &str,
+    max_body_bytes: usize,
+) -> Result<ScopedHttpClient, String> {
+    let authorised = session
+        .network
+        .authorise_url(url)
+        .map_err(|e| format!("network scope: {e}"))?;
+    let scope = vest_scanner::web::NetworkScope::from_url(&authorised)
+        .map_err(|e| format!("network scope: {e}"))?;
+    let budgets = HttpClientBudgets {
+        max_body_bytes,
+        ..HttpClientBudgets::default()
+    };
+    ScopedHttpClient::try_new(scope, budgets).map_err(|e| e.to_string())
+}
+
+fn block_on_scoped<F, T>(fut: F) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, VestError>>,
+{
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::block_in_place(|| handle.block_on(fut)).map_err(|e| e.to_string())
+}
+
+/// Agent `http_get` implementation (session-scoped, redirect-safe).
+fn agent_http_get(session: &ExecutionSession, url: &str) -> Result<serde_json::Value, String> {
+    let client = scoped_client_for_url(session, url, 8_192)?;
+    let (status, body) = block_on_scoped(client.get_text(url))?;
+    let truncated = truncate_chars(&body, 8000);
+    Ok(serde_json::json!({
+        "status": status,
+        "url": url,
+        "body": truncated,
+        "body_size": body.len(),
+    }))
+}
+
+/// Agent `http_post` implementation (session-scoped, redirect-safe).
+fn agent_http_post(
+    session: &ExecutionSession,
+    url: &str,
+    data: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let client = scoped_client_for_url(session, url, 4_096)?;
+    let body_str = serde_json::to_string(data).map_err(|e| format!("Failed to serialize: {e}"))?;
+    let (status, body) = block_on_scoped(client.post_text(url, &body_str, "application/json"))?;
+    let truncated = truncate_chars(&body, 4000);
+    Ok(serde_json::json!({
+        "status": status,
+        "url": url,
+        "body": truncated,
+        "body_size": body.len(),
+    }))
 }
 
 pub async fn run(
@@ -143,7 +205,8 @@ pub async fn run(
             config.safety.allow_model_egress_evidence,
         )
         .into_arc();
-    let registry = build_tool_registry(Arc::clone(&session));
+    let allow_active_probes = args.allow_active_probes || config.scanner.web.allow_active_probes;
+    let registry = build_tool_registry(Arc::clone(&session), allow_active_probes);
     let safety = build_safety(&args, &config, Arc::clone(&session)).await;
 
     println!("\u{2502} {:^48} \u{2502}", "Running scan...");
@@ -605,7 +668,10 @@ fn truncate_for_box(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
 }
 
-fn build_tool_registry(session: Arc<ExecutionSession>) -> vest_agent::ToolRegistry {
+fn build_tool_registry(
+    session: Arc<ExecutionSession>,
+    allow_active_probes: bool,
+) -> vest_agent::ToolRegistry {
     let mut registry = vest_agent::ToolRegistry::new();
     let ro = vest_agent::context::RiskLevel::ReadOnly;
 
@@ -622,7 +688,7 @@ fn build_tool_registry(session: Arc<ExecutionSession>) -> vest_agent::ToolRegist
     registry.register(
         vest_agent::ToolDefinition {
             name: "web_scan".into(),
-            description: "Perform a comprehensive web vulnerability scan against a URL. Fetches the page, parses links and forms, checks for exposed resources (.env, .git, admin panels, backups), and runs misconfiguration detection (missing security headers, CORS, .git/.env exposure). Returns structured findings.".into(),
+            description: "Perform a web vulnerability scan against a URL via WebScanner. Fetches the page (redirect-safe), parses links and forms, and runs misconfiguration detection. Active exposure probes (.env/.git) run only when active probes are granted (config or --allow-active-probes).".into(),
             parameters: serde_json::json!({"url": "string"}),
             requires_approval: false,
             risk_level: ro,
@@ -630,70 +696,62 @@ fn build_tool_registry(session: Arc<ExecutionSession>) -> vest_agent::ToolRegist
             egress_class: DataEgressClass::TargetContent,
         },
         move |args: serde_json::Value| -> Result<serde_json::Value, String> {
-            let url = args.get("url")
+            let url = args
+                .get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
             authorise_tool_url(&session_web, url)?;
 
-            // Tool-use path: passive by default (no active vulnerability probes).
+            // Same gating as CLI web scan: default off unless config/flag opts in.
             let scanner = vest_scanner::web::WebScanner::new()
                 .with_crawl_depth(5)
                 .with_max_urls(100)
-                .with_allow_active_probes(false)
+                .with_allow_active_probes(allow_active_probes)
                 .with_respect_robots_txt(true);
 
-            let resp = ureq::get(url)
-                .header("User-Agent", "VEST/0.1")
-                .call()
-                .map_err(|e| format!("Failed to fetch page: {}", e))?;
-            let status = resp.status().as_u16();
-            let body = resp.into_body().read_to_string()
-                .map_err(|e| format!("Failed to read body: {}", e))?;
-
-            let links = scanner.parse_links(&body, url);
-            let forms = scanner.parse_forms(&body, url);
-
-            let page = vest_scanner::web::CrawledPage {
-                url: url.to_string(),
-                status,
-                body: Some(body.clone()),
-                headers: vec![],
-                links: links.clone(),
-                forms: forms.clone(),
-            };
-
             let handle = tokio::runtime::Handle::current();
-            let config_findings = tokio::task::block_in_place(|| {
-                handle.block_on(async { scanner.scan_misconfigurations(&page).await })
-            });
+            let (page, config_findings) = tokio::task::block_in_place(|| {
+                handle.block_on(async { scanner.inspect_url(url).await })
+            })
+            .map_err(|e| format!("web_scan failed: {e}"))?;
 
-            let mut exposed = Vec::new();
-            for check in &[".env", ".git/HEAD", "admin", "backup"] {
-                let check_url = format!("{}/{}", url.trim_end_matches('/'), check);
-                if let Ok(r) = ureq::get(&check_url).header("User-Agent", "VEST/0.1").call() {
-                    let s = r.status().as_u16();
-                    if s < 400 && s != 404 {
-                        exposed.push(format!("{} ({})", check_url, s));
-                    }
-                }
-            }
+            let links = page.links.clone();
+            let forms = page.forms.clone();
+            let exposed: Vec<String> = config_findings
+                .iter()
+                .filter(|f| {
+                    let t = f.title.to_lowercase();
+                    t.contains("exposed .env")
+                        || t.contains("exposed .git")
+                        || t.contains(".env file")
+                        || t.contains(".git directory")
+                })
+                .filter_map(|f| {
+                    f.evidence
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .map(|u| u.to_string())
+                })
+                .collect();
 
-            let finding_summaries: Vec<String> = config_findings.iter()
+            let finding_summaries: Vec<String> = config_findings
+                .iter()
                 .map(|f| format!("[{}] {}", f.severity.to_string().to_uppercase(), f.title))
                 .collect();
 
             Ok(serde_json::json!({
                 "url": url,
-                "status": status,
+                "status": page.status,
                 "links_found": links.len(),
                 "forms_found": forms.len(),
                 "forms": forms.iter().map(|f| serde_json::json!({
                     "action": f.action,
-                    "inputs": f.inputs.iter().map(|(n, t)| format!("{}:{}", n, t)).collect::<Vec<_>>()
+                    "inputs": f.inputs.iter().map(|(n, t)| format!("{n}:{t}")).collect::<Vec<_>>()
                 })).collect::<Vec<_>>(),
                 "exposed_resources": exposed,
                 "security_issues": finding_summaries,
                 "findings_count": config_findings.len(),
+                "active_probes": allow_active_probes,
                 "links": links.iter().take(30).collect::<Vec<_>>(),
             }))
         },
@@ -847,24 +905,11 @@ fn build_tool_registry(session: Arc<ExecutionSession>) -> vest_agent::ToolRegist
             egress_class: DataEgressClass::TargetContent,
         },
         move |args: serde_json::Value| -> Result<serde_json::Value, String> {
-            let url = args.get("url")
+            let url = args
+                .get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
-            authorise_tool_url(&session_http_get, url)?;
-            let resp = ureq::get(url)
-                .header("User-Agent", "VEST/0.1")
-                .call()
-                .map_err(|e| format!("HTTP request failed: {}", e))?;
-            let status = resp.status().as_u16();
-            let body = resp.into_body().read_to_string()
-                .map_err(|e| format!("Failed to read body: {}", e))?;
-            let truncated = &body[..body.len().min(8000)];
-            Ok(serde_json::json!({
-                "status": status,
-                "url": url,
-                "body": truncated,
-                "body_size": body.len(),
-            }))
+            agent_http_get(&session_http_get, url)
         },
     );
 
@@ -883,27 +928,8 @@ fn build_tool_registry(session: Arc<ExecutionSession>) -> vest_agent::ToolRegist
                 .get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
-            authorise_tool_url(&session_http_post, url)?;
             let data = args.get("data").cloned().unwrap_or(serde_json::json!({}));
-            let body_str =
-                serde_json::to_string(&data).map_err(|e| format!("Failed to serialize: {}", e))?;
-            let resp = ureq::post(url)
-                .header("User-Agent", "VEST/0.1")
-                .header("Content-Type", "application/json")
-                .send(&body_str)
-                .map_err(|e| format!("HTTP request failed: {}", e))?;
-            let status = resp.status().as_u16();
-            let body = resp
-                .into_body()
-                .read_to_string()
-                .map_err(|e| format!("Failed to read body: {}", e))?;
-            let truncated = &body[..body.len().min(4000)];
-            Ok(serde_json::json!({
-                "status": status,
-                "url": url,
-                "body": truncated,
-                "body_size": body.len(),
-            }))
+            agent_http_post(&session_http_post, url, &data)
         },
     );
 
@@ -1216,3 +1242,7 @@ fn get_db_path() -> String {
     std::fs::create_dir_all(&dir).ok();
     format!("{}/vest.db", dir)
 }
+
+#[cfg(test)]
+#[path = "agent_http_scoped_client.rs"]
+mod agent_http_scoped_client;

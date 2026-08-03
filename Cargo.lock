@@ -2669,7 +2669,6 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-subscriber",
- "ureq",
  "vest-agent",
  "vest-config",
  "vest-core",

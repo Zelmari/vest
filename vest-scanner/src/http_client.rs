@@ -77,20 +77,49 @@ impl ScopedHttpClient {
         self.request_text(Method::GET, url).await
     }
 
+    /// POST JSON with manual redirect handling and bounded body.
+    pub async fn post_text(
+        &self,
+        url: &str,
+        body: &str,
+        content_type: &str,
+    ) -> Result<(u16, String), VestError> {
+        self.request_with_body(Method::POST, url, Some(body), Some(content_type))
+            .await
+    }
+
     pub async fn request_text(
         &self,
         method: Method,
         url: &str,
+    ) -> Result<(u16, String), VestError> {
+        self.request_with_body(method, url, None, None).await
+    }
+
+    pub async fn request_with_body(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&str>,
+        content_type: Option<&str>,
     ) -> Result<(u16, String), VestError> {
         let mut current =
             Url::parse(url).map_err(|e| VestError::Config(format!("invalid URL: {e}")))?;
         self.authorise(&current)?;
 
         let mut redirects = 0u32;
+        let mut method = method;
+        let mut body = body.map(str::to_owned);
+        let content_type = content_type.map(str::to_owned);
         loop {
-            let response = self
-                .client
-                .request(method.clone(), current.clone())
+            let mut request = self.client.request(method.clone(), current.clone());
+            if let Some(ref ct) = content_type {
+                request = request.header(reqwest::header::CONTENT_TYPE, ct);
+            }
+            if let Some(ref b) = body {
+                request = request.body(b.clone());
+            }
+            let response = request
                 .send()
                 .await
                 .map_err(|e| VestError::Scan(format!("HTTP request failed: {e}")))?;
@@ -110,13 +139,16 @@ impl ScopedHttpClient {
                     .join(loc)
                     .map_err(|e| VestError::Scan(format!("bad redirect URL: {e}")))?;
                 self.authorise(&next)?;
+                // After a redirect, continue as GET without replaying the body.
+                method = Method::GET;
+                body = None;
                 current = next;
                 continue;
             }
 
             let status_code = status.as_u16();
-            let body = read_body_bounded(response, self.budgets.max_body_bytes).await?;
-            return Ok((status_code, body));
+            let text = read_body_bounded(response, self.budgets.max_body_bytes).await?;
+            return Ok((status_code, text));
         }
     }
 }

@@ -1075,6 +1075,20 @@ impl WebScanner {
         self.scan_misconfigurations_inner(page, None).await
     }
 
+    /// Fetch one in-scope page (redirect-safe) and run misconfiguration checks.
+    ///
+    /// Active exposure probes (`.env` / `.git`) run only when
+    /// [`Self::allow_active_probes`] is true. Intended for agent `web_scan`
+    /// so tools do not reimplement HTTP/probes outside this scanner.
+    pub async fn inspect_url(&self, url: &str) -> Result<(CrawledPage, Vec<Finding>), VestError> {
+        let start = Url::parse(url).map_err(|e| VestError::Config(format!("invalid URL: {e}")))?;
+        let scope = NetworkScope::from_url(&start)?;
+        let counter = AtomicUsize::new(0);
+        let page = self.fetch_page_scoped(&start, &scope, &counter).await?;
+        let findings = self.scan_misconfigurations_inner(&page, Some(&scope)).await;
+        Ok((page, findings))
+    }
+
     async fn scan_misconfigurations_inner(
         &self,
         page: &CrawledPage,

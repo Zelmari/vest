@@ -40,7 +40,8 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 |----|--------|----------|----------------|-------|--------|
 | K1 | **Fixed** | Was calling `SafetyChecker::permissive()` | `--no-approval` = non-interactive deny; no permissive path | CLI tests | `17d2232`+session |
 | K2 | **Open** | `RequireInteractive` → deny; no stdin prompt; `--approve-*` flips legacy booleans | Interactive prompt + opaque grant | acceptance 3–4 | pending |
-| K3 | **Open** | Agent tools use `ureq` in `scan.rs` | Migrate to ScopedHttpClient | web/agent tests | pending |
+| K3 | **Fixed** | Agent tools used `ureq` in `scan.rs` | `http_get`/`http_post` via `ScopedHttpClient`; redirect re-auth | `agent_http_scoped_client.rs` | (see clearance tip) |
+| K3b | **Fixed** | `web_scan` reimplemented probes via `ureq` | `WebScanner::inspect_url`; probes gated like CLI | `agent_http_scoped_client.rs` | (see clearance tip) |
 | K4 | **Partial** | LocalContent/ProcessMemory blocked; TargetContent may redact-only | Align filter_for_model with contract | egress tests | pending |
 | K5 | **Fixed** | Was forgeable `ApprovalDecision::Allow` | Opaque `ApprovedToolCall` | policy/approved tests | `1951cd2` |
 | K6 | **Fixed** | Was `DefaultHasher` on selected keys | SHA-256 over material args | policy tests | `1951cd2` |
@@ -76,7 +77,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 2 ExecutionSession | done | session.rs + CLI wiring |
 | 3 Interactive approval | **pending** | RequireInteractive still no prompt |
 | 4 Opaque capabilities | **done** | `ApprovedToolCall` + SHA-256 digests |
-| 5 ScopedHttpClient | **partial** | module + tests; agent ureq not migrated |
+| 5 ScopedHttpClient | **done** (agent tools) | agent `http_get`/`http_post` on ScopedHttpClient; WebScanner still has its own client (WEB-1) |
 | 6 Filesystem tools | pending | |
 | 7 Egress | pending | polish / TargetContent alignment |
 | 8 Config/.env | done | allowlist |
@@ -89,4 +90,4 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 - Process memory: simulation/unsupported only.
 - Regex redaction is best-effort.
 - No independent external audit.
-- CLI web active probes and agent `ureq` paths are the loudest remaining honesty gaps for operators.
+- Interactive approval (K2) and TargetContent egress (K4) remain the loudest operator-facing control-plane gaps.
