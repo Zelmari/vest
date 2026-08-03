@@ -2645,6 +2645,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "vest-agent",
  "vest-config",
  "vest-core",
  "vest-providers",
