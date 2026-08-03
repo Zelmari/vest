@@ -105,7 +105,7 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 | 37 | **CLI-SOFT** | Soft-ok subcommands (findings/config/tools) → proper exits | **Done** — findings missing / unknown config key / unknown tools → exit 2 | `cli_soft_dead.rs` |
 | 38 | **CLI-DEAD** | `--resume` / approve flags: implement or error “unimplemented” | **Done** — `--resume` errors unimplemented (approve flags already wired) | `cli_soft_dead.rs` |
 | 39 | **N2** | Re-verify config validate fail-closed → mark verified | **Done** — ledger N2 verified via `config_cli.rs` | `config_cli.rs` |
-| 40 | **ACCEPT-12/13** | Storage failure + cancellation acceptance | Scenarios green | CLI/agent |
+| 40 | **ACCEPT-12/13** | Storage failure + cancellation acceptance | **Done** — storage fail → exit 6; parallel drop cancels in-flight | `acceptance_storage_cancel.rs` + fallback cancel test |
 
 ---
 
@@ -122,6 +122,9 @@ Add/update as waves land (do not wait for all waves):
 | `vest-cli/tests/exit_codes_strict.rs` | K14 |
 | `vest-cli/tests/doctor_cli.rs` | N3 |
 | `vest-cli/tests/offline_cli.rs` | N4 |
+| `vest-cli/tests/cli_soft_dead.rs` | CLI-SOFT / CLI-DEAD |
+| `vest-cli/tests/acceptance_storage_cancel.rs` | ACCEPT-12 |
+| `vest-cli/tests/config_cli.rs` | N2 |
 | `vest-cli/tests/interactive_approval_cli.rs` | K2 (after UX) |
 | `vest-agent/tests/target_content_egress_tests.rs` | K4 |
 | `vest-agent/tests/interactive_approval_tests.rs` | K2 |
@@ -152,10 +155,10 @@ N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓
 → BRW-1 ✓ → N1 ✓ → K14 ✓ → CLI-EXIT-7 ✓ → CLI-PARTIAL ✓ → N4 ✓ → N3 ✓ → CFG-1 ✓
 → PROV-2 ✓ → PROV-3 ✓ → PROV-4 ✓ → STOR-1 ✓ → STOR-2 ✓ → STOR-3 ✓ → NUC-1 ✓ → K16 → REP-2 ✓
 → CLI-SANDBOX ✓ → HTTP-1 → WEB-1 → WEB-2 → R3-lite → BIN-1 → POL-2
-→ CLI-SOFT ✓ → CLI-DEAD ✓ → N2 ✓ → ACCEPT-12/13
+→ CLI-SOFT ✓ → CLI-DEAD ✓ → N2 ✓ → ACCEPT-12/13 ✓
 ```
 
-**Next open:** K16 (then HTTP-1…); ACCEPT-12/13 still open in wave 4.
+**Next open:** K16 (then HTTP-1…).
 
 **Progress tracking:** update the table in `docs/product-hardening-ledger.md` and the checkbox section below after each clear.
 
@@ -195,7 +198,7 @@ N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓
 - [ ] POL-2 permissive API hygiene
 - [x] CLI-SOFT / CLI-DEAD
 - [x] N2 verified
-- [ ] ACCEPT-12/13
+- [x] ACCEPT-12/13
 
 ---
 

@@ -366,10 +366,17 @@ mod tests {
             _messages: &[serde_json::Value],
             _model: &str,
         ) -> Result<String, VestError> {
+            // Clear `active` on cancel/drop as well as normal completion (ACCEPT-13).
+            struct ClearOnDrop(Arc<AtomicBool>);
+            impl Drop for ClearOnDrop {
+                fn drop(&mut self) {
+                    self.0.store(false, Ordering::SeqCst);
+                }
+            }
+            let _clear = ClearOnDrop(Arc::clone(&self.active));
             self.active.store(true, Ordering::SeqCst);
             self.started.notify_one();
             self.gate.notified().await;
-            self.active.store(false, Ordering::SeqCst);
             match &self.ok_response {
                 Some(s) => Ok(s.clone()),
                 None => Err(VestError::Provider(format!("{} failed", self.name))),
@@ -626,6 +633,49 @@ mod tests {
 
         let err = chain.chat(&[], "m").await.unwrap_err();
         assert!(matches!(err, VestError::Timeout(_)), "{err}");
+    }
+
+    /// ACCEPT-13: dropping the parallel chat future cancels in-flight providers.
+    #[tokio::test]
+    async fn test_parallel_drop_cancels_in_flight_provider() {
+        let gate = Arc::new(Notify::new());
+        let started = Arc::new(Notify::new());
+        let active = Arc::new(AtomicBool::new(false));
+        let hanging: Arc<dyn LlmProvider> = Arc::new(ControllableProvider {
+            name: "hang".into(),
+            started: Arc::clone(&started),
+            gate: Arc::clone(&gate),
+            ok_response: Some("never".into()),
+            active: Arc::clone(&active),
+        });
+
+        let chain = FallbackChain::new(FallbackStrategy::TryAllParallel)
+            .with_per_provider_timeout(None)
+            .with_providers(vec![("hang".into(), hanging)]);
+
+        let handle = tokio::spawn(async move {
+            let _ = chain.chat(&[], "m").await;
+        });
+
+        started.notified().await;
+        assert!(
+            active.load(Ordering::SeqCst),
+            "provider should be in-flight before cancel"
+        );
+
+        handle.abort();
+        let _ = handle.await;
+
+        tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                if !active.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping/aborting the chat future must cancel the in-flight provider");
     }
 
     #[tokio::test]

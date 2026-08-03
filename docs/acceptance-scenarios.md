@@ -16,8 +16,8 @@ Network: loopback only. Filesystem: temp dirs. Providers: fakes / `none`.
 | 9 | Budget exhaustion | file depth/size tests |
 | 10 | Unicode paths/bodies | `truncate_chars` + FS unicode |
 | 11 | Concurrent sessions | `ExecutionSession` unit test |
-| 12 | Storage failure | pending |
-| 13 | Cancellation | pending |
+| 12 | Storage failure | covered — `acceptance_storage_cancel.rs` (unwritable `VEST_HOME` / bad DB path → exit 6) |
+| 13 | Cancellation | covered (library) — `vest-providers` parallel fallback drop cancels in-flight provider |
 | 14 | Secret sentinels | egress + set-key tests |
 | 15 | Install smoke (`cargo install --path vest-cli`) | manual / CI |
 
