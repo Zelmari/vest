@@ -61,7 +61,7 @@ cargo run --release -p vest-cli -- scan http://127.0.0.1:5555 \
 
 ## Workspace layout
 
-Eleven crates. Dependency direction is downward; `vest-cli` is the binary.
+Ten workspace crates. Dependency direction is downward; `vest-cli` is the binary.
 
 | Crate | Role |
 |-------|------|
@@ -72,12 +72,11 @@ Eleven crates. Dependency direction is downward; `vest-cli` is the binary.
 | `vest-agent` | Orchestration patterns, policy engine, validator, model egress |
 | `vest-storage` | SQLite persistence |
 | `vest-report` | terminal / JSON / Markdown |
-| `vest-payloads` | Payload libraries |
 | `vest-tools` | External tools (e.g. nuclei) |
 | `vest-test-utils` | Shared test helpers |
 | `vest-cli` | `vest` CLI |
 
-Also: `examples/` (deliberately vulnerable targets), `docs/` (security model / policy / egress / audit), `sinks/` (binary catalogs), `vest.toml`.
+Also: `examples/` (deliberately vulnerable targets), `docs/` (security model / policy / egress / audit), `sinks/` (binary catalogs), `vest.toml`. The `vest-payloads/` directory remains on disk but is not a workspace member (orphaned; scanners use inline payload lists).
 
 ## Scan modes
 

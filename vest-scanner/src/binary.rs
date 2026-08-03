@@ -25,7 +25,7 @@ impl BinaryScanner {
         Self {
             name: "binary-scanner".into(),
             description:
-                "Scans binary files for vulnerabilities using goblin, capstone, and sink catalog matching"
+                "Scans binary files for vulnerabilities using goblin and sink catalog matching"
                     .into(),
             enabled: true,
             sink_catalogs: vec![],

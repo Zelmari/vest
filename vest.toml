@@ -81,7 +81,6 @@ hook_detection = true
 [scanner.binary]
 enabled = true
 sink_catalogs = ["sinks/c.txt", "sinks/cpp.txt", "sinks/rust.txt"]
-disassembler = "capstone"
 check_mitigations = true
 find_rop_gadgets = false
 max_file_size_mb = 256

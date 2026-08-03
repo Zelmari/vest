@@ -38,7 +38,7 @@
 |---|----|------|--------|
 | 15 | D1 | Extract agent tools out of `scan.rs` | done |
 | 16 | D2 | Typed tool errors (retire string handlers where practical) | pending |
-| 17 | D3 | Drop unused disasm deps or wire them; payloads crate triage | pending |
+| 17 | D3 | Drop unused disasm deps or wire them; payloads crate triage | done |
 
 ## Progress checkboxes
 
@@ -58,7 +58,7 @@
 - [x] C4 Profile discovery (`vest scan --list-profiles`; dry-run names selected profile)
 - [x] D1 Tool extraction
 - [ ] D2 Typed tool errors
-- [ ] D3 Dead deps/payloads
+- [x] D3 Dead deps/payloads (dropped unused capstone/iced-x86 + dead `disassembler` config; `vest-payloads` removed from workspace members, directory kept)
 
 ## Loop prompt
 

@@ -18,7 +18,7 @@ Date: 2026-08-02
 | Command | Result |
 |---------|--------|
 | `cargo fmt --all -- --check` | Pass |
-| `cargo check --workspace --all-targets` | Pass (requires non-sandbox for `capstone-sys` build) |
+| `cargo check --workspace --all-targets` | Pass |
 | `cargo test --workspace` | Pass (0 failures) |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Pass |
 

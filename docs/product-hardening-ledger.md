@@ -18,7 +18,8 @@ This file is the authoritative progress ledger. Status below is honest against w
 
 ## Workspace
 
-Members: vest-core, vest-cli, vest-config, vest-providers, vest-agent, vest-scanner, vest-storage, vest-report, vest-tools, vest-payloads, vest-test-utils.  
+Members: vest-core, vest-cli, vest-config, vest-providers, vest-agent, vest-scanner, vest-storage, vest-report, vest-tools, vest-test-utils.  
+(`vest-payloads/` exists on disk but is not a workspace member.)  
 Binary: `vest` (`vest-cli`). Feature: `browser` (default).
 
 ## Product use cases (summary)

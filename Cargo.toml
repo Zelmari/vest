@@ -9,7 +9,6 @@ members = [
     "vest-storage",
     "vest-report",
     "vest-tools",
-    "vest-payloads",
     "vest-test-utils",
 ]
 resolver = "2"
@@ -42,8 +41,6 @@ url = "2"
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 goblin = "0.9"
-capstone = "0.12"
-iced-x86 = "1"
 backon = "1"
 futures = "0.3"
 sha2 = "0.10"
@@ -58,7 +55,6 @@ vest-scanner = { path = "vest-scanner" }
 vest-storage = { path = "vest-storage" }
 vest-report = { path = "vest-report" }
 vest-tools = { path = "vest-tools" }
-vest-payloads = { path = "vest-payloads" }
 vest-test-utils = { path = "vest-test-utils" }
 
 [profile.release]

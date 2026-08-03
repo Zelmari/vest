@@ -190,8 +190,6 @@ pub struct BinaryScannerConfig {
     pub enabled: bool,
     #[serde(default)]
     pub sink_catalogs: Vec<String>,
-    #[serde(default = "default_disassembler")]
-    pub disassembler: String,
     #[serde(default = "default_true")]
     pub check_mitigations: bool,
     #[serde(default)]
@@ -199,10 +197,6 @@ pub struct BinaryScannerConfig {
     /// Per-file read/parse cap for binary scans (BIN-1). Default 256 MiB.
     #[serde(default = "default_binary_max_file_size_mb")]
     pub max_file_size_mb: u32,
-}
-
-fn default_disassembler() -> String {
-    "capstone".into()
 }
 
 fn default_binary_max_file_size_mb() -> u32 {
@@ -218,7 +212,6 @@ impl Default for BinaryScannerConfig {
                 "sinks/cpp.txt".into(),
                 "sinks/rust.txt".into(),
             ],
-            disassembler: "capstone".into(),
             check_mitigations: true,
             find_rop_gadgets: false,
             max_file_size_mb: default_binary_max_file_size_mb(),
