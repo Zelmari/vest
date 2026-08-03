@@ -9,7 +9,7 @@ on current `main`. It does not claim production-grade security or a complete san
 
 Authority comes only from explicit user intent for a command/session (target, config, CLI flags, session scopes). An LLM may propose tool calls and arguments; those proposals must be normalised and evaluated by the policy engine before any side effect or data egress.
 
-Interactive approval is **intended** but **not implemented as a prompt**. When policy requires interactive approval, Vest currently **denies** the call.
+Interactive approval is available as a **TTY one-shot Allow** when the session is interactive. Production CI should use exact CLI pre-grants (`--approve-writes` / `--approve-exploits` / `--approve-effect`). Non-TTY without grants and `--no-approval` deny.
 
 ## Trust principals
 
@@ -90,7 +90,7 @@ Vest must **not** be described as:
 - Guaranteed secret detection via regex
 - Complete SSRF / DNS-rebinding prevention without connection-time IP binding
 - Real process-memory forensics unless a platform-specific real reader is enabled and tested
-- A finished interactive-approval product (**K2** still open)
+- A full multi-step interactive-approval product (K2: exact pre-grants + TTY one-shot only)
 
 CLI web scanning **is** passive by default; active probes are opt-in (`scanner.web.allow_active_probes` or `--allow-active-probes`).
 

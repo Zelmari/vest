@@ -7,9 +7,9 @@ Network: loopback only. Filesystem: temp dirs. Providers: fakes / `none`.
 |---|----------|-------------------|
 | 1 | Local offline scan (`--provider none`) | `human_workflows` / `scan_cli` |
 | 2 | Passive local web scan | **partial / mismatched** — tests exist, but CLI web scan enables active probes today |
-| 3 | Interactive file-content approval | pending (no approval UI; currently deny) |
-| 4 | Interactive active web deny/allow | pending (no approval UI; currently deny) |
-| 5 | Non-interactive CI JSON, deny sensitive | partial (`--no-approval` fail-closed) |
+| 3 | Interactive file-content approval | **partial** — exact `--approve-effect local_file_content_read` pre-grant works; TTY one-shot prompt when interactive+TTY (not full multi-step UI) |
+| 4 | Interactive active web deny/allow | **partial** — `--approve-exploits` / `--approve-effect active_network_probe` pre-grant; TTY one-shot; non-TTY deny |
+| 5 | Non-interactive CI JSON, deny sensitive | covered (`--no-approval` fail-closed; `no_approval_cli`) |
 | 6 | Provider unavailable preserves findings | library validator tests |
 | 7 | Malformed provider response | validator unit tests |
 | 8 | Malformed project config | `config_cli` / `exit_codes` |
@@ -35,4 +35,4 @@ vest scan ... --no-approval --provider none -f json
 # stdout: JSON only; approval-required agent tools denied if agent path used
 ```
 
-Do not mark scenarios 3–4 as passing until a real prompt (or exact pre-auth grant path) exists and is tested.
+Scenarios 3–4: exact pre-auth grant path is tested; TTY one-shot exists but is not a full multi-step approval UI — keep status **partial**.

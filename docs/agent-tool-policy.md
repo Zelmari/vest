@@ -57,14 +57,23 @@ model proposes tool call
 
 In the tool-use pattern, every parsed tool call is evaluated regardless of that flag.
 
-## Interactive approval — current reality
+## Interactive approval / CLI pre-grants (K2)
 
-**There is no interactive approval prompt in the CLI today.**
+Exact **effect + session** pre-grants are the primary production path:
 
-- When policy returns `ApprovalDecision::RequireInteractive { .. }`, the call is **denied**.
-- `--no-approval` means: treat the session as non-interactive; deny approval-required ops. It does **not** install a permissive checker.
-- Broad category grants (`grant_approval("write")`) are intentionally no-ops and do not bypass policy.
-- Argument mutation produces a different digest and invalidates a prior token.
+- `--approve-writes` → `LocalWrite` for the session
+- `--approve-exploits` → `ActiveNetworkProbe`, `StateChangingNetworkRequest`, `CommandExecution`
+- `--approve-effect <snake_case>` (repeatable) → exact `ToolEffect` (e.g. `local_file_content_read`)
+- Grants never bypass filesystem/network scope checks and never imply a stronger effect.
+
+TTY one-shot prompt: when `interactive=true` (stdin is a TTY and not `--no-approval`) and policy returns `RequireInteractive`, Vest may prompt `Allow once? [y/N]` on stderr and mint a one-shot `ApprovalToken` on yes.
+
+Fail-closed:
+
+- `--no-approval` → non-interactive deny; conflicts with approve flags; not a permissive bypass
+- Non-TTY without approve flags → deny (no prompt)
+- Broad string `grant_approval("write")` remains a no-op; use effect/session grants
+- Argument mutation invalidates exact call tokens (digest mismatch)
 
 ## Authorisation context
 

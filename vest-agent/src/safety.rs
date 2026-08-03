@@ -133,7 +133,12 @@ impl SafetyChecker {
             ApprovalDecision::RequireInteractive { reason } => {
                 // Non-interactive fail-closed surfaces as denial unless caller grants.
                 if auth.interactive {
-                    Ok(false)
+                    if crate::interactive_approval::prompt_tty_one_shot_allow(call, &reason) {
+                        self.policy.grant_sync(&auth, call, true);
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
                 } else {
                     Err(VestError::ApprovalDenied(reason))
                 }
@@ -191,6 +196,12 @@ impl SafetyChecker {
     pub async fn grant_approval_for(&self, call: &NormalisedToolCall) {
         let auth = self.auth.read().await.clone();
         self.policy.grant(&auth, call, false).await;
+    }
+
+    /// Mint a session-scoped effect grant for the current auth session.
+    pub async fn grant_effect_session(&self, effect: ToolEffect) {
+        let session_id = self.auth.read().await.session_id.clone();
+        self.policy.grant_effect_session(&session_id, effect).await;
     }
 
     /// Legacy broad category grant — intentionally a no-op (does not bypass policy).

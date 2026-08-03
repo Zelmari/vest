@@ -3,6 +3,7 @@ pub mod approved;
 pub mod context;
 pub mod egress;
 pub mod fs_scope;
+pub mod interactive_approval;
 pub mod memory;
 pub mod net_scope;
 pub mod orchestrator;
@@ -26,7 +27,10 @@ pub use memory::AgentMemory;
 pub use net_scope::{ApprovedNetworkScope, NetScopeError, NetworkOrigin};
 pub use orchestrator::Orchestrator;
 pub use planner::Planner;
-pub use policy::{ApprovalToken, AuthorisationContext, NormalisedToolCall, PolicyEngine};
+pub use policy::{
+    cli_pregrant_effects, ApprovalToken, AuthorisationContext, EffectSessionGrant,
+    NormalisedToolCall, PolicyEngine,
+};
 pub use safety::{explicit_effect_for_tool, SafetyChecker, SafetyConfig};
 pub use session::ExecutionSession;
 pub use tool_registry::ToolRegistry;

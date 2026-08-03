@@ -1,6 +1,7 @@
 use crate::approved::ApprovedToolCall;
 use crate::context::ToolDefinition;
 use crate::egress::{classify_tool_result, filter_for_model};
+use crate::interactive_approval::prompt_tty_one_shot_allow;
 use crate::policy::{AuthorisationContext, NormalisedToolCall, PolicyEngine};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -108,9 +109,26 @@ impl ToolRegistry {
             tool.definition.egress_class,
             &args,
         );
-        let approval = policy
-            .authorise(ctx, &call)
-            .map_err(|decision| format_authorise_denial(name, &decision))?;
+        let approval = match policy.authorise(ctx, &call) {
+            Ok(cap) => cap,
+            Err(ApprovalDecision::RequireInteractive { reason }) if ctx.interactive => {
+                if prompt_tty_one_shot_allow(&call, &reason) {
+                    policy.grant_sync(ctx, &call, true);
+                    policy.authorise(ctx, &call).map_err(|decision| {
+                        format_authorise_denial(name, &decision, ctx.interactive)
+                    })?
+                } else {
+                    return Err(format_authorise_denial(
+                        name,
+                        &ApprovalDecision::RequireInteractive { reason },
+                        ctx.interactive,
+                    ));
+                }
+            }
+            Err(decision) => {
+                return Err(format_authorise_denial(name, &decision, ctx.interactive));
+            }
+        };
         self.execute_authorised(name, args, &approval, ctx)
     }
 
@@ -133,13 +151,17 @@ impl Default for ToolRegistry {
     }
 }
 
-fn format_authorise_denial(name: &str, decision: &ApprovalDecision) -> String {
+fn format_authorise_denial(name: &str, decision: &ApprovalDecision, interactive: bool) -> String {
     match decision {
         ApprovalDecision::Deny { reason } => {
             format!("policy denied '{name}': {reason}")
         }
         ApprovalDecision::RequireInteractive { reason } => {
-            format!("policy requires interactive approval for '{name}': {reason}")
+            if interactive {
+                format!("policy requires interactive approval for '{name}': {reason}")
+            } else {
+                format!("policy denied '{name}': approval required (non-interactive): {reason}")
+            }
         }
         ApprovalDecision::Allow => {
             format!("policy denied '{name}': unexpected Allow without capability")

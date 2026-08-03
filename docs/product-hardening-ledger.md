@@ -39,7 +39,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | ID | Status | Evidence | Planned / done | Tests | Commit |
 |----|--------|----------|----------------|-------|--------|
 | K1 | **Fixed** | Was calling `SafetyChecker::permissive()` | `--no-approval` = non-interactive deny; no permissive path | CLI tests | `17d2232`+session |
-| K2 | **Open** | `RequireInteractive` → deny; no stdin prompt; `--approve-*` flips legacy booleans | Interactive prompt + opaque grant | acceptance 3–4 | pending |
+| K2 | **Fixed** | Was deny-only; `--approve-*` discarded | Effect+session grants + TTY one-shot prompt | `interactive_approval_tests` + `no_approval_cli` | (this commit) |
 | K3 | **Fixed** | Agent tools used `ureq` in `scan.rs` | `http_get`/`http_post` via `ScopedHttpClient`; redirect re-auth | `agent_http_scoped_client.rs` | `5a5fc2c` |
 | K3b | **Fixed** | `web_scan` reimplemented probes via `ureq` | `WebScanner::inspect_url`; probes gated like CLI | `agent_http_scoped_client.rs` | `5a5fc2c` |
 | K4 | **Fixed** | TargetContent/PotentiallySecretBearing were redact-only | Default stub/metadata; flags for opt-in egress | `target_content_egress_tests.rs` | `dbd5e0c` |
@@ -81,7 +81,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 0 Baseline | done | ledger + baseline check/fmt |
 | 1 Product contract | done | docs; honesty pass ongoing |
 | 2 ExecutionSession | done | session.rs + CLI wiring |
-| 3 Interactive approval | **pending** | RequireInteractive still no prompt |
+| 3 Interactive approval | **done** (pragmatic) | Exact CLI pre-grants + TTY one-shot; non-TTY/`--no-approval` deny |
 | 4 Opaque capabilities | **done** | `ApprovedToolCall` + SHA-256 digests; K5b hot path unified |
 | 5 ScopedHttpClient | **done** (agent tools) | agent `http_get`/`http_post` on ScopedHttpClient; WebScanner still has its own client (WEB-1) |
 | 6 Filesystem tools | pending | |
@@ -96,4 +96,4 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 - Process memory: simulation/unsupported only.
 - Regex redaction is best-effort.
 - No independent external audit.
-- Interactive approval (K2) remains the loudest operator-facing control-plane gap.
+- Full multi-step interactive approval UX is still minimal (TTY one-shot + exact CLI pre-grants cover K2).

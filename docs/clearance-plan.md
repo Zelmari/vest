@@ -2,7 +2,7 @@
 
 **Branch:** `main` only (no feature branches)  
 **Baseline tip when plan written:** `fe1d041`  
-**Last cleared:** BRW-1 @ `04c161e`  
+**Last cleared:** K2 @ (pending commit)
 **Method:** Clear items one-by-one; each item gets code + regression tests + ledger update; keep CI green.  
 **Living suite:** extend tests as behaviour changes (see Wave T).  
 **Loop:** agent clearance loop continues until the open queue is empty and CI is green.
@@ -164,7 +164,7 @@ N5 → K3 → K3b → REP-1 → PROV-1 → K4 → K2 → K5b → K8 → POL-1 �
 - [x] REP-1 report secret redaction
 - [x] PROV-1 Google key not in URL
 - [x] K4 TargetContent egress gate
-- [ ] K2 interactive / exact grants
+- [x] K2 interactive / exact grants
 - [x] K5b authorise→execute_authorised→filter
 - [x] K8 bounded read_file
 - [x] POL-1 material target fail-closed

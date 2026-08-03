@@ -249,8 +249,58 @@ impl ApprovalToken {
     }
 }
 
+/// Session-scoped effect grant (CLI `--approve-*` / exact effect pre-grant).
+///
+/// Does not bind tool id, target, or args — only effect + session + TTL.
+/// Scope checks still run before this grant is consulted.
+#[derive(Debug, Clone)]
+pub struct EffectSessionGrant {
+    pub effect: ToolEffect,
+    pub session_id: String,
+    pub expires_at: Instant,
+}
+
+impl EffectSessionGrant {
+    pub fn matches(&self, effect: ToolEffect, session_id: &str) -> bool {
+        self.session_id == session_id && self.effect == effect && Instant::now() < self.expires_at
+    }
+
+    pub fn cache_key(&self) -> String {
+        format!("{}|{}", self.effect, self.session_id)
+    }
+}
+
+/// Map CLI approve flags to exact [`ToolEffect`] values for session grants.
+///
+/// Skips [`ToolEffect::Unknown`] and deduplicates.
+pub fn cli_pregrant_effects(
+    approve_writes: bool,
+    approve_exploits: bool,
+    approve_effect: &[ToolEffect],
+) -> Vec<ToolEffect> {
+    let mut out = Vec::new();
+    if approve_writes {
+        out.push(ToolEffect::LocalWrite);
+    }
+    if approve_exploits {
+        out.push(ToolEffect::ActiveNetworkProbe);
+        out.push(ToolEffect::StateChangingNetworkRequest);
+        out.push(ToolEffect::CommandExecution);
+    }
+    for effect in approve_effect {
+        if effect.is_unknown() {
+            continue;
+        }
+        if !out.contains(effect) {
+            out.push(*effect);
+        }
+    }
+    out
+}
+
 pub struct PolicyEngine {
     approvals: RwLock<HashMap<String, ApprovalToken>>,
+    effect_grants: RwLock<HashMap<String, EffectSessionGrant>>,
     default_ttl: Duration,
 }
 
@@ -258,6 +308,7 @@ impl PolicyEngine {
     pub fn new() -> Self {
         Self {
             approvals: RwLock::new(HashMap::new()),
+            effect_grants: RwLock::new(HashMap::new()),
             default_ttl: Duration::from_secs(300),
         }
     }
@@ -320,6 +371,10 @@ impl PolicyEngine {
             return ApprovalDecision::Allow;
         }
 
+        if self.has_effect_session_grant(ctx, call.effect) {
+            return ApprovalDecision::Allow;
+        }
+
         if ctx.permissive_effects {
             return ApprovalDecision::Allow;
         }
@@ -370,13 +425,20 @@ impl PolicyEngine {
             .cloned()
     }
 
-    pub async fn grant(
+    fn has_effect_session_grant(&self, ctx: &AuthorisationContext, effect: ToolEffect) -> bool {
+        let Ok(guard) = self.effect_grants.try_read() else {
+            return false;
+        };
+        guard.values().any(|g| g.matches(effect, &ctx.session_id))
+    }
+
+    fn make_token(
         &self,
         ctx: &AuthorisationContext,
         call: &NormalisedToolCall,
         one_shot: bool,
-    ) {
-        let token = ApprovalToken {
+    ) -> ApprovalToken {
+        ApprovalToken {
             tool_id: call.tool_id.clone(),
             effect: call.effect,
             normalised_target: call.normalised_target.clone(),
@@ -384,13 +446,66 @@ impl PolicyEngine {
             session_id: ctx.session_id.clone(),
             expires_at: Instant::now() + self.default_ttl,
             one_shot,
-        };
+        }
+    }
+
+    pub async fn grant(
+        &self,
+        ctx: &AuthorisationContext,
+        call: &NormalisedToolCall,
+        one_shot: bool,
+    ) {
+        let token = self.make_token(ctx, call, one_shot);
         let key = token.cache_key();
         self.approvals.write().await.insert(key, token);
     }
 
+    /// Synchronous exact-call grant for TTY one-shot approval paths.
+    pub fn grant_sync(
+        &self,
+        ctx: &AuthorisationContext,
+        call: &NormalisedToolCall,
+        one_shot: bool,
+    ) {
+        let token = self.make_token(ctx, call, one_shot);
+        let key = token.cache_key();
+        if let Ok(mut guard) = self.approvals.try_write() {
+            guard.insert(key, token);
+        }
+    }
+
+    pub async fn grant_effect_session(&self, session_id: &str, effect: ToolEffect) {
+        if effect.is_unknown() {
+            return;
+        }
+        let grant = EffectSessionGrant {
+            effect,
+            session_id: session_id.to_string(),
+            expires_at: Instant::now() + self.default_ttl,
+        };
+        let key = grant.cache_key();
+        self.effect_grants.write().await.insert(key, grant);
+    }
+
+    /// Synchronous effect+session grant (tests / sync CLI wiring helpers).
+    pub fn grant_effect_session_sync(&self, session_id: &str, effect: ToolEffect) {
+        if effect.is_unknown() {
+            return;
+        }
+        let grant = EffectSessionGrant {
+            effect,
+            session_id: session_id.to_string(),
+            expires_at: Instant::now() + self.default_ttl,
+        };
+        let key = grant.cache_key();
+        if let Ok(mut guard) = self.effect_grants.try_write() {
+            guard.insert(key, grant);
+        }
+    }
+
     pub async fn clear(&self) {
         self.approvals.write().await.clear();
+        self.effect_grants.write().await.clear();
     }
 
     /// Evaluate policy and, if allowed, mint an opaque [`ApprovedToolCall`].
@@ -474,6 +589,73 @@ mod tests {
             engine.evaluate(&ctx, &c),
             ApprovalDecision::Deny { .. }
         ));
+    }
+
+    #[test]
+    fn effect_session_grant_allows_previously_denied_write() {
+        let engine = PolicyEngine::new();
+        let mut ctx = AuthorisationContext::new("s1").with_interactive(false);
+        ctx.filesystem = ApprovedFilesystemScope::unrestricted();
+        let c = call(
+            "write_file",
+            ToolEffect::LocalWrite,
+            serde_json::json!({"path": "/tmp/a", "content": "x"}),
+        );
+        assert!(matches!(
+            engine.evaluate(&ctx, &c),
+            ApprovalDecision::Deny { .. }
+        ));
+        engine.grant_effect_session_sync("s1", ToolEffect::LocalWrite);
+        assert!(engine.evaluate(&ctx, &c).is_allow());
+    }
+
+    #[test]
+    fn effect_session_grant_is_session_scoped() {
+        let engine = PolicyEngine::new();
+        let mut ctx_a = AuthorisationContext::new("sess-a").with_interactive(false);
+        ctx_a.filesystem = ApprovedFilesystemScope::unrestricted();
+        let mut ctx_b = AuthorisationContext::new("sess-b").with_interactive(false);
+        ctx_b.filesystem = ApprovedFilesystemScope::unrestricted();
+        let c = call(
+            "write_file",
+            ToolEffect::LocalWrite,
+            serde_json::json!({"path": "/tmp/a", "content": "x"}),
+        );
+        engine.grant_effect_session_sync("sess-a", ToolEffect::LocalWrite);
+        assert!(engine.evaluate(&ctx_a, &c).is_allow());
+        assert!(matches!(
+            engine.evaluate(&ctx_b, &c),
+            ApprovalDecision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn cli_pregrant_effects_mapping() {
+        assert_eq!(
+            cli_pregrant_effects(true, false, &[]),
+            vec![ToolEffect::LocalWrite]
+        );
+        assert_eq!(
+            cli_pregrant_effects(false, true, &[]),
+            vec![
+                ToolEffect::ActiveNetworkProbe,
+                ToolEffect::StateChangingNetworkRequest,
+                ToolEffect::CommandExecution,
+            ]
+        );
+        let mixed = cli_pregrant_effects(
+            true,
+            false,
+            &[
+                ToolEffect::LocalWrite,
+                ToolEffect::Unknown,
+                ToolEffect::LocalFileContentRead,
+            ],
+        );
+        assert_eq!(
+            mixed,
+            vec![ToolEffect::LocalWrite, ToolEffect::LocalFileContentRead]
+        );
     }
 
     #[test]

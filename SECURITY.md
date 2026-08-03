@@ -14,7 +14,7 @@ We will acknowledge reports as capacity allows. This is an experimental project;
 
 Vest treats **model output as untrusted data**. Authority comes from explicit user intent (CLI flags, config, session scopes), not from LLM proposals.
 
-There is currently **no interactive approval UI**. When a tool needs interactive approval, Vest **denies** the call (`RequireInteractive` → deny). `--no-approval` means the same fail-closed behaviour: do not prompt; deny approval-required ops. It is not a permissive bypass.
+Approval-required tools need an exact CLI pre-grant (`--approve-writes` / `--approve-exploits` / `--approve-effect`) or a TTY one-shot Allow when interactive. Non-TTY without grants and `--no-approval` deny approval-required ops (fail closed; not a permissive bypass).
 
 Read the full trust and boundary model:
 
@@ -31,6 +31,6 @@ Vest is **experimental**. Do not treat it as:
 - An OS-level sandbox for agent tools (optional Docker helpers are convenience only)
 - A complete secret-detection or SSRF-prevention product
 - Real process-memory forensics unless a platform-specific real reader is implemented, enabled, and tested
-- A finished interactive approval product (policy currently denies when interactive approval would be required)
+- A full multi-step interactive approval product (K2 provides exact CLI pre-grants + TTY one-shot only)
 
 CLI web scanning **is** passive by default; active probes require config or `--allow-active-probes`. Remaining gaps: [docs/clearance-plan.md](docs/clearance-plan.md).

@@ -137,7 +137,7 @@ What is real today:
 
 What is **not** finished:
 
-- There is **no interactive approval prompt**. When policy returns `RequireInteractive`, the tool is denied. `--no-approval` means the same: do not prompt; deny approval-required ops (**K2**).
+- Approval-required tools need an exact CLI pre-grant (`--approve-writes` / `--approve-exploits` / `--approve-effect`) or a TTY one-shot Allow. Non-TTY without grants and `--no-approval` deny (**K2**).
 - `WebScanner` is not yet fully on `ScopedHttpClient` (**WEB-1**).
 - DNS rebinding / connection-time IP binding is incomplete.
 - No `vest doctor` / `--offline` flag yet (`--provider none` is the offline-ish path).
@@ -154,9 +154,9 @@ vest config | providers | targets | scans | findings | report | tools | sandbox
 vest completions <bash|zsh|fish>
 ```
 
-Useful flags: `--scanner`, `--target-type`, `--provider`, `--mode`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`.
+Useful flags: `--scanner`, `--target-type`, `--provider`, `--mode`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`, `--approve-writes`, `--approve-exploits`, `--approve-effect`.
 
-`--no-approval` means **do not prompt; deny approval-required operations**. It is not “allow everything.”
+`--no-approval` means **do not prompt; deny approval-required operations**. It is not “allow everything.” Approve flags mint effect+session grants (scopes still apply).
 
 Exit codes (approximate): `0` ok · `2` bad input · `3` config · `4` authorisation · `5` scanner · `6` persistence · `7` soft provider failure. Typed `VestError::cli_exit_code()` is preferred; some paths still fall back to legacy string matching.
 

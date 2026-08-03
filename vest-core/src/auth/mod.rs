@@ -103,6 +103,31 @@ impl fmt::Display for ToolEffect {
     }
 }
 
+impl std::str::FromStr for ToolEffect {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pure_computation" => Ok(ToolEffect::PureComputation),
+            "local_metadata_read" => Ok(ToolEffect::LocalMetadataRead),
+            "local_file_content_read" => Ok(ToolEffect::LocalFileContentRead),
+            "local_write" => Ok(ToolEffect::LocalWrite),
+            "network_metadata_read" => Ok(ToolEffect::NetworkMetadataRead),
+            "passive_network_request" => Ok(ToolEffect::PassiveNetworkRequest),
+            "active_network_probe" => Ok(ToolEffect::ActiveNetworkProbe),
+            "state_changing_network_request" => Ok(ToolEffect::StateChangingNetworkRequest),
+            "process_metadata_read" => Ok(ToolEffect::ProcessMetadataRead),
+            "process_memory_read" => Ok(ToolEffect::ProcessMemoryRead),
+            "command_execution" => Ok(ToolEffect::CommandExecution),
+            "credential_access" => Ok(ToolEffect::CredentialAccess),
+            "unknown" => Ok(ToolEffect::Unknown),
+            other => Err(format!(
+                "unknown tool effect '{other}' (expected snake_case ToolEffect name)"
+            )),
+        }
+    }
+}
+
 /// Classification of data that may leave the process toward a model or remote party.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -239,5 +264,19 @@ mod tests {
         assert!(DataEgressClass::LocalContent.requires_explicit_egress_approval());
         assert!(DataEgressClass::ProcessMemory.requires_explicit_egress_approval());
         assert!(!DataEgressClass::LocalMetadata.requires_explicit_egress_approval());
+    }
+
+    #[test]
+    fn tool_effect_from_str_roundtrips_display() {
+        for effect in [
+            ToolEffect::LocalWrite,
+            ToolEffect::LocalFileContentRead,
+            ToolEffect::ActiveNetworkProbe,
+            ToolEffect::CommandExecution,
+        ] {
+            let parsed: ToolEffect = effect.to_string().parse().unwrap();
+            assert_eq!(parsed, effect);
+        }
+        assert!("not_an_effect".parse::<ToolEffect>().is_err());
     }
 }

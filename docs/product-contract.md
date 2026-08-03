@@ -42,9 +42,10 @@ Remaining related work: `WebScanner` not fully on `ScopedHttpClient` (**WEB-1**)
 - Non-destructive, budgeted, same-origin only.
 - Audit what was attempted.
 
-**Actual today:** active probes are a distinct `ToolEffect`, but there is **no
-interactive approval prompt**. Policy `RequireInteractive` → deny. When probes
-are opted in (config/flag), they still run without a separate approval step.
+**Actual today:** active probes are a distinct `ToolEffect`. Operator can
+pre-grant via `--approve-exploits` / `--approve-effect active_network_probe`, or
+allow once on a TTY. Non-TTY without grants → deny. Builtin scanner probes
+opted in via config/flag still run without a separate approval step.
 
 ### D — AI-assisted interpretation — **mostly works**
 
@@ -60,13 +61,13 @@ are opted in (config/flag), they still run without a separate approval step.
 - Approvals bind exact session + tool + effect + canonical args (SHA-256 digest).
 - Tool-loop and size limits prevent runaway use.
 - Agent `http_get` / `http_post` use `ScopedHttpClient`; `web_scan` uses `WebScanner::inspect_url` with the same probe gating as CLI (**K3**/**K3b** cleared).
-- **Gap:** no interactive prompt; interactive-required calls are denied (**K2**).
+- Exact CLI effect+session pre-grants and TTY one-shot Allow (**K2** cleared; not a full approval UX).
 - **Gap:** `WebScanner` client stack not fully unified on `ScopedHttpClient` (**WEB-1**).
 
 ### F — CI / non-interactive — **mostly works**
 
-- No prompts (and no prompt implementation).
-- Sensitive / approval-required ops denied unless already authorised by policy grants.
+- No prompts when non-TTY / `--no-approval`.
+- Sensitive / approval-required ops denied unless already authorised by effect/session grants.
 - Exit codes exist; prefer typed `VestError` mapping. Legacy string fallback remains.
 - JSON on stdout is the intended machine path; keep diagnostics on stderr.
 
@@ -91,7 +92,7 @@ are opted in (config/flag), they still run without a separate approval step.
 | Symlink follow? | Off |
 | Local content → model? | Denied |
 | Process memory → model? | Denied |
-| Missing interactive approval? | **Deny** (no prompt UI) |
+| Missing interactive approval? | **Deny** unless CLI pre-grant or TTY one-shot Allow |
 | `--no-approval` meaning? | **Do not prompt; deny approval-required** (not “allow all”) |
 | Malformed present config? | Fail closed |
 

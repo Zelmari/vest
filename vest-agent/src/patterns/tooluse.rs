@@ -1,4 +1,5 @@
 use crate::context::AgentContext;
+use crate::interactive_approval::prompt_tty_one_shot_allow;
 use crate::policy::NormalisedToolCall;
 use crate::safety::SafetyChecker;
 use crate::tool_registry::ToolRegistry;
@@ -92,17 +93,49 @@ impl ToolUseRunner {
                             &tool_call.arguments,
                         );
                         let auth_ctx = self.safety.auth_context();
-                        let approval =
-                            match self.safety.policy().authorise(&auth_ctx, &normalised) {
-                                Ok(cap) => cap,
-                                Err(decision) => {
-                                    let reason = match &decision {
-                                        ApprovalDecision::Deny { reason } => reason.clone(),
-                                        ApprovalDecision::RequireInteractive { reason } => {
-                                            reason.clone()
+                        let approval = match self.safety.policy().authorise(&auth_ctx, &normalised)
+                        {
+                            Ok(cap) => cap,
+                            Err(ApprovalDecision::RequireInteractive { reason })
+                                if auth_ctx.interactive =>
+                            {
+                                if prompt_tty_one_shot_allow(&normalised, &reason) {
+                                    self.safety
+                                        .policy()
+                                        .grant(&auth_ctx, &normalised, true)
+                                        .await;
+                                    match self.safety.policy().authorise(&auth_ctx, &normalised) {
+                                        Ok(cap) => cap,
+                                        Err(decision) => {
+                                            let reason = match &decision {
+                                                ApprovalDecision::Deny { reason } => reason.clone(),
+                                                ApprovalDecision::RequireInteractive { reason } => {
+                                                    reason.clone()
+                                                }
+                                                ApprovalDecision::Allow => String::new(),
+                                            };
+                                            ctx.add_message(
+                                                "assistant",
+                                                format!(
+                                                    "Tool call rejected by policy: {}",
+                                                    tool_name
+                                                ),
+                                            );
+                                            ctx.add_message(
+                                                "user",
+                                                format!(
+                                                    "The tool call '{}' was rejected by the policy engine: {}. Try a different approach.",
+                                                    tool_name, reason
+                                                ),
+                                            );
+                                            ctx.add_observation(format!(
+                                                "Policy denied '{}': {}",
+                                                tool_name, reason
+                                            ));
+                                            continue;
                                         }
-                                        ApprovalDecision::Allow => String::new(),
-                                    };
+                                    }
+                                } else {
                                     ctx.add_message(
                                         "assistant",
                                         format!("Tool call rejected by policy: {}", tool_name),
@@ -120,7 +153,33 @@ impl ToolUseRunner {
                                     ));
                                     continue;
                                 }
-                            };
+                            }
+                            Err(decision) => {
+                                let reason = match &decision {
+                                    ApprovalDecision::Deny { reason } => reason.clone(),
+                                    ApprovalDecision::RequireInteractive { reason } => {
+                                        reason.clone()
+                                    }
+                                    ApprovalDecision::Allow => String::new(),
+                                };
+                                ctx.add_message(
+                                    "assistant",
+                                    format!("Tool call rejected by policy: {}", tool_name),
+                                );
+                                ctx.add_message(
+                                        "user",
+                                        format!(
+                                            "The tool call '{}' was rejected by the policy engine: {}. Try a different approach.",
+                                            tool_name, reason
+                                        ),
+                                    );
+                                ctx.add_observation(format!(
+                                    "Policy denied '{}': {}",
+                                    tool_name, reason
+                                ));
+                                continue;
+                            }
+                        };
 
                         if let Err(e) = self.safety.check_rate_limit().await {
                             ctx.add_observation(format!("Rate limited: {}", e));

@@ -23,10 +23,10 @@ where practical for a pre-1.0 experimental toolkit.
 
 - **N5:** CLI web scan is passive by default; active probes opt-in via config or `--allow-active-probes`.
 - **K3 / K3b:** Agent `http_get` / `http_post` use `ScopedHttpClient`; `web_scan` uses `WebScanner::inspect_url` with the same probe gating (no bare `ureq` for those tools).
+- **K2:** `--approve-writes` / `--approve-exploits` / `--approve-effect` mint effect+session grants; TTY one-shot Allow when interactive; `--no-approval` and non-TTY without grants remain fail-closed deny.
 
 ### Still open (honest)
 
-- No interactive approval prompt (`RequireInteractive` → deny) — **K2**.
 - `WebScanner` not yet fully on `ScopedHttpClient` — **WEB-1**.
 - Some scanners still populate heuristic `cvss_score` values.
 - No `vest doctor` / `--offline` yet.

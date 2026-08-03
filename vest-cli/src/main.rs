@@ -86,17 +86,22 @@ pub struct ScanArgs {
     #[arg(short = 'f', long, default_value = "terminal")]
     pub format: String,
 
-    /// Pre-approve all write operations
+    /// Pre-approve LocalWrite for this session (effect+session grant; not a policy bypass)
     #[arg(long)]
     pub approve_writes: bool,
 
-    /// Pre-approve all exploit attempts
+    /// Pre-approve exploit-class effects for this session
+    /// (ActiveNetworkProbe, StateChangingNetworkRequest, CommandExecution)
     #[arg(long)]
     pub approve_exploits: bool,
 
+    /// Pre-approve a specific ToolEffect by snake_case name (repeatable)
+    #[arg(long = "approve-effect", value_name = "EFFECT", action = clap::ArgAction::Append)]
+    pub approve_effect: Vec<String>,
+
     /// Do not prompt for approvals; deny approval-required operations (fail closed).
     /// This is NOT an unrestricted / allow-all mode.
-    #[arg(long, conflicts_with_all = ["approve_writes", "approve_exploits"])]
+    #[arg(long, conflicts_with_all = ["approve_writes", "approve_exploits", "approve_effect"])]
     pub no_approval: bool,
 
     /// Override rate limit (requests per second)

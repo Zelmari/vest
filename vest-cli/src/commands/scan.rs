@@ -4,7 +4,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vest_agent::{
-    resolve_read_path, ApprovedFilesystemScope, ApprovedNetworkScope, ExecutionSession,
+    cli_pregrant_effects, resolve_read_path, ApprovedFilesystemScope, ApprovedNetworkScope,
+    ExecutionSession,
 };
 use vest_core::error::VestError;
 use vest_core::traits::{Reporter, Scanner};
@@ -272,7 +273,7 @@ pub async fn run(
         .into_arc();
     args.include_evidence = args.include_evidence || config.general.include_report_evidence;
     let registry = build_tool_registry(Arc::clone(&session), allow_active_probes);
-    let safety = build_safety(&args, &config, Arc::clone(&session)).await;
+    let safety = build_safety(&args, &config, Arc::clone(&session)).await?;
 
     println!("\u{2502} {:^48} \u{2502}", "Running scan...");
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
@@ -1196,7 +1197,7 @@ async fn build_safety(
     args: &ScanArgs,
     config: &vest_config::VestConfig,
     session: Arc<ExecutionSession>,
-) -> Arc<vest_agent::SafetyChecker> {
+) -> Result<Arc<vest_agent::SafetyChecker>, Box<dyn std::error::Error>> {
     use vest_agent::safety::SafetyConfig;
 
     // `--no-approval` means: never prompt; deny approval-required ops.
@@ -1221,12 +1222,30 @@ async fn build_safety(
         allowed_networks: config.safety.allowed_networks.clone(),
     };
 
-    let _ = (args.approve_writes, args.approve_exploits);
+    let mut explicit_effects = Vec::with_capacity(args.approve_effect.len());
+    for raw in &args.approve_effect {
+        let effect: ToolEffect = raw.parse().map_err(VestError::Config)?;
+        if effect.is_unknown() {
+            return Err(VestError::Config(
+                "unknown tool effect 'unknown' cannot be pre-granted".into(),
+            )
+            .into());
+        }
+        explicit_effects.push(effect);
+    }
+
     let checker = Arc::new(vest_agent::SafetyChecker::new(safety_config));
     checker
         .set_authorisation_context(session.authorisation_context())
         .await;
-    checker
+    for effect in cli_pregrant_effects(
+        args.approve_writes,
+        args.approve_exploits,
+        &explicit_effects,
+    ) {
+        checker.grant_effect_session(effect).await;
+    }
+    Ok(checker)
 }
 
 fn detect_target(args: &ScanArgs) -> Result<Target, Box<dyn std::error::Error>> {
