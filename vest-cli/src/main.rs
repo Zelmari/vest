@@ -56,9 +56,13 @@ pub enum Commands {
 
 #[derive(Args)]
 pub struct ScanArgs {
-    /// Target to scan (URL, path, PID, host:port)
-    #[arg(value_name = "TARGET")]
-    pub target: String,
+    /// Target to scan (URL, path, PID, host:port). Not required with `--list-profiles`.
+    #[arg(value_name = "TARGET", required_unless_present = "list_profiles")]
+    pub target: Option<String>,
+
+    /// List known scan profiles from config (name + short note) and exit
+    #[arg(long)]
+    pub list_profiles: bool,
 
     /// Use a saved scan profile
     #[arg(long)]

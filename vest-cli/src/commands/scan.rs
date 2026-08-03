@@ -148,6 +148,10 @@ pub async fn run(
     mut args: ScanArgs,
     config_path: impl AsRef<Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if args.list_profiles {
+        return print_known_profiles(config_path.as_ref());
+    }
+
     if let Some(ref scan_id) = args.resume {
         // Scans are persisted only at finalize; SQLite has no resumable checkpoint.
         return Err(VestError::Unsupported(format!(
@@ -155,6 +159,11 @@ pub async fn run(
         ))
         .into());
     }
+
+    let target_display = args
+        .target
+        .as_deref()
+        .ok_or_else(|| VestError::InvalidInput("TARGET is required".into()))?;
 
     let machine = is_machine_format(&args.format);
 
@@ -164,7 +173,7 @@ pub async fn run(
     ui_line!(
         machine,
         "\u{2502} Target:      {:<35} \u{2502}",
-        &args.target[..args.target.len().min(35)]
+        &target_display[..target_display.len().min(35)]
     );
     ui_line!(
         machine,
@@ -337,6 +346,11 @@ pub async fn run(
     ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     if args.dry_run {
+        let profile_name = args.profile.as_deref().unwrap_or("default");
+        let profile_note = match profile {
+            Some(p) => format_profile_note(p),
+            None => "built-in defaults".to_string(),
+        };
         ui_line!(
             machine,
             "\u{2502} {:^48} \u{2502}",
@@ -346,9 +360,17 @@ pub async fn run(
             machine,
             "\u{2502} {:^48} \u{2502}",
             truncate_for_box(
+                &format!("Selected profile: {profile_name} — {profile_note}"),
+                48
+            )
+        );
+        ui_line!(
+            machine,
+            "\u{2502} {:^48} \u{2502}",
+            truncate_for_box(
                 &format!(
                     "Would scan {} via [{}]",
-                    &args.target[..args.target.len().min(20)],
+                    &target_display[..target_display.len().min(20)],
                     scanner_names.join(", ")
                 ),
                 48
@@ -1485,8 +1507,74 @@ fn deny_private_scan_target(target: &Target) -> Result<(), VestError> {
     Ok(())
 }
 
+/// Print `[profiles.*]` from config with short notes (C4 discoverability).
+fn print_known_profiles(config_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let config = if config_path.exists() {
+        vest_config::load_config(config_path).map_err(|e| {
+            VestError::Config(format!(
+                "Failed to load config {}: {e}. Refusing silent defaults for a present file.",
+                config_path.display()
+            ))
+        })?
+    } else {
+        eprintln!(
+            "No config at {}; using built-in defaults (no profiles).",
+            config_path.display()
+        );
+        vest_config::default_config()
+    };
+
+    if config.profiles.is_empty() {
+        println!("No scan profiles defined in {}.", config_path.display());
+        println!(
+            "Add [profiles.<name>] sections (optional description = \"...\") to list them here."
+        );
+        println!("Use: vest scan <TARGET> --profile <name>");
+        return Ok(());
+    }
+
+    println!("Known scan profiles (from {}):", config_path.display());
+    println!();
+    let mut names: Vec<_> = config.profiles.keys().cloned().collect();
+    names.sort();
+    let width = names.iter().map(|n| n.len()).max().unwrap_or(8).max(8);
+    for name in &names {
+        let note = format_profile_note(&config.profiles[name]);
+        println!("  {name:<width$}  {note}");
+    }
+    println!();
+    println!("Use: vest scan <TARGET> --profile <name>");
+    Ok(())
+}
+
+fn format_profile_note(profile: &vest_config::ProfileConfig) -> String {
+    if let Some(ref description) = profile.description {
+        let trimmed = description.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    let mut parts = Vec::new();
+    if let Some(ref pattern) = profile.pattern {
+        parts.push(format!("pattern={pattern}"));
+    }
+    if let Some(ref scanners) = profile.scanners {
+        if !scanners.is_empty() {
+            parts.push(format!("scanners={}", scanners.join(",")));
+        }
+    }
+    if parts.is_empty() {
+        "(no description)".to_string()
+    } else {
+        parts.join("; ")
+    }
+}
+
 fn detect_target(args: &ScanArgs) -> Result<Target, VestError> {
-    let name = &args.target;
+    let name = args
+        .target
+        .as_deref()
+        .ok_or_else(|| VestError::InvalidInput("TARGET is required".into()))?;
     let now = chrono::Utc::now();
 
     let target_type = if let Some(ref tt) = args.target_type {
@@ -1504,16 +1592,16 @@ fn detect_target(args: &ScanArgs) -> Result<Target, VestError> {
             let pid_val = args.pid.or_else(|| name.parse().ok());
             (None, None, pid_val, None)
         }
-        TargetType::Binary => (Some(name.clone()), None, None, None),
+        TargetType::Binary => (Some(name.to_string()), None, None, None),
         TargetType::Web => resolve_http_target(name)?,
-        TargetType::Network => (None, None, None, Some(name.clone())),
+        TargetType::Network => (None, None, None, Some(name.to_string())),
         TargetType::Browser => resolve_http_target(name)?,
-        TargetType::File => (Some(name.clone()), None, None, None),
+        TargetType::File => (Some(name.to_string()), None, None, None),
     };
 
     Ok(Target {
         id: vest_core::ids::new_id(),
-        name: name.clone(),
+        name: name.to_string(),
         target_type,
         path,
         url_str,

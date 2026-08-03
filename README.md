@@ -151,12 +151,13 @@ Historical snapshot (do not treat as current status): [docs/security-hardening-a
 
 ```text
 vest scan <TARGET>
+vest scan --list-profiles
 vest doctor
 vest config | providers | targets | scans | findings | report | tools | sandbox
 vest completions <bash|zsh|fish>
 ```
 
-Useful flags: `--scanner`, `--target-type`, `--provider`, `--offline` / `--no-ai`, `--mode`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`, `--approve-writes`, `--approve-exploits`, `--approve-effect`, `--allow-active-probes`, `--confirm-active-probes`.
+Useful flags: `--scanner`, `--target-type`, `--provider`, `--offline` / `--no-ai`, `--mode`, `--profile`, `--list-profiles`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`, `--approve-writes`, `--approve-exploits`, `--approve-effect`, `--allow-active-probes`, `--confirm-active-probes`.
 
 When no provider is configured and `--provider` is omitted, the scan default is **`none`** (scanner-only). `--offline` and `--no-ai` force the same.
 

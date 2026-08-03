@@ -31,7 +31,7 @@
 | 11 | C1 | CI baseline / fail-on-new (compare + exit) | pending |
 | 12 | C2 | Finish or hide `--resume` | done |
 | 13 | C3 | SARIF export | done |
-| 14 | C4 | Profile discovery (`--list-profiles` / dry-run clarity) | pending |
+| 14 | C4 | Profile discovery (`--list-profiles` / dry-run clarity) | done |
 
 ### Wave D — Codebase health (as time allows)
 | # | ID | Item | Status |
@@ -55,7 +55,7 @@
 - [ ] C1 Fail-on-new baseline
 - [x] C2 Resume (hidden from help; fail-closed unimplemented — no SQLite checkpoint)
 - [x] C3 SARIF
-- [ ] C4 Profile discovery
+- [x] C4 Profile discovery (`vest scan --list-profiles`; dry-run names selected profile)
 - [ ] D1 Tool extraction
 - [ ] D2 Typed tool errors
 - [ ] D3 Dead deps/payloads
