@@ -22,7 +22,7 @@
 | 6 | B1 | Connect-time IP pin when `deny_private_targets` | pending |
 | 7 | B2 | Provider HTTP: no auto-redirect | done |
 | 8 | B3 | CDP WS loopback pin + browser_inspect effect honesty | done |
-| 9 | B4 | Nuclei: always constrain `-t` / disable update-check | pending |
+| 9 | B4 | Nuclei: always constrain `-t` / disable update-check | done |
 | 10 | B5 | CLI active-probe consent parity with agent path | pending |
 
 ### Wave C — Product unlocks
@@ -50,7 +50,7 @@
 - [ ] B1 Connect-time IP pin
 - [x] B2 Provider redirect-none
 - [x] B3 CDP loopback pin
-- [ ] B4 Nuclei template constraint
+- [x] B4 Nuclei template constraint
 - [ ] B5 Active probe consent
 - [ ] C1 Fail-on-new baseline
 - [ ] C2 Resume

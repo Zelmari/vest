@@ -1,12 +1,13 @@
-//! Nuclei subprocess wrapper (NUC-1).
+//! Nuclei subprocess wrapper (NUC-1 / B4).
 //!
 //! Binary resolution order (cwd-relative paths are never used):
 //! 1. Absolute `~/.vest/tools/nuclei` when that file exists
 //! 2. Absolute path from `which nuclei` on `PATH`
 //!
-//! Template paths passed to `-t` must resolve under the allowlisted templates
-//! root (`~/.vest/tools/nuclei-templates` by default). An empty template list
-//! omits `-t` so nuclei uses its own defaults.
+//! Every scan always passes `-t` constrained to the allowlisted templates root
+//! (`~/.vest/tools/nuclei-templates` by default). An empty template list uses
+//! that root itself; if the root cannot be resolved, the scan fails closed.
+//! Invocations also pass `-disable-update-check` so nuclei does not auto-update.
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -114,17 +115,15 @@ impl NucleiTool {
         templates: &[&str],
     ) -> Result<Vec<NucleiFinding>, NucleiError> {
         let mut cmd = Command::new(&self.binary_path);
-        cmd.arg("-u").arg(url).arg("-json").arg("-silent");
+        cmd.arg("-u")
+            .arg(url)
+            .arg("-json")
+            .arg("-silent")
+            .arg("-disable-update-check");
 
-        if !templates.is_empty() {
-            let allowed = self.resolve_allowed_templates(templates)?;
-            let joined = allowed
-                .iter()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(",");
-            cmd.arg("-t").arg(joined);
-        }
+        // B4: never omit `-t` (unconstrained nuclei defaults). Empty list ⇒ root.
+        let template_arg = self.constrained_template_arg(templates)?;
+        cmd.arg("-t").arg(template_arg);
 
         let output = run_with_timeout(cmd, self.timeout)?;
         ensure_success(&output)?;
@@ -143,6 +142,26 @@ impl NucleiTool {
         }
 
         Ok(findings)
+    }
+
+    /// Build the `-t` value: allowlisted paths, or the allowlisted root when empty.
+    fn constrained_template_arg(&self, templates: &[&str]) -> Result<String, NucleiError> {
+        if templates.is_empty() {
+            let root = self.canonical_templates_root()?;
+            return Ok(root.to_string_lossy().into_owned());
+        }
+        let allowed = self.resolve_allowed_templates(templates)?;
+        Ok(allowed
+            .iter()
+            .map(|p| p.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(","))
+    }
+
+    fn canonical_templates_root(&self) -> Result<PathBuf, NucleiError> {
+        self.templates_root.canonicalize().map_err(|e| {
+            NucleiError::TemplatesRootInvalid(format!("{}: {e}", self.templates_root.display()))
+        })
     }
 
     pub fn scan_url_with_all_templates(
@@ -166,9 +185,7 @@ impl NucleiTool {
     }
 
     fn resolve_allowed_templates(&self, templates: &[&str]) -> Result<Vec<PathBuf>, NucleiError> {
-        let root = self.templates_root.canonicalize().map_err(|e| {
-            NucleiError::TemplatesRootInvalid(format!("{}: {e}", self.templates_root.display()))
-        })?;
+        let root = self.canonical_templates_root()?;
 
         let mut out = Vec::with_capacity(templates.len());
         for template in templates {
@@ -494,7 +511,9 @@ exit 7
 "#,
         );
 
-        let tool = NucleiTool::with_binary(bin).with_timeout(Duration::from_secs(5));
+        let tool = NucleiTool::with_binary(bin)
+            .with_timeout(Duration::from_secs(5))
+            .with_templates_root(dir.clone());
         let err = tool.scan_url("http://example.com", &[]).unwrap_err();
         match err {
             NucleiError::ProcessFailed { code, stderr } => {
@@ -519,11 +538,83 @@ exit 0
 "#,
         );
 
-        let tool = NucleiTool::with_binary(bin).with_timeout(Duration::from_millis(200));
+        let tool = NucleiTool::with_binary(bin)
+            .with_timeout(Duration::from_millis(200))
+            .with_templates_root(dir.clone());
         let err = tool.scan_url("http://example.com", &[]).unwrap_err();
         assert!(
             matches!(err, NucleiError::Timeout(_)),
             "expected Timeout, got {err:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_empty_templates_passes_allowlisted_root_and_disables_update_check() {
+        let dir = temp_dir("empty-t");
+        let root = dir.join("templates");
+        fs::create_dir_all(&root).unwrap();
+        let args_file = dir.join("args.txt");
+        let bin = dir.join("fake-nuclei");
+        write_executable(
+            &bin,
+            &format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" > '{}'
+exit 0
+"#,
+                args_file.display()
+            ),
+        );
+
+        let tool = NucleiTool::with_binary(bin)
+            .with_timeout(Duration::from_secs(5))
+            .with_templates_root(root.clone());
+        tool.scan_url("http://example.com", &[]).unwrap();
+
+        let args: Vec<String> = fs::read_to_string(&args_file)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert!(
+            args.iter().any(|a| a == "-disable-update-check"),
+            "expected -disable-update-check in args: {args:?}"
+        );
+        let t_pos = args
+            .iter()
+            .position(|a| a == "-t")
+            .expect("expected -t in args");
+        let root_canon = root.canonicalize().unwrap();
+        assert_eq!(
+            args.get(t_pos + 1).map(String::as_str),
+            Some(root_canon.to_str().unwrap()),
+            "empty templates must pass allowlisted root as -t"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_empty_templates_fails_when_root_missing() {
+        let dir = temp_dir("missing-root");
+        let bin = dir.join("fake-nuclei");
+        write_executable(
+            &bin,
+            r#"#!/bin/sh
+exit 0
+"#,
+        );
+        let missing = dir.join("no-such-templates");
+        let tool = NucleiTool::with_binary(bin)
+            .with_timeout(Duration::from_secs(5))
+            .with_templates_root(missing);
+        let err = tool.scan_url("http://example.com", &[]).unwrap_err();
+        assert!(
+            matches!(err, NucleiError::TemplatesRootInvalid(_)),
+            "expected TemplatesRootInvalid, got {err:?}"
         );
         let _ = fs::remove_dir_all(&dir);
     }
@@ -540,15 +631,19 @@ exit 0
         let outside = dir.join("evil.yaml");
         fs::write(&outside, "id: evil\n").unwrap();
 
+        let args_file = dir.join("args.txt");
         let bin = dir.join("fake-nuclei");
         write_executable(
             &bin,
-            r#"#!/bin/sh
-# Echo args so we can assert -t was rewritten to an allowlisted path
-printf '%s\n' "$@" > /dev/null
-echo '{"templateID":"ok","name":"Ok","severity":"info","matchedAt":"http://example.com"}'
+            &format!(
+                r#"#!/bin/sh
+# Capture args so we can assert -t / -disable-update-check
+printf '%s\n' "$@" > '{}'
+echo '{{"templateID":"ok","name":"Ok","severity":"info","matchedAt":"http://example.com"}}'
 exit 0
 "#,
+                args_file.display()
+            ),
         );
 
         let tool = NucleiTool::with_binary(bin)
@@ -558,6 +653,16 @@ exit 0
         // Relative path under root is allowed.
         let findings = tool.scan_url("http://example.com", &["ok.yaml"]).unwrap();
         assert_eq!(findings.len(), 1);
+
+        let args = fs::read_to_string(&args_file).unwrap();
+        assert!(
+            args.lines().any(|l| l == "-disable-update-check"),
+            "expected -disable-update-check when templates are provided"
+        );
+        assert!(
+            args.lines().any(|l| l == "-t"),
+            "expected -t when templates are provided"
+        );
 
         // Absolute path outside root is refused.
         let err = tool
