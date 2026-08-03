@@ -158,7 +158,7 @@ N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓
 → CLI-SOFT ✓ → CLI-DEAD ✓ → N2 ✓ → ACCEPT-12/13 ✓
 ```
 
-**Next open:** Wave 4 queue cleared for HTTP/WEB (resume-ready minimum).
+**Next open:** none — standing non-claims (R1–R6) remain documented forever.  
 
 **Progress tracking:** update the table in `docs/product-hardening-ledger.md` and the checkbox section below after each clear.
 

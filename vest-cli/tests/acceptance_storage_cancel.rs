@@ -23,9 +23,7 @@ fn storage_failure_unwritable_vest_home_exits_persistence() {
     assert_exit_code(&output, 6);
     let text = combined(&output).to_lowercase();
     assert!(
-        text.contains("storage")
-            || text.contains("database")
-            || text.contains("cannot create"),
+        text.contains("storage") || text.contains("database") || text.contains("cannot create"),
         "expected storage failure message, got:\n{}",
         combined(&output)
     );
