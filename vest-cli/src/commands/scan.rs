@@ -1076,10 +1076,8 @@ async fn build_safety(
 ) -> Arc<vest_agent::SafetyChecker> {
     use vest_agent::safety::SafetyConfig;
 
-    if args.no_approval {
-        return Arc::new(vest_agent::SafetyChecker::permissive());
-    }
-
+    // `--no-approval` means: never prompt; deny approval-required ops.
+    // It must NOT install an unrestricted / test-only permissive context (K1).
     let mut safety_config = SafetyConfig {
         write_approval: !args.approve_writes && config.safety.write_approval,
         exploit_approval: !args.approve_exploits && config.safety.exploit_approval,
@@ -1109,14 +1107,18 @@ async fn build_safety(
 
     let checker = Arc::new(vest_agent::SafetyChecker::new(safety_config));
 
+    let interactive = !args.no_approval && std::io::IsTerminal::is_terminal(&std::io::stdin());
     let mut auth = AuthorisationContext::new(format!("scan-{}", args.target));
     auth = auth
         .with_filesystem(fs_scope)
         .with_network(net_scope)
-        .with_interactive(false);
+        .with_interactive(interactive);
     auth.allow_local_content_egress = config.safety.allow_model_egress_local_content;
     auth.allow_process_memory_egress = config.safety.allow_model_egress_process_memory;
     auth.allow_evidence_egress = config.safety.allow_model_egress_evidence;
+    // Broad legacy flags are UX hints only — they must not widen filesystem/network
+    // scope or install permissive_effects. Exact call binding remains in PolicyEngine.
+    let _ = (args.approve_writes, args.approve_exploits);
     checker.set_authorisation_context(auth).await;
 
     checker
@@ -1127,10 +1129,11 @@ fn detect_target(args: &ScanArgs) -> Result<Target, Box<dyn std::error::Error>> 
     let now = chrono::Utc::now();
 
     let target_type = if let Some(ref tt) = args.target_type {
-        match tt.parse::<TargetType>() {
-            Ok(t) => t,
-            Err(_) => guess_type(name),
-        }
+        tt.parse::<TargetType>().map_err(|_| {
+            format!(
+                "Invalid target type '{tt}'. Expected one of: process, binary, web, network, browser, file"
+            )
+        })?
     } else {
         guess_type(name)
     };

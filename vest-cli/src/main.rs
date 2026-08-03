@@ -94,7 +94,8 @@ pub struct ScanArgs {
     #[arg(long)]
     pub approve_exploits: bool,
 
-    /// Completely disable all approval gates
+    /// Do not prompt for approvals; deny approval-required operations (fail closed).
+    /// This is NOT an unrestricted / allow-all mode.
     #[arg(long, conflicts_with_all = ["approve_writes", "approve_exploits"])]
     pub no_approval: bool,
 
@@ -316,6 +317,27 @@ pub struct CompletionsArgs {
     pub shell: String,
 }
 
+/// Only Vest/provider-related keys may be loaded from `.env` files.
+/// Existing process environment values are never overwritten.
+const DOTENV_ALLOWLIST: &[&str] = &[
+    "VEST_HOME",
+    "VEST_DB_PATH",
+    "VEST_CONFIG",
+    "RUST_LOG",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GOOGLE_API_KEY",
+    "GROQ_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OLLAMA_HOST",
+    "OLLAMA_API_KEY",
+];
+
+fn dotenv_key_allowed(key: &str) -> bool {
+    DOTENV_ALLOWLIST.iter().any(|k| k.eq_ignore_ascii_case(key))
+}
+
 fn load_dotenv() {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -333,7 +355,11 @@ fn load_dotenv() {
                 }
                 if let Some((key, value)) = trimmed.split_once('=') {
                     let key = key.trim();
+                    if !dotenv_key_allowed(key) {
+                        continue;
+                    }
                     let value = value.trim().trim_matches('"').trim_matches('\'');
+                    // Never override an existing process environment value.
                     if std::env::var(key).is_err() {
                         std::env::set_var(key, value);
                     }
@@ -366,18 +392,25 @@ pub mod exit_code {
     pub const PROVIDER_SOFT: i32 = 7;
 }
 
-fn exit_code_for_error(err: &dyn std::error::Error) -> i32 {
-    let mut msg = err.to_string();
+fn exit_code_for_error(err: &(dyn std::error::Error + 'static)) -> i32 {
+    // Prefer typed VestError mapping (no substring search).
+    if let Some(vest) = err.downcast_ref::<vest_core::VestError>() {
+        return vest.cli_exit_code();
+    }
+    // Walk sources for a nested VestError.
     let mut source = err.source();
     while let Some(s) = source {
-        msg.push(' ');
-        msg.push_str(&s.to_string());
+        if let Some(vest) = s.downcast_ref::<vest_core::VestError>() {
+            return vest.cli_exit_code();
+        }
         source = s.source();
     }
-    exit_code_for_message(&msg)
+    // Legacy Box<dyn Error> string paths from older call sites — keep conservative
+    // heuristics until all commands return VestError. Prefer migrating call sites.
+    exit_code_for_message_legacy(&err.to_string())
 }
 
-fn exit_code_for_message(msg: &str) -> i32 {
+fn exit_code_for_message_legacy(msg: &str) -> i32 {
     let lower = msg.to_lowercase();
     if lower.contains("config") || lower.contains("parse config") || lower.contains("vest.toml") {
         return exit_code::CONFIG;
@@ -470,46 +503,32 @@ mod exit_code_tests {
     use super::*;
 
     #[test]
-    fn maps_config_errors() {
+    fn typed_vest_error_preferred() {
+        let err: Box<dyn std::error::Error> =
+            Box::new(vest_core::VestError::Config("bad toml".into()));
+        assert_eq!(exit_code_for_error(err.as_ref()), exit_code::CONFIG);
+        let err: Box<dyn std::error::Error> =
+            Box::new(vest_core::VestError::ApprovalDenied("no".into()));
+        assert_eq!(exit_code_for_error(err.as_ref()), exit_code::AUTHORISATION);
+    }
+
+    #[test]
+    fn legacy_string_fallback() {
         assert_eq!(
-            exit_code_for_message("Failed to load config: parse error"),
+            exit_code_for_message_legacy("Failed to load config: parse error"),
             exit_code::CONFIG
         );
         assert_eq!(
-            exit_code_for_message("Configuration error at /tmp/x.toml"),
-            exit_code::CONFIG
-        );
-    }
-
-    #[test]
-    fn maps_authorisation_errors() {
-        assert_eq!(
-            exit_code_for_message("policy denied 'read_file': filesystem scope"),
-            exit_code::AUTHORISATION
-        );
-        assert_eq!(
-            exit_code_for_message("approval required"),
-            exit_code::AUTHORISATION
-        );
-    }
-
-    #[test]
-    fn maps_scanner_and_persistence() {
-        assert_eq!(
-            exit_code_for_message("Scanner failure: memory unsupported"),
-            exit_code::SCANNER
-        );
-        assert_eq!(
-            exit_code_for_message("sqlite database locked"),
-            exit_code::PERSISTENCE
-        );
-    }
-
-    #[test]
-    fn maps_invalid_input() {
-        assert_eq!(
-            exit_code_for_message("Unsupported shell: foo"),
+            exit_code_for_message_legacy("Unsupported shell: foo"),
             exit_code::INVALID_INPUT
         );
+    }
+
+    #[test]
+    fn dotenv_allowlist() {
+        assert!(dotenv_key_allowed("OPENAI_API_KEY"));
+        assert!(dotenv_key_allowed("vest_home"));
+        assert!(!dotenv_key_allowed("PATH"));
+        assert!(!dotenv_key_allowed("AWS_SECRET_ACCESS_KEY"));
     }
 }

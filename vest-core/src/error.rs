@@ -63,6 +63,51 @@ pub enum VestError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+}
+
+impl VestError {
+    /// Stable CLI exit codes (see `vest-cli` exit_code module).
+    ///
+    /// Mapping is by typed variant — not by searching error message text.
+    pub fn cli_exit_code(&self) -> i32 {
+        match self {
+            VestError::Config(_) => 3,
+            #[cfg(feature = "toml")]
+            VestError::Toml(_) => 3,
+            VestError::ApprovalDenied(_) => 4,
+            VestError::Scan(_) | VestError::Unsupported(_) | VestError::UnsupportedPlatform(_) => 5,
+            VestError::Storage(_) => 6,
+            VestError::Provider(_) => 7,
+            VestError::InvalidInput(_)
+            | VestError::UnsupportedFormat(_)
+            | VestError::TargetNotFound(_)
+            | VestError::FindingNotFound(_) => 2,
+            VestError::RateLimited(_) | VestError::Timeout(_) => 5,
+            VestError::ValidationFailed { .. } | VestError::Agent(_) => 7,
+            VestError::Sandbox(_)
+            | VestError::Internal(_)
+            | VestError::Io(_)
+            | VestError::Json(_) => 1,
+        }
+    }
+}
+
+#[cfg(test)]
+mod exit_code_unit_tests {
+    use super::*;
+
+    #[test]
+    fn typed_exit_codes() {
+        assert_eq!(VestError::Config("x".into()).cli_exit_code(), 3);
+        assert_eq!(VestError::ApprovalDenied("x".into()).cli_exit_code(), 4);
+        assert_eq!(VestError::Scan("x".into()).cli_exit_code(), 5);
+        assert_eq!(VestError::Storage("x".into()).cli_exit_code(), 6);
+        assert_eq!(VestError::Provider("x".into()).cli_exit_code(), 7);
+        assert_eq!(VestError::InvalidInput("x".into()).cli_exit_code(), 2);
+    }
 }
 
 #[cfg(test)]
