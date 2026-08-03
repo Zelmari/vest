@@ -67,6 +67,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | N3 | No `vest doctor` / `policy explain` | open |
 | N4 | No explicit `--offline` / `--no-ai` flags (provider none only) | open |
 | N5 | CLI web scan forces `with_allow_active_probes(true)` | **Fixed** — default off; config OR `--allow-active-probes`; `scan_web_cli` probe-hit tests |
+| PROV-1 | Google API key in URL query (`?key=`) | **Fixed** — `x-goog-api-key` header for generateContent/list_models; transport/HTTP errors scrub key; sentinel tests in `vest-providers/src/google.rs` |
 
 ## Phase status
 

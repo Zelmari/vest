@@ -6,6 +6,9 @@ use std::sync::Arc;
 use vest_core::error::VestError;
 use vest_core::LlmProvider;
 
+/// Google AI / Gemini API key header (preferred over `?key=` query params).
+const GOOGLE_API_KEY_HEADER: &str = "x-goog-api-key";
+
 pub struct GoogleProvider {
     pub api_key: String,
     pub default_model: String,
@@ -57,6 +60,14 @@ fn map_role(role: &str) -> &str {
     }
 }
 
+/// Redact the API key from any string that may surface in VestError / logs.
+fn scrub_api_key(message: &str, api_key: &str) -> String {
+    if api_key.is_empty() {
+        return message.to_string();
+    }
+    message.replace(api_key, "[REDACTED]")
+}
+
 impl GoogleProvider {
     pub fn new(api_key: String, default_model: Option<String>) -> Self {
         Self {
@@ -65,6 +76,10 @@ impl GoogleProvider {
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             client: Client::new(),
         }
+    }
+
+    fn provider_err(&self, message: impl AsRef<str>) -> VestError {
+        VestError::Provider(scrub_api_key(message.as_ref(), &self.api_key))
     }
 
     fn convert_messages(&self, messages: &[Value]) -> Vec<GeminiContent> {
@@ -121,27 +136,27 @@ impl LlmProvider for GoogleProvider {
         let req = GeminiRequest { contents };
 
         let url = format!(
-            "{}/models/{}:generateContent?key={}",
+            "{}/models/{}:generateContent",
             self.base_url.trim_end_matches('/'),
-            model,
-            self.api_key
+            model
         );
 
         let resp = self
             .client
             .post(&url)
+            .header(GOOGLE_API_KEY_HEADER, &self.api_key)
             .json(&req)
             .send()
             .await
-            .map_err(|e| VestError::Provider(format!("Google: HTTP request failed: {}", e)))?;
+            .map_err(|e| self.provider_err(format!("Google: HTTP request failed: {}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             let err = if status.as_u16() == 429 {
-                VestError::RateLimited("Google: rate limited".into())
+                VestError::RateLimited(scrub_api_key("Google: rate limited", &self.api_key))
             } else {
-                VestError::Provider(format!("Google: HTTP {}: {}", status, body))
+                self.provider_err(format!("Google: HTTP {}: {}", status, body))
             };
             return Err(err);
         }
@@ -149,13 +164,13 @@ impl LlmProvider for GoogleProvider {
         let completion: GeminiResponse = resp
             .json()
             .await
-            .map_err(|e| VestError::Provider(format!("Google: Failed to parse response: {}", e)))?;
+            .map_err(|e| self.provider_err(format!("Google: Failed to parse response: {}", e)))?;
 
         let candidate = completion
             .candidates
             .into_iter()
             .next()
-            .ok_or_else(|| VestError::Provider("Google: No candidates in response".into()))?;
+            .ok_or_else(|| self.provider_err("Google: No candidates in response"))?;
 
         let content = candidate
             .content
@@ -173,24 +188,24 @@ impl LlmProvider for GoogleProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<String>, VestError> {
-        let url = format!(
-            "{}/models?key={}",
-            self.base_url.trim_end_matches('/'),
-            self.api_key
-        );
+        let url = format!("{}/models", self.base_url.trim_end_matches('/'));
 
-        let resp =
-            self.client.get(&url).send().await.map_err(|e| {
-                VestError::Provider(format!("Google: Failed to list models: {}", e))
-            })?;
+        let resp = self
+            .client
+            .get(&url)
+            .header(GOOGLE_API_KEY_HEADER, &self.api_key)
+            .send()
+            .await
+            .map_err(|e| self.provider_err(format!("Google: Failed to list models: {}", e)))?;
 
         if !resp.status().is_success() {
             return Ok(vec![self.default_model.clone()]);
         }
 
-        let list: GeminiModelListResponse = resp.json().await.map_err(|e| {
-            VestError::Provider(format!("Google: Failed to parse model list: {}", e))
-        })?;
+        let list: GeminiModelListResponse = resp
+            .json()
+            .await
+            .map_err(|e| self.provider_err(format!("Google: Failed to parse model list: {}", e)))?;
 
         let models: Vec<String> = list
             .models
@@ -226,4 +241,185 @@ pub fn create_google_provider(
     default_model: Option<String>,
 ) -> Arc<dyn LlmProvider> {
     Arc::new(GoogleProvider::new(api_key, default_model))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use vest_core::LlmProvider;
+
+    const SENTINEL_KEY: &str = "VEST_GOOGLE_SENTINEL_KEY_PROV1_DO_NOT_LEAK";
+
+    async fn spawn_capture_server(
+        status: u16,
+        body: Vec<u8>,
+    ) -> (u16, Arc<AtomicBool>, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+        let body = Arc::new(body);
+        tokio::spawn(async move {
+            while !flag.load(Ordering::Relaxed) {
+                let Ok((mut socket, _)) =
+                    tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                        .await
+                        .unwrap_or(Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "timeout",
+                        )))
+                else {
+                    continue;
+                };
+                let mut buf = vec![0u8; 8192];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                captured_clone.lock().unwrap().push(req);
+                let resp = format!(
+                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let mut bytes = resp.into_bytes();
+                bytes.extend_from_slice(&body);
+                let _ = socket.write_all(&bytes).await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        (port, stop, captured)
+    }
+
+    fn provider_for(base: &str) -> GoogleProvider {
+        let mut p = GoogleProvider::new(SENTINEL_KEY.to_string(), Some("gemini-test".into()));
+        p.base_url = base.to_string();
+        p
+    }
+
+    #[test]
+    fn scrub_api_key_redacts_sentinel() {
+        let msg = format!("error for url (https://example/?key={SENTINEL_KEY}): boom");
+        let scrubbed = scrub_api_key(&msg, SENTINEL_KEY);
+        assert!(!scrubbed.contains(SENTINEL_KEY));
+        assert!(scrubbed.contains("[REDACTED]"));
+    }
+
+    #[tokio::test]
+    async fn generate_content_uses_header_not_query() {
+        let body =
+            br#"{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}]}"#.to_vec();
+        let (port, stop, captured) = spawn_capture_server(200, body).await;
+        let base = format!("http://127.0.0.1:{port}/v1beta");
+        let provider = provider_for(&base);
+
+        let messages = vec![serde_json::json!({"role":"user","content":"hi"})];
+        let out = provider.chat(&messages, "gemini-test").await.unwrap();
+        assert_eq!(out, "ok");
+
+        let reqs = captured.lock().unwrap();
+        assert_eq!(reqs.len(), 1);
+        let req = &reqs[0];
+        let first_line = req.lines().next().unwrap_or("");
+        assert!(
+            first_line.contains("generateContent"),
+            "request line: {first_line}"
+        );
+        assert!(
+            !first_line.contains(SENTINEL_KEY),
+            "sentinel must not appear in request line/query: {first_line}"
+        );
+        assert!(
+            !first_line.contains("?key="),
+            "must not use ?key= query auth: {first_line}"
+        );
+        let header_line = format!("{GOOGLE_API_KEY_HEADER}: {SENTINEL_KEY}");
+        assert!(
+            req.to_ascii_lowercase()
+                .contains(&header_line.to_ascii_lowercase()),
+            "missing {GOOGLE_API_KEY_HEADER} header in:\n{req}"
+        );
+
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn list_models_uses_header_not_query() {
+        let body = br#"{"models":[{"name":"models/gemini-test"}]}"#.to_vec();
+        let (port, stop, captured) = spawn_capture_server(200, body).await;
+        let base = format!("http://127.0.0.1:{port}/v1beta");
+        let provider = provider_for(&base);
+
+        let models = provider.list_models().await.unwrap();
+        assert_eq!(models, vec!["gemini-test".to_string()]);
+
+        let reqs = captured.lock().unwrap();
+        assert_eq!(reqs.len(), 1);
+        let req = &reqs[0];
+        let first_line = req.lines().next().unwrap_or("");
+        assert!(first_line.contains("/models"), "request line: {first_line}");
+        assert!(
+            !first_line.contains(SENTINEL_KEY),
+            "sentinel must not appear in request line/query: {first_line}"
+        );
+        assert!(
+            !first_line.contains("?key="),
+            "must not use ?key= query auth: {first_line}"
+        );
+        let header_line = format!("{GOOGLE_API_KEY_HEADER}: {SENTINEL_KEY}");
+        assert!(
+            req.to_ascii_lowercase()
+                .contains(&header_line.to_ascii_lowercase()),
+            "missing {GOOGLE_API_KEY_HEADER} header in:\n{req}"
+        );
+
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn http_error_body_echoing_key_is_scrubbed() {
+        // Server echoes the key in the error body (as some APIs / proxies do).
+        let leak_body = format!(r#"{{"error":"bad key {SENTINEL_KEY}"}}"#).into_bytes();
+        let (port, stop, _captured) = spawn_capture_server(401, leak_body).await;
+        let base = format!("http://127.0.0.1:{port}/v1beta");
+        let provider = provider_for(&base);
+
+        let messages = vec![serde_json::json!({"role":"user","content":"hi"})];
+        let err = provider.chat(&messages, "gemini-test").await.unwrap_err();
+        let text = err.to_string();
+        assert!(
+            !text.contains(SENTINEL_KEY),
+            "VestError must not echo API key: {text}"
+        );
+        assert!(
+            text.contains("[REDACTED]"),
+            "expected redaction marker: {text}"
+        );
+
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn transport_error_does_not_echo_key() {
+        // Point at a closed port so reqwest fails; URL must not embed the key.
+        let provider = provider_for("http://127.0.0.1:1/v1beta");
+        let messages = vec![serde_json::json!({"role":"user","content":"hi"})];
+        let err = provider.chat(&messages, "gemini-test").await.unwrap_err();
+        let text = err.to_string();
+        assert!(
+            !text.contains(SENTINEL_KEY),
+            "transport VestError must not contain API key: {text}"
+        );
+
+        let err2 = provider.list_models().await.unwrap_err();
+        let text2 = err2.to_string();
+        assert!(
+            !text2.contains(SENTINEL_KEY),
+            "list_models transport VestError must not contain API key: {text2}"
+        );
+    }
 }
