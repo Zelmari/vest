@@ -153,6 +153,7 @@ vest scan <TARGET>
 vest scan --resume <SCAN_ID>
 vest scan --list-profiles
 vest doctor
+vest policy explain [--tool …] [--effect …] [--url …] [--path …]
 vest config | providers | targets | scans | findings | report | tools | sandbox
 vest completions <bash|zsh|fish>
 ```

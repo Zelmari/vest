@@ -50,8 +50,52 @@ pub enum Commands {
     Sandbox(SandboxArgs),
     /// Print local diagnostics (config, paths, provider env presence, policy)
     Doctor,
+    /// Explain / simulate agent tool policy
+    #[command(subcommand)]
+    Policy(PolicyArgs),
     /// Generate shell completions
     Completions(CompletionsArgs),
+}
+
+#[derive(Subcommand)]
+pub enum PolicyArgs {
+    /// Explain tool effects, grants, and optionally simulate a decision
+    Explain(PolicyExplainArgs),
+}
+
+#[derive(Args)]
+pub struct PolicyExplainArgs {
+    /// Simulate a registered agent tool by name
+    #[arg(long)]
+    pub tool: Option<String>,
+
+    /// Simulate a ToolEffect (snake_case), alone or overriding --tool's default effect
+    #[arg(long)]
+    pub effect: Option<String>,
+
+    /// URL argument for network-effect simulation
+    #[arg(long)]
+    pub url: Option<String>,
+
+    /// Path argument for filesystem-effect simulation
+    #[arg(long)]
+    pub path: Option<String>,
+
+    /// Treat the simulation session as interactive (TTY-style RequireInteractive)
+    #[arg(long)]
+    pub interactive: bool,
+
+    /// Pre-approve LocalWrite for the simulation session
+    #[arg(long)]
+    pub approve_writes: bool,
+
+    /// Pre-approve exploit-class effects for the simulation session
+    #[arg(long)]
+    pub approve_exploits: bool,
+
+    /// Pre-approve a specific ToolEffect by snake_case name (repeatable)
+    #[arg(long = "approve-effect", value_name = "EFFECT", action = clap::ArgAction::Append)]
+    pub approve_effect: Vec<String>,
 }
 
 #[derive(Args)]
@@ -536,6 +580,9 @@ async fn dispatch(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Tools(args) => commands::tools::run(args).await?,
         Commands::Sandbox(args) => commands::sandbox::run(args).await?,
         Commands::Doctor => commands::doctor::run(&cli.config).await?,
+        Commands::Policy(PolicyArgs::Explain(args)) => {
+            commands::policy::run(args, &cli.config).await?
+        }
         Commands::Completions(args) => {
             let shell = match args.shell.as_str() {
                 "bash" => clap_complete::Shell::Bash,

@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod doctor;
 pub mod findings;
+pub mod policy;
 pub mod providers;
 pub mod report;
 pub mod sandbox;

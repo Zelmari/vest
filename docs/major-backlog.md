@@ -49,10 +49,10 @@ Standing non-claims (R1–R6) remain out of scope. Memory stays unsupported/simu
 - Keep `vest doctor` for paths/config; avoid duplicating entire doctor — share a small safety/egress summary helper if cheap.
 
 ### Acceptance
-- [ ] CLI wiring + `commands/policy.rs`
-- [ ] Simulation path with Deny/Allow/RequireInteractive
-- [ ] Tests asserting key sections + one simulated deny/allow
-- [ ] README mention under diagnostics
+- [x] CLI wiring + `commands/policy.rs`
+- [x] Simulation path with Deny/Allow/RequireInteractive
+- [x] Tests asserting key sections + one simulated deny/allow
+- [x] README mention under diagnostics
 
 ---
 
