@@ -44,6 +44,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K3b | **Fixed** | `web_scan` reimplemented probes via `ureq` | `WebScanner::inspect_url`; probes gated like CLI | `agent_http_scoped_client.rs` | `5a5fc2c` |
 | K4 | **Fixed** | TargetContent/PotentiallySecretBearing were redact-only | Default stub/metadata; flags for opt-in egress | `target_content_egress_tests.rs` | `dbd5e0c` |
 | K5 | **Fixed** | Was forgeable `ApprovalDecision::Allow` | Opaque `ApprovedToolCall` | policy/approved tests | `1951cd2` |
+| K5b | **Fixed** | tool-use used evaluate+invoke; `execute_authorised` skipped egress | Live path `authorise`→`execute_authorised`→`filter_for_model`; `invoke` thin wrapper | `authorise_execute_hot_path_tests.rs` | (this commit) |
 | K6 | **Fixed** | Was `DefaultHasher` on selected keys | SHA-256 over material args | policy tests | `1951cd2` |
 | K7 | **Fixed** | Was `TOOL_FS_SCOPE` OnceLock | `ExecutionSession` Arc captured by tools | session unit test | `0f76c32` |
 | K8 | **Fixed** | Was `std::fs::read` entire file then truncate | Cap via `Read::take` + `spawn_blocking` | `agent_read_file_bounded.rs` | `b7a0744` |
@@ -79,7 +80,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 1 Product contract | done | docs; honesty pass ongoing |
 | 2 ExecutionSession | done | session.rs + CLI wiring |
 | 3 Interactive approval | **pending** | RequireInteractive still no prompt |
-| 4 Opaque capabilities | **done** | `ApprovedToolCall` + SHA-256 digests |
+| 4 Opaque capabilities | **done** | `ApprovedToolCall` + SHA-256 digests; K5b hot path unified |
 | 5 ScopedHttpClient | **done** (agent tools) | agent `http_get`/`http_post` on ScopedHttpClient; WebScanner still has its own client (WEB-1) |
 | 6 Filesystem tools | pending | |
 | 7 Egress | **done** (K4) | TargetContent/PSB gated; LocalContent/ProcessMemory unchanged |

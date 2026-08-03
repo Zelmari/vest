@@ -44,13 +44,17 @@ impl ToolRegistry {
         self.tools.values().map(|t| t.definition.clone()).collect()
     }
 
-    /// Execute only with an opaque capability minted by [`PolicyEngine::authorise`].
-    /// A public `ApprovalDecision::Allow` value is not sufficient (K5).
+    /// Execute only with an opaque capability minted by [`PolicyEngine::authorise`],
+    /// then apply model egress filtering (K5 / K5b).
+    ///
+    /// A public `ApprovalDecision::Allow` value is not accepted and cannot execute
+    /// a handler. Results are always passed through [`filter_for_model`] before return.
     pub fn execute_authorised(
         &self,
         name: &str,
         args: serde_json::Value,
         approval: &ApprovedToolCall,
+        ctx: &AuthorisationContext,
     ) -> Result<serde_json::Value, String> {
         if approval.tool_id() != name {
             return Err(format!(
@@ -58,19 +62,17 @@ impl ToolRegistry {
                 approval.tool_id()
             ));
         }
-        let call = {
-            let tool = self
-                .tools
-                .get(name)
-                .ok_or_else(|| format!("Tool '{name}' not found"))?;
-            NormalisedToolCall::from_parts(
-                name,
-                tool.definition.effect,
-                tool.definition.egress_class,
-                &args,
-            )
-        };
-        if !approval.matches_call(&call, approval.session_id()) {
+        let tool = self
+            .tools
+            .get(name)
+            .ok_or_else(|| format!("Tool '{name}' not found"))?;
+        let call = NormalisedToolCall::from_parts(
+            name,
+            tool.definition.effect,
+            tool.definition.egress_class,
+            &args,
+        );
+        if !approval.matches_call(&call, &ctx.session_id) {
             return Err(format!(
                 "tool '{name}' execution denied: capability does not match exact call"
             ));
@@ -80,10 +82,14 @@ impl ToolRegistry {
                 "tool '{name}' execution denied: one-shot capability already consumed"
             ));
         }
-        self.execute_unchecked(name, args)
+        let raw = (tool.handler)(args)?;
+        let from_effect = classify_tool_result(tool.definition.effect, &raw);
+        let class = more_restrictive(tool.definition.egress_class, from_effect);
+        filter_for_model(&raw, class, ctx)
     }
 
-    /// Always evaluates policy before running the handler, then filters egress.
+    /// Thin wrapper over the live hot path (K5b):
+    /// [`PolicyEngine::authorise`] → [`Self::execute_authorised`] (includes egress filter).
     pub fn invoke(
         &self,
         policy: &PolicyEngine,
@@ -102,39 +108,10 @@ impl ToolRegistry {
             tool.definition.egress_class,
             &args,
         );
-        let decision = policy.evaluate(ctx, &call);
-        match decision {
-            ApprovalDecision::Allow => {}
-            ApprovalDecision::Deny { reason } => {
-                return Err(format!("policy denied '{name}': {reason}"));
-            }
-            ApprovalDecision::RequireInteractive { reason } => {
-                if !ctx.interactive {
-                    return Err(format!(
-                        "policy denied '{name}' (non-interactive): {reason}"
-                    ));
-                }
-                return Err(format!(
-                    "policy requires interactive approval for '{name}': {reason}"
-                ));
-            }
-        }
-
-        let raw = (tool.handler)(args)?;
-        let from_effect = classify_tool_result(tool.definition.effect, &raw);
-        let class = more_restrictive(tool.definition.egress_class, from_effect);
-        filter_for_model(&raw, class, ctx)
-    }
-
-    fn execute_unchecked(
-        &self,
-        name: &str,
-        args: serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        match self.tools.get(name) {
-            Some(tool) => (tool.handler)(args),
-            None => Err(format!("Tool '{name}' not found")),
-        }
+        let approval = policy
+            .authorise(ctx, &call)
+            .map_err(|decision| format_authorise_denial(name, &decision))?;
+        self.execute_authorised(name, args, &approval, ctx)
     }
 
     /// Compatibility shim — prefer [`Self::invoke`] (does not evaluate policy).
@@ -153,6 +130,20 @@ impl ToolRegistry {
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn format_authorise_denial(name: &str, decision: &ApprovalDecision) -> String {
+    match decision {
+        ApprovalDecision::Deny { reason } => {
+            format!("policy denied '{name}': {reason}")
+        }
+        ApprovalDecision::RequireInteractive { reason } => {
+            format!("policy requires interactive approval for '{name}': {reason}")
+        }
+        ApprovalDecision::Allow => {
+            format!("policy denied '{name}': unexpected Allow without capability")
+        }
     }
 }
 

@@ -37,17 +37,14 @@ model proposes tool call
   -> look up registered ToolDefinition (effect + egress_class)
      (missing tool → ToolEffect::Unknown → deny)
   -> NormalisedToolCall::from_parts (path/url/method/pid + SHA-256 arg_digest)
-  -> PolicyEngine::evaluate(AuthorisationContext, call)
-       - empty tool id → deny
-       - unknown effect → deny
-       - material target required: FS effects need string `path`; network effects need string `url` (missing/non-string deny)
-       - filesystem scope check (canonical path under ApprovedFilesystemScope)
-       - network scope check (parsed origin under ApprovedNetworkScope)
-       - matching ApprovalToken (tool, effect, target, arg digest, session, TTL)
-       - interactive / non-interactive rules for high-impact effects
-  -> on Allow: PolicyEngine mints opaque ApprovedToolCall
-  -> execute_authorised(handler, ApprovedToolCall)  // forgeable Allow is not accepted
-  -> classify + filter result for model egress (see model-data-boundary.md)
+  -> PolicyEngine::authorise(AuthorisationContext, call)
+       - evaluate (empty tool id / unknown effect / material target / FS+net scope / grants / interactive)
+       - on Allow: mint opaque ApprovedToolCall (forgeable public Allow is not accepted)
+  -> ToolRegistry::execute_authorised(handler, ApprovedToolCall, ctx)
+       - capability must match tool id, args digest, session
+       - run handler
+       - classify + filter_for_model (egress always applied before model sees results)
+  -> ToolRegistry::invoke is a thin wrapper over the same hot path
 ```
 
 ## Opaque approval capability

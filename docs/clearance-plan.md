@@ -2,7 +2,7 @@
 
 **Branch:** `main` only (no feature branches)  
 **Baseline tip when plan written:** `fe1d041`  
-**Last cleared:** POL-1 @ `f918a47`  
+**Last cleared:** BRW-1 @ `c2dd6c4`  
 **Method:** Clear items one-by-one; each item gets code + regression tests + ledger update; keep CI green.  
 **Living suite:** extend tests as behaviour changes (see Wave T).  
 **Loop:** agent clearance loop continues until the open queue is empty and CI is green.
@@ -52,7 +52,7 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 | Order | ID | Item | Done when | Primary tests |
 |------:|----|------|-----------|---------------|
 | 7 | **K2** | Interactive approval prompt OR exact CLI pre-grants; wire `--approve-*` | TTY can grant one-shot; non-TTY/`--no-approval` deny | interactive + `no_approval_cli.rs` |
-| 8 | **K5b** | Unify hot path: `authorise` → `execute_authorised` → `filter_for_model` | `invoke` not the only live path; egress always applied | policy/tool_registry tests |
+| 8 | **K5b** | Unify hot path: `authorise` → `execute_authorised` → `filter_for_model` | `invoke` not the only live path; egress always applied | `authorise_execute_hot_path_tests.rs` |
 | 9 | **K8** | Bound `read_file` + `spawn_blocking` | Cap bytes; no full-file absorb | FS size/DoS tests |
 | 10 | **POL-1** | Fail closed when path/url missing or non-string for scoped effects | Deny before handler | adversarial policy |
 | 11 | **K11** | Honour form GET/POST in web probes | Correct method + query/body | web form method tests |
@@ -165,7 +165,7 @@ N5 → K3 → K3b → REP-1 → PROV-1 → K4 → K2 → K5b → K8 → POL-1 �
 - [x] PROV-1 Google key not in URL
 - [x] K4 TargetContent egress gate
 - [ ] K2 interactive / exact grants
-- [ ] K5b authorise→execute_authorised→filter
+- [x] K5b authorise→execute_authorised→filter
 - [x] K8 bounded read_file
 - [x] POL-1 material target fail-closed
 - [x] K11 form method

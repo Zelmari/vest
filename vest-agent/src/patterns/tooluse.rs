@@ -76,8 +76,8 @@ impl ToolUseRunner {
                     if let Some(tool_call) = self.parse_tool_call(&response) {
                         let tool_name = &tool_call.name;
 
-                        // Always evaluate policy — `requires_approval` is UX-only and
-                        // must never skip the policy engine.
+                        // Hot path (K5b): authorise → execute_authorised → filter_for_model.
+                        // `requires_approval` is UX-only and must never skip the policy engine.
                         let (effect, egress_class) = match self.registry.get_tool(tool_name) {
                             Some(registered) => (
                                 registered.definition.effect,
@@ -92,30 +92,35 @@ impl ToolUseRunner {
                             &tool_call.arguments,
                         );
                         let auth_ctx = self.safety.auth_context();
-                        let decision = self.safety.policy().evaluate(&auth_ctx, &normalised);
-                        if !decision.is_allow() {
-                            let reason = match &decision {
-                                ApprovalDecision::Deny { reason } => reason.clone(),
-                                ApprovalDecision::RequireInteractive { reason } => reason.clone(),
-                                ApprovalDecision::Allow => String::new(),
+                        let approval =
+                            match self.safety.policy().authorise(&auth_ctx, &normalised) {
+                                Ok(cap) => cap,
+                                Err(decision) => {
+                                    let reason = match &decision {
+                                        ApprovalDecision::Deny { reason } => reason.clone(),
+                                        ApprovalDecision::RequireInteractive { reason } => {
+                                            reason.clone()
+                                        }
+                                        ApprovalDecision::Allow => String::new(),
+                                    };
+                                    ctx.add_message(
+                                        "assistant",
+                                        format!("Tool call rejected by policy: {}", tool_name),
+                                    );
+                                    ctx.add_message(
+                                        "user",
+                                        format!(
+                                            "The tool call '{}' was rejected by the policy engine: {}. Try a different approach.",
+                                            tool_name, reason
+                                        ),
+                                    );
+                                    ctx.add_observation(format!(
+                                        "Policy denied '{}': {}",
+                                        tool_name, reason
+                                    ));
+                                    continue;
+                                }
                             };
-                            ctx.add_message(
-                                "assistant",
-                                format!("Tool call rejected by policy: {}", tool_name),
-                            );
-                            ctx.add_message(
-                                "user",
-                                format!(
-                                    "The tool call '{}' was rejected by the policy engine: {}. Try a different approach.",
-                                    tool_name, reason
-                                ),
-                            );
-                            ctx.add_observation(format!(
-                                "Policy denied '{}': {}",
-                                tool_name, reason
-                            ));
-                            continue;
-                        }
 
                         if let Err(e) = self.safety.check_rate_limit().await {
                             ctx.add_observation(format!("Rate limited: {}", e));
@@ -134,11 +139,11 @@ impl ToolUseRunner {
                             ),
                         );
 
-                        match self.registry.invoke(
-                            self.safety.policy(),
-                            &auth_ctx,
+                        match self.registry.execute_authorised(
                             tool_name,
                             tool_call.arguments.clone(),
+                            &approval,
+                            &auth_ctx,
                         ) {
                             Ok(result) => {
                                 let result_str = serde_json::to_string(&result).unwrap_or_default();
