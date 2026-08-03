@@ -193,7 +193,7 @@ N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓
 - [x] REP-2 markdown escape
 - [x] CLI-SANDBOX docker deny
 - [ ] HTTP-1/WEB-1/WEB-2 client unify
-- [ ] R3-lite IP deny option
+- [x] R3-lite IP deny option
 - [x] BIN-1 binary bounds
 - [x] POL-2 permissive API hygiene
 - [x] CLI-SOFT / CLI-DEAD

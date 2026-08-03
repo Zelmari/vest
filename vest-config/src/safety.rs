@@ -90,6 +90,11 @@ pub struct SafetyConfig {
     /// When true, bounded finding evidence excerpts may be included in validator prompts.
     #[serde(default)]
     pub allow_model_egress_evidence: bool,
+
+    /// When true, reject scan/tool targets that are loopback, RFC1918, link-local,
+    /// or known cloud-metadata hosts (R3-lite). Default false for backwards compatibility.
+    #[serde(default)]
+    pub deny_private_targets: bool,
 }
 
 impl SafetyConfig {
@@ -137,6 +142,7 @@ impl Default for SafetyConfig {
             allow_model_egress_target_content: false,
             allow_model_egress_potentially_secret_bearing: false,
             allow_model_egress_evidence: false,
+            deny_private_targets: false,
         }
     }
 }

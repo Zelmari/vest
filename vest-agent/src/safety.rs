@@ -32,6 +32,7 @@ pub struct SafetyConfig {
     pub allowed_targets: Vec<String>,
     pub blocked_targets: Vec<String>,
     pub allowed_networks: Vec<String>,
+    pub deny_private_targets: bool,
 }
 
 impl Default for SafetyConfig {
@@ -50,6 +51,7 @@ impl Default for SafetyConfig {
             allowed_targets: Vec::new(),
             blocked_targets: Vec::new(),
             allowed_networks: Vec::new(),
+            deny_private_targets: false,
         }
     }
 }
@@ -175,6 +177,11 @@ impl SafetyChecker {
 
     /// Structural target allow/block — exact host/origin or exact path equality, not substring.
     pub fn is_target_allowed(&self, target_name: &str) -> bool {
+        if self.config.deny_private_targets
+            && crate::net_scope::is_private_or_metadata_target(target_name)
+        {
+            return false;
+        }
         if !self.config.blocked_targets.is_empty() {
             for blocked in &self.config.blocked_targets {
                 if ApprovedNetworkScope::host_equals(target_name, blocked) || target_name == blocked

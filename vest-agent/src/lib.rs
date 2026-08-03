@@ -24,7 +24,10 @@ pub use egress::{
 };
 pub use fs_scope::{resolve_read_path, ApprovedFilesystemScope, FsScopeError};
 pub use memory::AgentMemory;
-pub use net_scope::{ApprovedNetworkScope, NetScopeError, NetworkOrigin};
+pub use net_scope::{
+    is_private_or_metadata_host, is_private_or_metadata_target, ApprovedNetworkScope,
+    NetScopeError, NetworkOrigin,
+};
 pub use orchestrator::Orchestrator;
 pub use planner::Planner;
 pub use policy::{

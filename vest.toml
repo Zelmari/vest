@@ -145,6 +145,8 @@ max_concurrent_exploits = 1
 allowed_targets = []
 blocked_targets = []
 allowed_networks = []
+# Optional R3-lite: deny loopback/RFC1918/link-local/metadata scan targets (default false).
+deny_private_targets = false
 
 [profiles.quick]
 description = "Quick scan — 5 minute surface scan"

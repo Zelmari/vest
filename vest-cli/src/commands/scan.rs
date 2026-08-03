@@ -4,8 +4,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vest_agent::{
-    cli_pregrant_effects, resolve_read_path, ApprovedFilesystemScope, ApprovedNetworkScope,
-    ExecutionSession,
+    cli_pregrant_effects, is_private_or_metadata_target, resolve_read_path,
+    ApprovedFilesystemScope, ApprovedNetworkScope, ExecutionSession,
 };
 use vest_core::error::VestError;
 use vest_core::traits::{Reporter, Scanner};
@@ -237,6 +237,9 @@ pub async fn run(
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     let target = detect_target(&args)?;
+    if config.safety.deny_private_targets {
+        deny_private_scan_target(&target)?;
+    }
     println!(
         "\u{2502} Type:        {:<35} \u{2502}",
         target.target_type.to_string()
@@ -253,6 +256,7 @@ pub async fn run(
     println!("\u{2502} Active probes: {:<32} \u{2502}", probes_label);
 
     let (fs_scope, net_scope) = scopes_from_target(&target);
+    let net_scope = net_scope.with_deny_private_targets(config.safety.deny_private_targets);
     let fs_scope_display = format_fs_scope(&fs_scope);
     let net_scope_display = format_net_scope(&net_scope);
     println!(
@@ -1321,6 +1325,7 @@ async fn build_safety(
         allowed_targets: config.safety.allowed_targets.clone(),
         blocked_targets: config.safety.blocked_targets.clone(),
         allowed_networks: config.safety.allowed_networks.clone(),
+        deny_private_targets: config.safety.deny_private_targets,
     };
 
     let mut explicit_effects = Vec::with_capacity(args.approve_effect.len());
@@ -1347,6 +1352,22 @@ async fn build_safety(
         checker.grant_effect_session(effect).await;
     }
     Ok(checker)
+}
+
+fn deny_private_scan_target(target: &Target) -> Result<(), VestError> {
+    let candidates = [
+        target.url_str.as_deref(),
+        target.host.as_deref(),
+        Some(target.name.as_str()),
+    ];
+    for c in candidates.into_iter().flatten() {
+        if is_private_or_metadata_target(c) {
+            return Err(VestError::InvalidInput(format!(
+                "Target '{c}' is loopback/private/link-local/metadata; refused because safety.deny_private_targets=true"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn detect_target(args: &ScanArgs) -> Result<Target, VestError> {
