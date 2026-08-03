@@ -31,7 +31,7 @@ an AI provider.
 
 **Actual today:** CLI web scan is passive-by-default. Active probes require
 `scanner.web.allow_active_probes = true` and/or `--allow-active-probes`.
-Remaining related work: `WebScanner` not fully on `ScopedHttpClient` (**WEB-1**).
+Crawl/fetch HTTP goes through `ScopedHttpClient` (**WEB-1** cleared).
 
 ### C — Active authorised checks — **partial**
 
@@ -61,8 +61,8 @@ opted in via config/flag still run without a separate approval step.
 - Approvals bind exact session + tool + effect + canonical args (SHA-256 digest).
 - Tool-loop and size limits prevent runaway use.
 - Agent `http_get` / `http_post` use `ScopedHttpClient`; `web_scan` uses `WebScanner::inspect_url` with the same probe gating as CLI (**K3**/**K3b** cleared).
+- `WebScanner` crawl/fetch is on `ScopedHttpClient` (**WEB-1** cleared).
 - Exact CLI effect+session pre-grants and TTY one-shot Allow (**K2** cleared; not a full approval UX).
-- **Gap:** `WebScanner` client stack not fully unified on `ScopedHttpClient` (**WEB-1**).
 
 ### F — CI / non-interactive — **mostly works**
 

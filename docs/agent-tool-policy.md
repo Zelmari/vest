@@ -90,7 +90,7 @@ Unregistered tool names map to `ToolEffect::Unknown` / `DataEgressClass::Prohibi
 
 ## Related HTTP status
 
-CLI-registered agent HTTP tools (`http_get` / `http_post` / `web_scan`) use `ScopedHttpClient` / `WebScanner::inspect_url` with redirect re-auth and the same active-probe gating as CLI web scans (**K3**/**K3b** cleared). Remaining unify work: `WebScanner` itself is not fully on `ScopedHttpClient` (**WEB-1**). See [data-flow.md](data-flow.md) and [clearance-plan.md](clearance-plan.md).
+CLI-registered agent HTTP tools (`http_get` / `http_post` / `web_scan`) use `ScopedHttpClient` / `WebScanner::inspect_url` with redirect re-auth and the same active-probe gating as CLI web scans (**K3**/**K3b** cleared). `WebScanner` crawl/fetch is on `ScopedHttpClient` (**WEB-1** cleared). See [data-flow.md](data-flow.md) and [clearance-plan.md](clearance-plan.md).
 
 ## Related
 

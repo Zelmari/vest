@@ -57,7 +57,7 @@ This prevents dumping full evidence JSON into remote prompts by default.
 See [security-model.md](security-model.md) for the full list. Primary remote egress surfaces:
 
 1. LLM provider HTTP APIs (`vest-providers`)
-2. Scanner/tool HTTP to user-authorised targets (including CLI `ureq` helpers that are not yet on `ScopedHttpClient`)
+2. Scanner/tool HTTP to user-authorised targets (`ScopedHttpClient` for agent HTTP tools and `WebScanner` crawl/fetch)
 3. External tools (e.g. nuclei subprocesses)
 4. User-selected report output paths
 5. Local SQLite under the workspace directory

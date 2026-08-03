@@ -31,9 +31,7 @@ Agent tools and scanners that read local content operate only within an `Approve
 
 ### Network boundary
 
-Network tools and crawlers are intended to operate only within an `ApprovedNetworkScope` (scheme, host, effective port / origin, optional IP policy). Comparisons use parsed `url::Url` origins, not substring matching. Redirects and discovered links are re-authorised before request on the web scanner path. CLI agent `http_get` / `http_post` / `web_scan` use `ScopedHttpClient` (**K3**/**K3b** fixed).
-
-**Remaining gap:** `WebScanner` is not yet fully on `ScopedHttpClient` (**WEB-1**). See [data-flow.md](data-flow.md) and [clearance-plan.md](clearance-plan.md).
+Network tools and crawlers are intended to operate only within an `ApprovedNetworkScope` (scheme, host, effective port / origin, optional IP policy). Comparisons use parsed `url::Url` origins, not substring matching. Redirects and discovered links are re-authorised before request on the web scanner path. CLI agent `http_get` / `http_post` / `web_scan` and `WebScanner` crawl/fetch use `ScopedHttpClient` (**K3**/**K3b**/**WEB-1** fixed).
 
 ### Process-memory boundary
 
@@ -71,7 +69,7 @@ User command
 ## Where data can leave the process
 
 1. **Remote LLM providers** (`vest-providers/*`): chat, stream, embed requests built from agent context / validator prompts.
-2. **HTTP clients in scanners and tools** (`vest-scanner` web/network/browser; CLI `http_get`/`http_post`/`web_scan`): outbound requests to user-authorised targets (and must not follow unauthorised redirects). Agent tools use `ScopedHttpClient`; `WebScanner` client unify remains (**WEB-1**).
+2. **HTTP clients in scanners and tools** (`vest-scanner` web/network/browser; CLI `http_get`/`http_post`/`web_scan`): outbound requests to user-authorised targets (and must not follow unauthorised redirects). Agent tools and `WebScanner` crawl/fetch use `ScopedHttpClient` (**WEB-1**).
 3. **External tools** (`vest-tools` nuclei): subprocess invocation against authorised targets. Binary resolution prefers `~/.vest/tools/nuclei`, else an absolute `PATH` entry from `which` (never cwd-relative `./nuclei-templates/nuclei`). Non-zero exit and wall-clock timeout fail closed; `-t` template paths must resolve under `~/.vest/tools/nuclei-templates`.
 4. **Reports / files written by the CLI**: user-selected output paths.
 5. **SQLite storage** under the workspace directory: local persistence only.

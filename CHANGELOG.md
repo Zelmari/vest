@@ -29,11 +29,12 @@ where practical for a pre-1.0 experimental toolkit.
 - **K14 / CLI-EXIT-7 / CLI-PARTIAL:** typed scan/completions exits; provider soft-fail → exit 7 with findings preserved; any scanner fatal → exit 5 after preserving successful scanner findings (`exit_codes_strict.rs`).
 - **CFG-1:** agent/provider/network zero budgets rejected at config load; deny_unknown on those sections.
 - **PROV-3 / PROV-4:** provider `timeout_seconds` wired into clients + sequential fallback; Google `list_models` fail-closed on HTTP errors.
+- **WEB-1 / HTTP-1:** `WebScanner` crawl/fetch on `ScopedHttpClient`; stream-cap bodies.
 
 ### Still open (honest)
 
-- `WebScanner` not yet fully on `ScopedHttpClient` — **WEB-1**.
 - Scanner heuristics populate `severity_score_estimate` (not labelled as CVSS).
+- DNS rebinding / connection-time IP binding incomplete (see backlog B1 / standing R3).
 
 See [docs/clearance-plan.md](docs/clearance-plan.md) for the ordered remaining list.
 

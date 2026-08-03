@@ -11,7 +11,7 @@
 | # | ID | Item | Status |
 |---|----|------|--------|
 | 1 | A1 | JSON-clean stdout (banners/progress → stderr when `-f json`) | done |
-| 2 | A2 | Docs sync (WEB-1 / passive web / ledger drift) | pending |
+| 2 | A2 | Docs sync (WEB-1 / passive web / ledger drift) | done |
 | 3 | A3 | Reject unknown `--profile` / invalid `--mode` | done |
 | 4 | A4 | Wire or delete unused profile `safety` overrides | pending |
 | 5 | A5 | CI: `--locked` + `--all-features`; smarter flake strategy | done |
@@ -43,7 +43,7 @@
 ## Progress checkboxes
 
 - [x] A1 JSON stdout
-- [ ] A2 Docs sync
+- [x] A2 Docs sync
 - [x] A3 Profile/mode reject
 - [ ] A4 Profile safety wire/delete
 - [x] A5 CI locked/all-features

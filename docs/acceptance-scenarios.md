@@ -6,7 +6,7 @@ Network: loopback only. Filesystem: temp dirs. Providers: fakes / `none`.
 | # | Scenario | Automation status |
 |---|----------|-------------------|
 | 1 | Local offline scan (`--provider none`) | `human_workflows` / `scan_cli` |
-| 2 | Passive local web scan | **partial / mismatched** — tests exist, but CLI web scan enables active probes today |
+| 2 | Passive local web scan | covered — CLI web scan passive by default; active probes opt-in (`--allow-active-probes` / config) (**N5**) |
 | 3 | Interactive file-content approval | **partial** — exact `--approve-effect local_file_content_read` pre-grant works; TTY one-shot prompt when interactive+TTY (not full multi-step UI) |
 | 4 | Interactive active web deny/allow | **partial** — `--approve-exploits` / `--approve-effect active_network_probe` pre-grant; TTY one-shot; non-TTY deny |
 | 5 | Non-interactive CI JSON, deny sensitive | covered (`--no-approval` fail-closed; `no_approval_cli`) |
