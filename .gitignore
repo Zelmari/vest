@@ -21,6 +21,7 @@ target/
 .Trashes
 .VolumeIcon.icns
 .com.apple.timemachine.donotpresent
+__MACOSX/
 
 # === Windows ===
 Thumbs.db
@@ -84,18 +85,36 @@ credentials.toml
 credentials
 .credentials
 !examples/demo-target/vulnerable-files/.env
+# Extensionless private keys (demo target exception below)
+id_rsa
+id_ecdsa
+id_ed25519
+id_dsa
+!examples/demo-target/vulnerable-files/id_rsa
+.ssh/
+# direnv may export secrets into the shell
+.envrc
+.direnv/
 
 # === Database & Storage ===
 *.db
 *.sqlite
 *.sqlite3
 vest.db
+# SQLite sidecar files from local scan runs
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 # Local Vest workspace / state under the repo (do not use ~ expansion; gitignore is literal)
 .vest/
 
 # === Logs ===
 *.log
 logs/
+nohup.out
 
 # === Temporary & Backup ===
 *.tmp
@@ -112,11 +131,16 @@ logs/
 .codex/
 .aider*
 .agent/
+.opencode/
 
 # === Config Overrides ===
 vest.toml.local
 vest.toml.user
 config.local.toml
+*.local.json
+# opencode config may hold provider keys / MCP tokens
+opencode.json
+opencode.jsonc
 
 # === Docker ===
 .docker/
@@ -131,10 +155,16 @@ frida-scripts/
 # === Test / Benchmark Artifacts ===
 test-results/
 coverage/
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 lcov.info
 examples/.vest-demo/
 examples/reports/generated/
 examples/demo-target/vulnerable-binary/vuln
+# Flask private data dir for the demo webapp (local run state)
+examples/demo-target/webapp/instance/
 *.profraw
 *.profdata
 flamegraph.svg
