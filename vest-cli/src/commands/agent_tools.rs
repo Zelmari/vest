@@ -42,7 +42,7 @@ fn scoped_client_for_url(
         .authorise_url(url)
         .map_err(|e| VestError::ApprovalDenied(format!("network scope: {e}")))?;
     let scope = vest_scanner::web::NetworkScope::from_url(&authorised)
-        .map_err(|e| ToolError::handler(format!("network scope: {e}")))?;
+        .map_err(|e| ToolError::client(format!("network scope: {e}")))?;
     let budgets = HttpClientBudgets {
         max_body_bytes,
         ..HttpClientBudgets::default()
@@ -82,7 +82,7 @@ fn agent_http_post(
 ) -> Result<serde_json::Value, ToolError> {
     let client = scoped_client_for_url(session, url, 4_096)?;
     let body_str = serde_json::to_string(data)
-        .map_err(|e| ToolError::handler(format!("Failed to serialize: {e}")))?;
+        .map_err(|e| ToolError::client(format!("Failed to serialize: {e}")))?;
     let (status, body) = block_on_scoped(client.post_text(url, &body_str, "application/json"))?;
     let truncated = truncate_chars(&body, 4000);
     Ok(serde_json::json!({
@@ -95,15 +95,15 @@ fn agent_http_post(
 
 /// Sync bounded read used by [`agent_read_file`] (and the blocking pool).
 fn read_file_capped(path: &Path) -> Result<serde_json::Value, ToolError> {
-    let meta = std::fs::metadata(path)
-        .map_err(|e| ToolError::handler(format!("Cannot read file: {e}")))?;
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| ToolError::handler(format!("Cannot read file: {e}")))?;
+    let meta =
+        std::fs::metadata(path).map_err(|e| ToolError::io(format!("Cannot read file: {e}")))?;
+    let mut file =
+        std::fs::File::open(path).map_err(|e| ToolError::io(format!("Cannot read file: {e}")))?;
     let mut buf = Vec::with_capacity(AGENT_READ_FILE_MAX_BYTES as usize);
     file.by_ref()
         .take(AGENT_READ_FILE_MAX_BYTES)
         .read_to_end(&mut buf)
-        .map_err(|e| ToolError::handler(format!("Cannot read file: {e}")))?;
+        .map_err(|e| ToolError::io(format!("Cannot read file: {e}")))?;
     let text = String::from_utf8_lossy(&buf);
     Ok(serde_json::json!({
         "path": path.display().to_string(),
@@ -122,7 +122,7 @@ fn agent_read_file(session: &ExecutionSession, path: &str) -> Result<serde_json:
         handle.block_on(async move {
             tokio::task::spawn_blocking(move || read_file_capped(&resolved))
                 .await
-                .map_err(|e| ToolError::handler(format!("read_file task failed: {e}")))?
+                .map_err(|e| ToolError::io(format!("read_file task failed: {e}")))?
         })
     })
 }
@@ -158,7 +158,7 @@ pub(crate) fn build_tool_registry(
             let url = args
                 .get("url")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::handler("url parameter required"))?;
+                .ok_or_else(|| ToolError::missing_parameter("url parameter required"))?;
             authorise_tool_url(&session_web, url)?;
 
             // Same gating as CLI web scan: default off unless config/flag opts in.
@@ -173,7 +173,7 @@ pub(crate) fn build_tool_registry(
             let (page, config_findings) = tokio::task::block_in_place(|| {
                 handle.block_on(async { scanner.inspect_url(url).await })
             })
-            .map_err(|e| ToolError::handler(format!("web_scan failed: {e}")))?;
+            .map_err(|e| ToolError::client(format!("web_scan failed: {e}")))?;
 
             let links = page.links.clone();
             let forms = page.forms.clone();
@@ -230,10 +230,13 @@ pub(crate) fn build_tool_registry(
         move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let path_str = args.get("path")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::handler("path parameter required"))?;
+                .ok_or_else(|| ToolError::missing_parameter("path parameter required"))?;
             let path = resolve_tool_path(&session_file, path_str)?;
             if !path.exists() {
-                return Err(ToolError::handler(format!("Path not found: {}", path.display())));
+                return Err(ToolError::path_not_found(format!(
+                    "Path not found: {}",
+                    path.display()
+                )));
             }
 
             let scanner = vest_scanner::files::FileScanner::new();
@@ -241,7 +244,7 @@ pub(crate) fn build_tool_registry(
                 &path,
                 &scanner.limits,
             )
-            .map_err(|e| ToolError::handler(format!("Failed to collect files: {}", e)))?;
+            .map_err(|e| ToolError::io(format!("Failed to collect files: {}", e)))?;
             if outcome.truncated {
                 tracing::warn!(
                     "file_scan traversal truncated: {:?}",
@@ -368,7 +371,7 @@ pub(crate) fn build_tool_registry(
             let url = args
                 .get("url")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::handler("url parameter required"))?;
+                .ok_or_else(|| ToolError::missing_parameter("url parameter required"))?;
             agent_http_get(&session_http_get, url)
         },
     );
@@ -387,7 +390,7 @@ pub(crate) fn build_tool_registry(
             let url = args
                 .get("url")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::handler("url parameter required"))?;
+                .ok_or_else(|| ToolError::missing_parameter("url parameter required"))?;
             let data = args.get("data").cloned().unwrap_or(serde_json::json!({}));
             agent_http_post(&session_http_post, url, &data)
         },
@@ -407,7 +410,7 @@ pub(crate) fn build_tool_registry(
             let path = args
                 .get("path")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::handler("path parameter required"))?;
+                .ok_or_else(|| ToolError::missing_parameter("path parameter required"))?;
             agent_read_file(&session_read, path)
         },
     );
@@ -426,7 +429,7 @@ pub(crate) fn build_tool_registry(
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
             let resolved = resolve_tool_path(&session_list, path)?;
             let entries: Vec<String> = std::fs::read_dir(&resolved)
-                .map_err(|e| ToolError::handler(format!("Cannot read directory: {}", e)))?
+                .map_err(|e| ToolError::io(format!("Cannot read directory: {}", e)))?
                 .filter_map(|e| e.ok())
                 .map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
@@ -460,7 +463,7 @@ pub(crate) fn build_tool_registry(
         move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let url = args.get("url")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::handler("url parameter required"))?;
+                .ok_or_else(|| ToolError::missing_parameter("url parameter required"))?;
             authorise_tool_url(&session_browser, url)?;
             let handle = tokio::runtime::Handle::current();
             tokio::task::block_in_place(|| {
@@ -483,7 +486,7 @@ pub(crate) fn build_tool_registry(
         move |args: serde_json::Value| -> Result<serde_json::Value, ToolError> {
             let content = args.get("content")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::handler("content parameter required"))?;
+                .ok_or_else(|| ToolError::missing_parameter("content parameter required"))?;
             let source = args.get("source")
                 .and_then(|v| v.as_str())
                 .unwrap_or("inline");

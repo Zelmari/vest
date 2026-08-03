@@ -93,7 +93,7 @@ impl ToolRegistry {
         let raw = (tool.handler)(args)?;
         let from_effect = classify_tool_result(tool.definition.effect, &raw);
         let class = more_restrictive(tool.definition.egress_class, from_effect);
-        filter_for_model(&raw, class, ctx).map_err(ToolError::handler)
+        filter_for_model(&raw, class, ctx).map_err(ToolError::egress)
     }
 
     /// Thin wrapper over the live hot path (K5b):
