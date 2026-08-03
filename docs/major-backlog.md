@@ -69,10 +69,10 @@ Standing non-claims (R1–R6) remain out of scope. Memory stays unsupported/simu
 - Fail clearly if nuclei binary / templates missing.
 
 ### Acceptance
-- [ ] Config section + scanner module
-- [ ] CLI wiring + consent gate
-- [ ] Unit/integration tests (fake binary where practical)
-- [ ] Docs: `--scanner nuclei`
+- [x] Config section + scanner module
+- [x] CLI wiring + consent gate
+- [x] Unit/integration tests (fake binary where practical)
+- [x] Docs: `--scanner nuclei`
 
 ---
 

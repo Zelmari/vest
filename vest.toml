@@ -130,6 +130,12 @@ max_total_bytes = 1073741824
 follow_symlinks = false
 ignore_globs = []
 
+# Explicit only — not selected by target-type defaults. Requires active-probe consent.
+[scanner.nuclei]
+enabled = true
+severity = ["critical", "high", "medium"]
+timeout = 300
+
 [safety]
 write_approval = true
 exploit_approval = true

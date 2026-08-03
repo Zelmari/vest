@@ -2728,6 +2728,7 @@ dependencies = [
  "ureq",
  "url",
  "vest-core",
+ "vest-tools",
 ]
 
 [[package]]

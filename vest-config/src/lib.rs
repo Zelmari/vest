@@ -36,6 +36,11 @@ pub fn validate_config(config: &VestConfig) -> Result<(), VestError> {
     config.scanner.web.validate().map_err(VestError::Config)?;
     config
         .scanner
+        .nuclei
+        .validate()
+        .map_err(VestError::Config)?;
+    config
+        .scanner
         .binary
         .validate()
         .map_err(VestError::Config)?;
@@ -106,6 +111,7 @@ pub fn default_config() -> VestConfig {
             browser: config::BrowserScannerConfig::default(),
             network: config::NetworkScannerConfig::default(),
             files: config::FileScannerConfig::default(),
+            nuclei: config::NucleiScannerConfig::default(),
         },
         safety: safety::SafetyConfig::default(),
         profiles: std::collections::HashMap::new(),

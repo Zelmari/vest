@@ -304,20 +304,20 @@ pub async fn run(
     ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     let start = std::time::Instant::now();
-    let (mut findings, scanner_fatals) = run_builtin_scanners(
-        &scanner_names,
-        &target,
-        &config,
-        args.allow_memory_simulation,
+    let (mut findings, scanner_fatals) = run_builtin_scanners(BuiltinScannerRun {
+        scanner_names: &scanner_names,
+        target: &target,
+        config: &config,
+        allow_memory_simulation: args.allow_memory_simulation,
         allow_active_probes,
         machine,
-        &BTreeSet::new(),
-        Vec::new(),
-        Some(CheckpointSink {
+        skip: &BTreeSet::new(),
+        initial_findings: Vec::new(),
+        checkpoint: Some(CheckpointSink {
             scan_id: &scan_id,
             target_id: &target.id,
         }),
-    )
+    })
     .await?;
 
     // Degraded exit: scanner fatals (5) take precedence over provider soft (7).
@@ -505,6 +505,18 @@ struct CheckpointSink<'a> {
     target_id: &'a str,
 }
 
+struct BuiltinScannerRun<'a> {
+    scanner_names: &'a [String],
+    target: &'a Target,
+    config: &'a vest_config::VestConfig,
+    allow_memory_simulation: bool,
+    allow_active_probes: bool,
+    machine: bool,
+    skip: &'a BTreeSet<String>,
+    initial_findings: Vec<Finding>,
+    checkpoint: Option<CheckpointSink<'a>>,
+}
+
 fn parse_fail_on_severity(raw: Option<&str>) -> Result<Option<Severity>, VestError> {
     let Some(level) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
@@ -680,7 +692,7 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<FinalizeScanResul
             "model": model,
             "scanners": scanner_names,
         }),
-        status: scan_status.clone(),
+        status: scan_status,
         agent_model: agent_model.clone(),
         started_at: Some(started_at),
         completed_at: Some(completed_at),
@@ -778,16 +790,19 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<FinalizeScanResul
 /// fatal per-scanner errors. Total failure (`ran_ok == 0`) is a hard error.
 /// Partial failure preserves findings for finalize, then the caller exits non-zero.
 async fn run_builtin_scanners(
-    scanner_names: &[String],
-    target: &Target,
-    config: &vest_config::VestConfig,
-    allow_memory_simulation: bool,
-    allow_active_probes: bool,
-    machine: bool,
-    skip: &BTreeSet<String>,
-    mut all_findings: Vec<Finding>,
-    checkpoint: Option<CheckpointSink<'_>>,
+    run: BuiltinScannerRun<'_>,
 ) -> Result<(Vec<Finding>, Vec<VestError>), VestError> {
+    let BuiltinScannerRun {
+        scanner_names,
+        target,
+        config,
+        allow_memory_simulation,
+        allow_active_probes,
+        machine,
+        skip,
+        initial_findings: mut all_findings,
+        checkpoint,
+    } = run;
     let mut fatal_errors: Vec<VestError> = Vec::new();
     let mut ran_ok = 0usize;
 
@@ -860,6 +875,14 @@ async fn run_builtin_scanners(
                 );
                 let scanner = vest_scanner::files::FileScanner::new().with_limits(limits);
                 run_scanner("files", scanner, target).await
+            }
+            "nuclei" if config.scanner.nuclei.enabled => {
+                let n = &config.scanner.nuclei;
+                let scanner = vest_scanner::nuclei::NucleiScanner::new()
+                    .with_timeout(std::time::Duration::from_secs(n.timeout as u64))
+                    .with_severity_filter(n.severity.clone())
+                    .with_allow_active_probes(allow_active_probes);
+                run_scanner("nuclei", scanner, target).await
             }
             disabled if known_scanner(disabled) => {
                 ui_line!(
@@ -998,7 +1021,10 @@ fn known_scanner(name: &str) -> bool {
     if name == "browser" {
         return true;
     }
-    matches!(name, "web" | "binary" | "memory" | "network" | "files")
+    matches!(
+        name,
+        "web" | "binary" | "memory" | "network" | "files" | "nuclei"
+    )
 }
 
 fn dedupe_findings(findings: &mut Vec<Finding>) {
@@ -1670,20 +1696,20 @@ async fn resume_scan(
 
     let start = std::time::Instant::now();
     let scan_started_at = scan.started_at.unwrap_or_else(chrono::Utc::now);
-    let (mut findings, scanner_fatals) = run_builtin_scanners(
-        &scanner_names,
-        &target,
-        &config,
-        args.allow_memory_simulation,
+    let (mut findings, scanner_fatals) = run_builtin_scanners(BuiltinScannerRun {
+        scanner_names: &scanner_names,
+        target: &target,
+        config: &config,
+        allow_memory_simulation: args.allow_memory_simulation,
         allow_active_probes,
         machine,
-        &skip,
-        existing_findings,
-        Some(CheckpointSink {
+        skip: &skip,
+        initial_findings: existing_findings,
+        checkpoint: Some(CheckpointSink {
             scan_id: &scan_id,
             target_id: &target.id,
         }),
-    )
+    })
     .await?;
 
     let mut degraded: Option<VestError> = None;

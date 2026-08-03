@@ -55,6 +55,8 @@ pub struct NucleiTool {
     binary_path: PathBuf,
     timeout: Duration,
     templates_root: PathBuf,
+    /// When non-empty, passed as nuclei `-severity` (comma-separated).
+    severity_filter: Vec<String>,
 }
 
 impl NucleiTool {
@@ -63,6 +65,7 @@ impl NucleiTool {
             binary_path,
             timeout: Duration::from_secs(DEFAULT_NUCLEI_TIMEOUT_SECS),
             templates_root: default_templates_root(),
+            severity_filter: Vec::new(),
         })
     }
 
@@ -72,6 +75,7 @@ impl NucleiTool {
             binary_path,
             timeout: Duration::from_secs(DEFAULT_NUCLEI_TIMEOUT_SECS),
             templates_root: default_templates_root(),
+            severity_filter: Vec::new(),
         }
     }
 
@@ -82,6 +86,15 @@ impl NucleiTool {
 
     pub fn with_templates_root(mut self, root: PathBuf) -> Self {
         self.templates_root = root;
+        self
+    }
+
+    pub fn with_severity_filter(mut self, severities: impl IntoIterator<Item = String>) -> Self {
+        self.severity_filter = severities
+            .into_iter()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
         self
     }
 
@@ -120,6 +133,10 @@ impl NucleiTool {
             .arg("-json")
             .arg("-silent")
             .arg("-disable-update-check");
+
+        if !self.severity_filter.is_empty() {
+            cmd.arg("-severity").arg(self.severity_filter.join(","));
+        }
 
         // B4: never omit `-t` (unconstrained nuclei defaults). Empty list ⇒ root.
         let template_arg = self.constrained_template_arg(templates)?;

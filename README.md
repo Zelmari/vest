@@ -95,6 +95,7 @@ Default: `agent.default_pattern` in `vest.toml`, overridable with `--mode`.
 |---------|--------|--------|
 | `files` | path | Secrets / sensitive files; depth, size, symlink limits |
 | `web` | URL | Crawl + probes; no auto off-origin redirects; robots optional |
+| `nuclei` | URL | ProjectDiscovery nuclei (explicit `--scanner nuclei` only; active-probe consent required) |
 | `binary` | ELF/PE/Mach-O | Sinks, mitigations, ROP gadgets |
 | `memory` | PID | Real acquisition **not implemented**; simulation only with flag |
 | `network` | host:port | Ports / TLS / basic DNS signals |

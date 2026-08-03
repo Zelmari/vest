@@ -114,7 +114,7 @@ pub async fn run(
     println!();
 
     println!("Registered agent tools (scan path)");
-    println!("  {:<20} {:<34} {}", "tool", "effect", "egress");
+    println!("  {:<20} {:<34} egress", "tool", "effect");
     for (name, effect, egress) in REGISTERED_TOOLS {
         println!("  {name:<20} {effect:<34} {egress:?}");
     }

@@ -20,6 +20,7 @@ chromiumoxide = { workspace = true, features = ["tokio-runtime"], optional = tru
 ureq = { workspace = true }
 
 vest-core = { workspace = true }
+vest-tools = { workspace = true }
 
 [features]
 browser = ["dep:chromiumoxide"]

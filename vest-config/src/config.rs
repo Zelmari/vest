@@ -152,6 +152,43 @@ pub struct ScannerConfig {
 
     #[serde(default)]
     pub files: FileScannerConfig,
+
+    /// First-class nuclei scanner (`--scanner nuclei`). Not a target-type default.
+    #[serde(default)]
+    pub nuclei: NucleiScannerConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NucleiScannerConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_nuclei_severity")]
+    pub severity: Vec<String>,
+    #[serde(default = "default_nuclei_timeout")]
+    pub timeout: u32,
+}
+
+fn default_nuclei_severity() -> Vec<String> {
+    vec!["critical".into(), "high".into(), "medium".into()]
+}
+
+impl Default for NucleiScannerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            severity: default_nuclei_severity(),
+            timeout: default_nuclei_timeout(),
+        }
+    }
+}
+
+impl NucleiScannerConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.timeout == 0 {
+            return Err("scanner.nuclei.timeout must be non-zero".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -151,13 +151,14 @@ pub async fn run(config_path: impl AsRef<Path>) -> Result<(), Box<dyn std::error
 
     println!("Scanners enabled");
     println!(
-        "  memory={} binary={} web={} browser={} network={} files={}",
+        "  memory={} binary={} web={} browser={} network={} files={} nuclei={}",
         config.scanner.memory.enabled,
         config.scanner.binary.enabled,
         config.scanner.web.enabled,
         config.scanner.browser.enabled,
         config.scanner.network.enabled,
         config.scanner.files.enabled,
+        config.scanner.nuclei.enabled,
     );
     println!(
         "  web.allow_active_probes: {}",

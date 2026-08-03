@@ -6,6 +6,7 @@ pub mod http_client;
 pub mod memory;
 pub mod net_safety;
 pub mod network;
+pub mod nuclei;
 pub mod registry;
 pub mod scanner;
 pub mod web;
