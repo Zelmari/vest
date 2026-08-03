@@ -142,9 +142,10 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    async fn spawn_server(
-        handler: Arc<dyn Fn(String) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync>,
-    ) -> (u16, Arc<AtomicBool>) {
+    type MockHttpResponse = (u16, Vec<(String, String)>, Vec<u8>);
+    type MockHttpHandler = Arc<dyn Fn(String) -> MockHttpResponse + Send + Sync>;
+
+    async fn spawn_server(handler: MockHttpHandler) -> (u16, Arc<AtomicBool>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let stop = Arc::new(AtomicBool::new(false));
@@ -184,8 +185,7 @@ mod tests {
 
     #[tokio::test]
     async fn same_origin_ok_cross_origin_denied() {
-        let handler: Arc<dyn Fn(String) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync> =
-            Arc::new(|_req| (200u16, vec![], b"ok".to_vec()));
+        let handler: MockHttpHandler = Arc::new(|_req| (200u16, vec![], b"ok".to_vec()));
         let (port, stop) = spawn_server(handler).await;
         let base = format!("http://127.0.0.1:{port}/");
         let scope = NetworkScope::from_url(&Url::parse(&base).unwrap()).unwrap();
@@ -203,14 +203,13 @@ mod tests {
 
     #[tokio::test]
     async fn redirect_escape_blocked() {
-        let handler: Arc<dyn Fn(String) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync> =
-            Arc::new(|_req| {
-                (
-                    302u16,
-                    vec![("Location".into(), "http://evil.example/".into())],
-                    vec![],
-                )
-            });
+        let handler: MockHttpHandler = Arc::new(|_req| {
+            (
+                302u16,
+                vec![("Location".into(), "http://evil.example/".into())],
+                vec![],
+            )
+        });
         let (port, stop) = spawn_server(handler).await;
         let base = format!("http://127.0.0.1:{port}/");
         let scope = NetworkScope::from_url(&Url::parse(&base).unwrap()).unwrap();
