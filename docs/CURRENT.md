@@ -15,7 +15,7 @@
 - K17 honesty: keep docs/ledger honest; close wiring gaps — ongoing
 - K14: typed exits for all subcommands done (`0f047c5`) — legacy string fallback removed, unknown errors exit 1
 - D2: stringly `ToolError::Handler` retired (`e639536`); `Handler` is last-resort only
-- Provider embeddings: OpenAI-compat implemented; Anthropic/Google are honest "not implemented" stubs — decide wire-or-reject
+- Provider embeddings: documented non-goal (contract); OpenAI-compat wrapper kept, Anthropic/Google keep honest "not implemented" errors, no product callers
 - `vest-payloads/`: intentional non-workspace orphan (kept); deletion still an option
 
 **Working rule:** do not invent scope from stale backlog prose. Take work only from `docs/standing-backlog.md`.

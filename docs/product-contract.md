@@ -113,6 +113,7 @@ First-class nuclei scans (`--scanner nuclei`, never a default target type) use t
 - Comprehensive vulnerability certification.
 - Autonomous scanning of arbitrary internet targets.
 - Claiming “production-grade” or “fully secure.”
+- Provider embeddings: no CLI or agent surface uses them. OpenAI-compat exposes a raw `/embeddings` wrapper; Anthropic/Google return explicit “not implemented” errors. Wiring real embeddings is a non-goal unless a feature needs them.
 
 ## Installation (contract)
 
