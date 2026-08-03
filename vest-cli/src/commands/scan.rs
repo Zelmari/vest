@@ -17,6 +17,22 @@ use vest_scanner::{HttpClientBudgets, ScopedHttpClient};
 /// Matches the tool description ("up to 10KB").
 const AGENT_READ_FILE_MAX_BYTES: u64 = 10_240;
 
+/// Formats that must keep stdout free of banners/progress (product contract F).
+fn is_machine_format(format: &str) -> bool {
+    matches!(format.trim().to_ascii_lowercase().as_str(), "json")
+}
+
+/// Human chatter: stderr for machine formats so stdout stays parseable.
+macro_rules! ui_line {
+    ($machine:expr, $($arg:tt)*) => {{
+        if $machine {
+            eprintln!($($arg)*);
+        } else {
+            println!($($arg)*);
+        }
+    }};
+}
+
 fn resolve_tool_path(session: &ExecutionSession, path: &str) -> Result<PathBuf, String> {
     resolve_read_path(&session.filesystem, Path::new(path))
         .map_err(|e| format!("filesystem scope: {e}"))
@@ -131,30 +147,37 @@ pub async fn run(
         return Err(VestError::Unsupported("--resume is not implemented".into()).into());
     }
 
-    println!("\u{250c}{}\u{2510}", "\u{2500}".repeat(50));
-    println!("\u{2502} {:^48} \u{2502}", "VEST SCAN");
-    println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
-    println!(
+    let machine = is_machine_format(&args.format);
+
+    ui_line!(machine, "\u{250c}{}\u{2510}", "\u{2500}".repeat(50));
+    ui_line!(machine, "\u{2502} {:^48} \u{2502}", "VEST SCAN");
+    ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+    ui_line!(
+        machine,
         "\u{2502} Target:      {:<35} \u{2502}",
         &args.target[..args.target.len().min(35)]
     );
-    println!(
+    ui_line!(
+        machine,
         "\u{2502} Profile:     {:<35} \u{2502}",
         args.profile.as_deref().unwrap_or("default")
     );
-    println!(
+    ui_line!(
+        machine,
         "\u{2502} Mode:        {:<35} \u{2502}",
         args.mode.as_deref().unwrap_or("from config")
     );
-    println!(
+    ui_line!(
+        machine,
         "\u{2502} Provider:    {:<35} \u{2502}",
         args.provider.as_deref().unwrap_or("from config")
     );
-    println!(
+    ui_line!(
+        machine,
         "\u{2502} Model:       {:<35} \u{2502}",
         args.model.as_deref().unwrap_or("from config")
     );
-    println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+    ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     // Dry-run and live scan share validation: load config, detect target, resolve
     // scopes, then either print the plan (no side effects) or execute.
@@ -174,10 +197,15 @@ pub async fn run(
         vest_config::default_config()
     };
 
-    let profile = args
-        .profile
-        .as_ref()
-        .and_then(|name| config.profiles.get(name));
+    // Fail closed: unknown --profile must not silently fall back to defaults.
+    let profile = match args.profile.as_ref() {
+        None => None,
+        Some(name) => Some(config.profiles.get(name).ok_or_else(|| {
+            VestError::InvalidInput(format!(
+                "Unknown profile '{name}'. Define [profiles.{name}] in config or omit --profile."
+            ))
+        })?),
+    };
 
     // --offline / --no-ai force provider none; reject conflicting --provider.
     let force_offline = args.offline || args.no_ai;
@@ -220,61 +248,80 @@ pub async fn run(
             }
         });
 
-    let scan_mode: ScanMode = args
+    // Fail closed: invalid --mode (or profile/config pattern) must not fall through to Pipeline.
+    let mode_raw = args
         .mode
         .clone()
         .or_else(|| profile.and_then(|p| p.pattern.clone()))
-        .unwrap_or_else(|| config.agent.default_pattern.clone())
-        .parse()
-        .unwrap_or(ScanMode::Pipeline);
+        .unwrap_or_else(|| config.agent.default_pattern.clone());
+    let scan_mode: ScanMode = mode_raw.parse().map_err(|_| {
+        VestError::InvalidInput(format!(
+            "Invalid scan mode '{mode_raw}'. Expected one of: pipeline, swarm, tool-use, hierarchical"
+        ))
+    })?;
 
-    println!("\u{2502} Provider:    {:<35} \u{2502}", provider_name);
-    println!("\u{2502} Model:       {:<35} \u{2502}", model);
-    println!(
+    ui_line!(
+        machine,
+        "\u{2502} Provider:    {:<35} \u{2502}",
+        provider_name
+    );
+    ui_line!(machine, "\u{2502} Model:       {:<35} \u{2502}", model);
+    ui_line!(
+        machine,
         "\u{2502} Mode:        {:<35} \u{2502}",
         scan_mode.to_string()
     );
-    println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+    ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     let target = detect_target(&args)?;
     if config.safety.deny_private_targets {
         deny_private_scan_target(&target)?;
     }
-    println!(
+    ui_line!(
+        machine,
         "\u{2502} Type:        {:<35} \u{2502}",
         target.target_type.to_string()
     );
 
     let scanner_names = selected_scanners(&args, &config, &target);
-    println!(
+    ui_line!(
+        machine,
         "\u{2502} Scanners:    {:<35} \u{2502}",
         truncate_for_box(&scanner_names.join(", "), 35)
     );
 
     let allow_active_probes = args.allow_active_probes || config.scanner.web.allow_active_probes;
     let probes_label = if allow_active_probes { "on" } else { "off" };
-    println!("\u{2502} Active probes: {:<32} \u{2502}", probes_label);
+    ui_line!(
+        machine,
+        "\u{2502} Active probes: {:<32} \u{2502}",
+        probes_label
+    );
 
     let (fs_scope, net_scope) = scopes_from_target(&target);
     let net_scope = net_scope.with_deny_private_targets(config.safety.deny_private_targets);
     let fs_scope_display = format_fs_scope(&fs_scope);
     let net_scope_display = format_net_scope(&net_scope);
-    println!(
+    ui_line!(
+        machine,
         "\u{2502} FS scope:    {:<35} \u{2502}",
         truncate_for_box(&fs_scope_display, 35)
     );
-    println!(
+    ui_line!(
+        machine,
         "\u{2502} Net scope:   {:<35} \u{2502}",
         truncate_for_box(&net_scope_display, 35)
     );
-    println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+    ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     if args.dry_run {
-        println!(
+        ui_line!(
+            machine,
             "\u{2502} {:^48} \u{2502}",
             "DRY RUN - plan only, no actions"
         );
-        println!(
+        ui_line!(
+            machine,
             "\u{2502} {:^48} \u{2502}",
             truncate_for_box(
                 &format!(
@@ -285,7 +332,7 @@ pub async fn run(
                 48
             )
         );
-        println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+        ui_line!(machine, "\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
         // No DB writes, no network/scanner execution, no agent tools.
         return Ok(());
     }
@@ -307,8 +354,8 @@ pub async fn run(
     let registry = build_tool_registry(Arc::clone(&session), allow_active_probes);
     let safety = build_safety(&args, &config, Arc::clone(&session)).await?;
 
-    println!("\u{2502} {:^48} \u{2502}", "Running scan...");
-    println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+    ui_line!(machine, "\u{2502} {:^48} \u{2502}", "Running scan...");
+    ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     let start = std::time::Instant::now();
     let (mut findings, scanner_fatals) = run_builtin_scanners(
@@ -317,6 +364,7 @@ pub async fn run(
         &config,
         args.allow_memory_simulation,
         args.allow_active_probes,
+        machine,
     )
     .await?;
 
@@ -327,7 +375,8 @@ pub async fn run(
     }
 
     if provider_name == "none" {
-        println!(
+        ui_line!(
+            machine,
             "\u{2502} {:^48} \u{2502}",
             "Agent disabled; scanner-only scan"
         );
@@ -338,7 +387,8 @@ pub async fn run(
     } else {
         match crate::commands::providers::create_provider(&provider_name, &model, &config) {
             Ok(provider) => {
-                println!(
+                ui_line!(
+                    machine,
                     "\u{2502} {:^48} \u{2502}",
                     "Provider configured; running agent"
                 );
@@ -365,7 +415,8 @@ pub async fn run(
                         findings = agent_findings;
                     }
                     Err(e) => {
-                        println!(
+                        ui_line!(
+                            machine,
                             "\u{2502} Agent skipped: {:<35} \u{2502}",
                             truncate_for_box(&format!("{}", e), 35)
                         );
@@ -380,11 +431,13 @@ pub async fn run(
                 }
             }
             Err(e) => {
-                println!(
+                ui_line!(
+                    machine,
                     "\u{2502} Agent skipped: {:<35} \u{2502}",
                     truncate_for_box(&format!("{}", e), 35)
                 );
-                println!(
+                ui_line!(
+                    machine,
                     "\u{2502} {:^48} \u{2502}",
                     "Scanner findings will still be reported"
                 );
@@ -417,21 +470,22 @@ pub async fn run(
     .await
     {
         Ok(stored) => {
-            println!("\u{2502} Stored:      {:<35} \u{2502}", stored);
+            ui_line!(machine, "\u{2502} Stored:      {:<35} \u{2502}", stored);
         }
         Err(e) => {
-            println!("\u{2502} Error: {:<41} \u{2502}", format!("{}", e));
-            println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+            ui_line!(machine, "\u{2502} Error: {:<41} \u{2502}", format!("{}", e));
+            ui_line!(machine, "\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
             return Err(e.into());
         }
     }
 
     if let Some(err) = degraded {
-        println!(
+        ui_line!(
+            machine,
             "\u{2502} {:^48} \u{2502}",
             "Degraded: findings preserved; non-zero exit"
         );
-        println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+        ui_line!(machine, "\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
         return Err(err.into());
     }
 
@@ -485,12 +539,18 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, VestError>
         findings,
         start,
     } = input;
+    let machine = is_machine_format(&args.format);
     let elapsed = start.elapsed();
-    println!(
+    ui_line!(
+        machine,
         "\u{2502} Duration:    {:<35} \u{2502}",
         format!("{:.1}s", elapsed.as_secs_f64())
     );
-    println!("\u{2502} Findings:    {:<35} \u{2502}", findings.len());
+    ui_line!(
+        machine,
+        "\u{2502} Findings:    {:<35} \u{2502}",
+        findings.len()
+    );
 
     let (critical, high, medium, low, info) = severity_counts(&findings);
     let scan_session = vest_core::types::ScanSession {
@@ -537,7 +597,8 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, VestError>
         args.include_evidence,
     )
     .await?;
-    println!("{}", report);
+    // Report payload stays on stdout (JSON-only when `-f json`).
+    println!("{report}");
 
     if let Some(ref output_path) = args.output {
         std::fs::write(
@@ -551,7 +612,7 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, VestError>
             .await?,
         )
         .map_err(VestError::Io)?;
-        println!("\nReport saved to: {}", output_path);
+        ui_line!(machine, "\nReport saved to: {}", output_path);
     }
 
     let db_path = get_db_path();
@@ -590,6 +651,7 @@ async fn run_builtin_scanners(
     config: &vest_config::VestConfig,
     allow_memory_simulation: bool,
     allow_active_probes: bool,
+    machine: bool,
 ) -> Result<(Vec<Finding>, Vec<VestError>), VestError> {
     let mut all_findings = Vec::new();
     let mut fatal_errors: Vec<VestError> = Vec::new();
@@ -655,7 +717,8 @@ async fn run_builtin_scanners(
                 run_scanner("files", scanner, target).await
             }
             disabled if known_scanner(disabled) => {
-                println!(
+                ui_line!(
+                    machine,
                     "\u{2502} Scanner off: {:<35} \u{2502}",
                     truncate_for_box(disabled, 35)
                 );
@@ -670,7 +733,8 @@ async fn run_builtin_scanners(
                 for finding in &mut findings {
                     mark_finding_source(finding, "scanner", Some(scanner_name));
                 }
-                println!(
+                ui_line!(
+                    machine,
                     "\u{2502} {:<12} {:<28} \u{2502}",
                     scanner_name,
                     format!("{} finding(s)", findings.len())
@@ -679,7 +743,8 @@ async fn run_builtin_scanners(
             }
             Err(e) => {
                 let msg = e.to_string();
-                println!(
+                ui_line!(
+                    machine,
                     "\u{2502} {:<12} {:<28} \u{2502}",
                     scanner_name,
                     truncate_for_box(&format!("failed: {}", msg), 28)

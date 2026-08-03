@@ -35,6 +35,66 @@ fn read_json(path: &Path) -> serde_json::Value {
 }
 
 #[test]
+fn json_scan_stdout_is_machine_clean() {
+    let root = temp_root("json-stdout-clean");
+    let vest_home = root.join("home");
+    let fixture = root.join("fixture.txt");
+
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        &fixture,
+        "service_password = \"correct-horse-battery-staple\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(vest_bin())
+        .env("VEST_HOME", &vest_home)
+        .env_remove("VEST_DB_PATH")
+        .arg("scan")
+        .arg(&fixture)
+        .arg("--target-type")
+        .arg("file")
+        .arg("--scanner")
+        .arg("files")
+        .arg("--provider")
+        .arg("none")
+        .arg("-f")
+        .arg("json")
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Box-drawing / banner chatter must not appear on stdout.
+    for ch in [
+        '\u{250c}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{2502}', '\u{2500}', '\u{251c}',
+        '\u{2524}',
+    ] {
+        assert!(
+            !stdout.contains(ch),
+            "stdout must not contain box-drawing {ch:?}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+    assert!(
+        !stdout.contains("VEST SCAN"),
+        "stdout must not contain human banner\nstdout:\n{stdout}"
+    );
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout must be valid JSON only");
+    assert!(
+        parsed.get("summary").is_some() || parsed.get("findings").is_some(),
+        "expected a scan report JSON object, got: {parsed}"
+    );
+    assert!(
+        stderr.contains("VEST SCAN") || stderr.contains("Running scan"),
+        "banners/progress should land on stderr\nstderr:\n{stderr}"
+    );
+}
+
+#[test]
 fn scan_file_with_builtin_scanner_reports_and_stores_findings() {
     let root = temp_root("scan-file");
     let vest_home = root.join("home");
