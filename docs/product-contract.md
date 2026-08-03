@@ -14,7 +14,7 @@ an AI provider.
 
 ### A — Local offline scan — **works**
 
-- Scan a file or directory with `--provider none` (or no provider).
+- Scan a file or directory with `--provider none`, `--offline`, `--no-ai`, or no provider configured (defaults to `none`).
 - No LLM network for the scan itself.
 - Bounded traversal (depth, files, bytes, no symlink follow by default).
 - Terminal and/or JSON report.
@@ -68,14 +68,15 @@ opted in via config/flag still run without a separate approval step.
 
 - No prompts when non-TTY / `--no-approval`.
 - Sensitive / approval-required ops denied unless already authorised by effect/session grants.
-- Exit codes exist; prefer typed `VestError` mapping. Legacy string fallback remains.
+- Exit codes: typed `VestError::cli_exit_code()` on scan/completions; legacy string fallback is last-resort for remaining untyped subcommands.
 - JSON on stdout is the intended machine path; keep diagnostics on stderr.
 
-### G — Degraded operation — **partial**
+### G — Degraded operation — **mostly works** (scan path)
 
-- Provider / storage / single-file failures reported explicitly in many paths.
-- Partial results preserved where possible (validator).
-- Exit status should reflect failure severity; not every subcommand path is proven.
+- Provider / agent soft failure: scanner findings preserved, report/DB written, process exits **7**.
+- Partial scanner failure: successful scanner findings preserved, report/DB written, process exits **5**.
+- Total scanner failure remains a hard non-zero error (no false success).
+- Not every non-scan subcommand path is proven to the same matrix.
 
 ### H — Large targets — **partial**
 

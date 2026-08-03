@@ -15,7 +15,7 @@ where practical for a pre-1.0 experimental toolkit.
 - **`ScopedHttpClient`** foundations for scanner HTTP; web client construction fails closed (no silent `Client::default()` fallback).
 - Opaque **`ApprovedToolCall`** capability: `execute_authorised` requires a policy-minted token with SHA-256 argument binding (not a forgeable public `Allow`).
 - Invalid explicit **`--target-type`** is rejected instead of guessed.
-- Typed **`VestError::cli_exit_code()`** preferred for exits (legacy string matching remains as fallback on some paths).
+- Typed **`VestError::cli_exit_code()`** for scan/completions exits; legacy string matching is last-resort for remaining untyped subcommands.
 - `.env` loading allowlists Vest/provider keys.
 - Safe Unicode **`truncate_chars`** helper in `vest-core`.
 
@@ -24,12 +24,14 @@ where practical for a pre-1.0 experimental toolkit.
 - **N5:** CLI web scan is passive by default; active probes opt-in via config or `--allow-active-probes`.
 - **K3 / K3b:** Agent `http_get` / `http_post` use `ScopedHttpClient`; `web_scan` uses `WebScanner::inspect_url` with the same probe gating (no bare `ureq` for those tools).
 - **K2:** `--approve-writes` / `--approve-exploits` / `--approve-effect` mint effect+session grants; TTY one-shot Allow when interactive; `--no-approval` and non-TTY without grants remain fail-closed deny.
+- **N4:** `--offline` / `--no-ai` force `--provider none`; when no provider is configured the safer default is `none` (not ollama).
+- **N3:** `vest doctor` prints config path/validity, `VEST_HOME`, sqlite path, provider env key presence (not values), online/offline posture, and a policy summary; fail-closed on bad config.
+- **K14 / CLI-EXIT-7 / CLI-PARTIAL:** typed scan/completions exits; provider soft-fail → exit 7 with findings preserved; any scanner fatal → exit 5 after preserving successful scanner findings (`exit_codes_strict.rs`).
 
 ### Still open (honest)
 
 - `WebScanner` not yet fully on `ScopedHttpClient` — **WEB-1**.
 - Some scanners still populate heuristic `cvss_score` values.
-- No `vest doctor` / `--offline` yet.
 
 See [docs/clearance-plan.md](docs/clearance-plan.md) for the ordered remaining list.
 

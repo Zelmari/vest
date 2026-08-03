@@ -27,7 +27,7 @@ User picks a target
   → results go to terminal / JSON / Markdown + SQLite history
 ```
 
-- **Scanners** can run without an LLM (`--provider none`).
+- **Scanners** can run without an LLM (`--provider none`, `--offline`, or `--no-ai`).
 - **Agents** sit on top of providers + tools. Every tool call is supposed to go through an effect/scope/egress policy — this is **application policy**, not an OS sandbox.
 - **Memory scanning** is unsupported by default. `--allow-memory-simulation` runs a fabricated harness and tags results as simulation (not live PID memory).
 
@@ -140,7 +140,6 @@ What is **not** finished:
 - Approval-required tools need an exact CLI pre-grant (`--approve-writes` / `--approve-exploits` / `--approve-effect`) or a TTY one-shot Allow. Non-TTY without grants and `--no-approval` deny (**K2**).
 - `WebScanner` is not yet fully on `ScopedHttpClient` (**WEB-1**).
 - DNS rebinding / connection-time IP binding is incomplete.
-- No `vest doctor` / `--offline` flag yet (`--provider none` is the offline-ish path).
 
 Details: [docs/security-model.md](docs/security-model.md), [docs/agent-tool-policy.md](docs/agent-tool-policy.md), [docs/model-data-boundary.md](docs/model-data-boundary.md), [docs/data-flow.md](docs/data-flow.md).  
 Clearance order: [docs/clearance-plan.md](docs/clearance-plan.md).  
@@ -150,15 +149,18 @@ Historical snapshot (do not treat as current status): [docs/security-hardening-a
 
 ```text
 vest scan <TARGET>
+vest doctor
 vest config | providers | targets | scans | findings | report | tools | sandbox
 vest completions <bash|zsh|fish>
 ```
 
-Useful flags: `--scanner`, `--target-type`, `--provider`, `--mode`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`, `--approve-writes`, `--approve-exploits`, `--approve-effect`.
+Useful flags: `--scanner`, `--target-type`, `--provider`, `--offline` / `--no-ai`, `--mode`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`, `--approve-writes`, `--approve-exploits`, `--approve-effect`.
+
+When no provider is configured and `--provider` is omitted, the scan default is **`none`** (scanner-only). `--offline` and `--no-ai` force the same.
 
 `--no-approval` means **do not prompt; deny approval-required operations**. It is not “allow everything.” Approve flags mint effect+session grants (scopes still apply).
 
-Exit codes (approximate): `0` ok · `2` bad input · `3` config · `4` authorisation · `5` scanner · `6` persistence · `7` soft provider failure. Typed `VestError::cli_exit_code()` is preferred; some paths still fall back to legacy string matching.
+Exit codes: `0` ok · `2` bad input · `3` config · `4` authorisation · `5` scanner (including partial scanner fatal) · `6` persistence · `7` provider/agent soft failure with preserved findings. Scan/completions use typed `VestError::cli_exit_code()`; other subcommands may still hit a last-resort string fallback.
 
 ## Testing
 

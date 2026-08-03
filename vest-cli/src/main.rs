@@ -23,7 +23,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Run a vulnerability scan
-    Scan(ScanArgs),
+    Scan(Box<ScanArgs>),
     /// Configuration management
     #[command(subcommand)]
     Config(ConfigArgs),
@@ -48,6 +48,8 @@ pub enum Commands {
     /// Experimental Docker helper (build/start/clean) — not an OS sandbox for agent tools
     #[command(subcommand)]
     Sandbox(SandboxArgs),
+    /// Print local diagnostics (config, paths, provider env presence, policy)
+    Doctor,
     /// Generate shell completions
     Completions(CompletionsArgs),
 }
@@ -148,6 +150,14 @@ pub struct ScanArgs {
     /// OR'd with `general.include_report_evidence` in config.
     #[arg(long)]
     pub include_evidence: bool,
+
+    /// Force offline / no AI: equivalent to `--provider none` (scanner-only).
+    #[arg(long)]
+    pub offline: bool,
+
+    /// Alias for `--offline`: disable LLM providers for this scan.
+    #[arg(long = "no-ai")]
+    pub no_ai: bool,
 }
 
 #[derive(Subcommand)]
@@ -425,8 +435,8 @@ fn exit_code_for_error(err: &(dyn std::error::Error + 'static)) -> i32 {
         }
         source = s.source();
     }
-    // Legacy Box<dyn Error> string paths from older call sites — keep conservative
-    // heuristics until all commands return VestError. Prefer migrating call sites.
+    // Last-resort heuristics for remaining untyped `Box<dyn Error>` call sites
+    // (non-scan subcommands). Scan/completions prefer typed VestError (K14).
     exit_code_for_message_legacy(&err.to_string())
 }
 
@@ -490,7 +500,7 @@ async fn main() {
 
 async fn dispatch(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
-        Commands::Scan(args) => commands::scan::run(args, &cli.config).await?,
+        Commands::Scan(args) => commands::scan::run(*args, &cli.config).await?,
         Commands::Config(args) => commands::config::run(args, &cli.config).await?,
         Commands::Providers(args) => commands::providers::run(args).await?,
         Commands::Targets(args) => commands::targets::run(args).await?,
@@ -499,16 +509,17 @@ async fn dispatch(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Report(args) => commands::report::run(args).await?,
         Commands::Tools(args) => commands::tools::run(args).await?,
         Commands::Sandbox(args) => commands::sandbox::run(args).await?,
+        Commands::Doctor => commands::doctor::run(&cli.config).await?,
         Commands::Completions(args) => {
             let shell = match args.shell.as_str() {
                 "bash" => clap_complete::Shell::Bash,
                 "zsh" => clap_complete::Shell::Zsh,
                 "fish" => clap_complete::Shell::Fish,
                 _ => {
-                    return Err(format!(
+                    return Err(vest_core::VestError::InvalidInput(format!(
                         "Unsupported shell: {}. Supported: bash, zsh, fish",
                         args.shell
-                    )
+                    ))
                     .into());
                 }
             };

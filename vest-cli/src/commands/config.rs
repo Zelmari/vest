@@ -232,7 +232,7 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 /// Honour the global `-c/--config` path when present; otherwise fall back to
 /// `./vest.toml` or `~/.vest/vest.toml`.
-fn resolve_config_path(cli_path: &Path) -> PathBuf {
+pub(crate) fn resolve_config_path(cli_path: &Path) -> PathBuf {
     if cli_path.as_os_str() != "vest.toml" || cli_path.exists() {
         return cli_path.to_path_buf();
     }

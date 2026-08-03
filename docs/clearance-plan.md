@@ -2,7 +2,7 @@
 
 **Branch:** `main` only (no feature branches)  
 **Baseline tip when plan written:** `fe1d041`  
-**Last cleared:** K2 @ `78d4447`
+**Last cleared:** K14 / CLI-EXIT-7 / CLI-PARTIAL (+ N3/N4) — tip hash after commit
 **Method:** Clear items one-by-one; each item gets code + regression tests + ledger update; keep CI green.  
 **Living suite:** extend tests as behaviour changes (see Wave T).  
 **Loop:** agent clearance loop continues until the open queue is empty and CI is green.
@@ -66,11 +66,11 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 
 | Order | ID | Item | Done when | Primary tests |
 |------:|----|------|-----------|---------------|
-| 15 | **K14** | Prefer typed `VestError` everywhere; shrink string fallback | Strict exit matrix 2/3/4/5/6/7 | `exit_codes_strict.rs` |
-| 16 | **CLI-EXIT-7** | Provider/agent soft failure → exit 7 while preserving findings | Documented + tested | scan CLI provider fail |
-| 17 | **CLI-PARTIAL** | Partial scanner failure policy (non-zero or explicit degraded) | Contract + test | multi-scanner fail |
-| 18 | **N4** | `--offline` / `--no-ai` (and/or safer default than ollama) | Offline path obvious | CLI offline tests |
-| 19 | **N3** | `vest doctor` (+ optional `policy explain`) | Useful diagnostics | `doctor_cli.rs` |
+| 15 | **K14** | Prefer typed `VestError` everywhere; shrink string fallback | **Done** — scan/completions typed; strict matrix | `exit_codes_strict.rs` |
+| 16 | **CLI-EXIT-7** | Provider/agent soft failure → exit 7 while preserving findings | **Done** — finalize then exit 7 | `exit_codes_strict.rs` |
+| 17 | **CLI-PARTIAL** | Partial scanner failure policy (non-zero or explicit degraded) | **Done** — any scanner fatal → exit 5 after preserve | `exit_codes_strict.rs` |
+| 18 | **N4** | `--offline` / `--no-ai` (and/or safer default than ollama) | **Done** — flags force `none`; no-provider default is `none` | `offline_cli.rs` |
+| 19 | **N3** | `vest doctor` (+ optional `policy explain`) | **Done** — diagnostics + fail-closed bad config (`policy explain` still optional) | `doctor_cli.rs` |
 | 20 | **CFG-1** | Validate agent/provider/network zeros; tighten unknown fields | `load_config` rejects zeros | config torture |
 | 21 | **PROV-2** | `SecretString` for provider keys; redacted Debug all backends | No sentinel in Debug/errors | provider secret tests |
 | 22 | **PROV-3** | Apply `timeout_seconds` to clients + sequential fallback | Hang → Timeout | fallback timeout tests |
@@ -121,6 +121,7 @@ Add/update as waves land (do not wait for all waves):
 | `vest-cli/tests/dry_run_contract.rs` | N1 |
 | `vest-cli/tests/exit_codes_strict.rs` | K14 |
 | `vest-cli/tests/doctor_cli.rs` | N3 |
+| `vest-cli/tests/offline_cli.rs` | N4 |
 | `vest-cli/tests/interactive_approval_cli.rs` | K2 (after UX) |
 | `vest-agent/tests/target_content_egress_tests.rs` | K4 |
 | `vest-agent/tests/interactive_approval_tests.rs` | K2 |
@@ -148,11 +149,14 @@ Keep documented forever unless architecture truly changes:
 
 ```
 N5 → K3 → K3b → REP-1 → PROV-1 → K4 → K2 → K5b → K8 → POL-1 → K11 → K9
-→ BRW-1 → N1 → K14 → CLI-EXIT-7 → CLI-PARTIAL → N4 → N3 → CFG-1 → PROV-2
+→ BRW-1 → N1 → K14 ✓ → CLI-EXIT-7 ✓ → CLI-PARTIAL ✓ → N4 ✓ → N3 ✓ → CFG-1 → PROV-2
 → PROV-3 → PROV-4 → STOR-1 → STOR-2 → STOR-3 → NUC-1 → K16 → REP-2
 → CLI-SANDBOX → HTTP-1 → WEB-1 → WEB-2 → R3-lite → BIN-1 → POL-2
 → CLI-SOFT → CLI-DEAD → N2 → ACCEPT-12/13
 ```
+
+**Next open:** CFG-1 (then PROV-2…).
+
 
 **Progress tracking:** update the table in `docs/product-hardening-ledger.md` and the checkbox section below after each clear.
 
@@ -172,11 +176,11 @@ N5 → K3 → K3b → REP-1 → PROV-1 → K4 → K2 → K5b → K8 → POL-1 �
 - [x] K9 symlink containment
 - [x] BRW-1 browser FS/CDP bounds
 - [x] N1 dry-run contract
-- [ ] K14 typed exits
-- [ ] CLI-EXIT-7 provider soft exit
-- [ ] CLI-PARTIAL scanner policy
-- [ ] N4 offline flag/default
-- [ ] N3 doctor
+- [x] K14 typed exits
+- [x] CLI-EXIT-7 provider soft exit
+- [x] CLI-PARTIAL scanner policy
+- [x] N4 offline flag/default
+- [x] N3 doctor
 - [ ] CFG-1 config validate zeros
 - [ ] PROV-2 SecretString providers
 - [ ] PROV-3 timeouts wired

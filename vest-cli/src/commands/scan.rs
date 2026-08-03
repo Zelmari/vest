@@ -157,10 +157,10 @@ pub async fn run(
     let config_path = config_path.as_ref();
     let config = if config_path.exists() {
         vest_config::load_config(config_path).map_err(|e| {
-            format!(
+            VestError::Config(format!(
                 "Failed to load config {}: {e}. Refusing silent defaults for a present file.",
                 config_path.display()
-            )
+            ))
         })?
     } else {
         eprintln!(
@@ -175,22 +175,46 @@ pub async fn run(
         .as_ref()
         .and_then(|name| config.profiles.get(name));
 
-    let provider_name = args
-        .provider
-        .clone()
-        .or_else(|| {
-            config
-                .providers
-                .as_ref()
-                .map(|p| p.default.provider.clone())
-        })
-        .unwrap_or_else(|| "ollama".to_string());
+    // --offline / --no-ai force provider none; reject conflicting --provider.
+    let force_offline = args.offline || args.no_ai;
+    if force_offline {
+        if let Some(ref p) = args.provider {
+            if p != "none" {
+                return Err(VestError::InvalidInput(format!(
+                    "--offline/--no-ai conflicts with --provider {p} (use --provider none or omit --provider)"
+                ))
+                .into());
+            }
+        }
+    }
+
+    let provider_name = if force_offline {
+        "none".to_string()
+    } else {
+        args.provider
+            .clone()
+            .or_else(|| {
+                config
+                    .providers
+                    .as_ref()
+                    .map(|p| p.default.provider.clone())
+            })
+            // Safer default when no provider is configured: scanner-only (no AI).
+            // Explicit config `[providers.default]` or `--provider` still selects a provider.
+            .unwrap_or_else(|| "none".to_string())
+    };
 
     let model = args
         .model
         .clone()
         .or_else(|| config.providers.as_ref().map(|p| p.default.model.clone()))
-        .unwrap_or_else(|| "llama3.2".to_string());
+        .unwrap_or_else(|| {
+            if provider_name == "none" {
+                "none".to_string()
+            } else {
+                "llama3.2".to_string()
+            }
+        });
 
     let scan_mode: ScanMode = args
         .mode
@@ -279,7 +303,7 @@ pub async fn run(
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     let start = std::time::Instant::now();
-    let mut findings = run_builtin_scanners(
+    let (mut findings, scanner_fatals) = run_builtin_scanners(
         &scanner_names,
         &target,
         &config,
@@ -287,6 +311,12 @@ pub async fn run(
         args.allow_active_probes,
     )
     .await?;
+
+    // Degraded exit: scanner fatals (5) take precedence over provider soft (7).
+    let mut degraded: Option<VestError> = None;
+    if !scanner_fatals.is_empty() {
+        degraded = Some(scanner_failure_error(&scanner_fatals));
+    }
 
     if provider_name == "none" {
         println!(
@@ -335,6 +365,9 @@ pub async fn run(
                         for finding in &mut findings {
                             vest_agent::enrich_finding_heuristic(finding);
                         }
+                        if degraded.is_none() {
+                            degraded = Some(provider_soft_error(e));
+                        }
                     }
                 }
             }
@@ -347,16 +380,26 @@ pub async fn run(
                     "\u{2502} {:^48} \u{2502}",
                     "Scanner findings will still be reported"
                 );
+                if degraded.is_none() {
+                    degraded = Some(provider_soft_error(e));
+                }
             }
         }
     }
 
     dedupe_findings(&mut findings);
 
+    let scan_status = if degraded.is_some() {
+        ScanStatus::Failed
+    } else {
+        ScanStatus::Completed
+    };
+
     match finalize_scan(FinalizeScanInput {
         args: &args,
         target: &target,
         scan_mode,
+        scan_status,
         provider_name: &provider_name,
         model: &model,
         scanner_names: &scanner_names,
@@ -365,23 +408,56 @@ pub async fn run(
     })
     .await
     {
-        Ok(findings) => {
-            println!("\u{2502} Stored:      {:<35} \u{2502}", findings);
+        Ok(stored) => {
+            println!("\u{2502} Stored:      {:<35} \u{2502}", stored);
         }
         Err(e) => {
             println!("\u{2502} Error: {:<41} \u{2502}", format!("{}", e));
             println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
-            return Err(e);
+            return Err(e.into());
         }
     }
 
+    if let Some(err) = degraded {
+        println!(
+            "\u{2502} {:^48} \u{2502}",
+            "Degraded: findings preserved; non-zero exit"
+        );
+        println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+        return Err(err.into());
+    }
+
     Ok(())
+}
+
+/// Map provider/agent failures onto exit 7 while findings are preserved.
+fn provider_soft_error(err: VestError) -> VestError {
+    match err {
+        VestError::Provider(_) | VestError::Agent(_) | VestError::ValidationFailed { .. } => err,
+        other => VestError::Provider(format!(
+            "provider/agent soft failure; scanner findings preserved: {other}"
+        )),
+    }
+}
+
+fn scanner_failure_error(errors: &[VestError]) -> VestError {
+    let msg = errors
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if !errors.is_empty() && errors.iter().all(|e| matches!(e, VestError::Config(_))) {
+        VestError::Config(msg)
+    } else {
+        VestError::Scan(format!("Scanner failure: {msg}"))
+    }
 }
 
 struct FinalizeScanInput<'a> {
     args: &'a ScanArgs,
     target: &'a Target,
     scan_mode: ScanMode,
+    scan_status: ScanStatus,
     provider_name: &'a str,
     model: &'a str,
     scanner_names: &'a [String],
@@ -389,11 +465,12 @@ struct FinalizeScanInput<'a> {
     start: std::time::Instant,
 }
 
-async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, Box<dyn std::error::Error>> {
+async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, VestError> {
     let FinalizeScanInput {
         args,
         target,
         scan_mode,
+        scan_status,
         provider_name,
         model,
         scanner_names,
@@ -417,7 +494,7 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, Box<dyn st
             "model": model,
             "scanners": scanner_names,
         }),
-        status: ScanStatus::Completed,
+        status: scan_status,
         agent_model: (provider_name != "none").then(|| format!("{}/{}", provider_name, model)),
         started_at: Some(
             chrono::Utc::now() - chrono::Duration::from_std(elapsed).unwrap_or_default(),
@@ -464,34 +541,43 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, Box<dyn st
                 args.include_evidence,
             )
             .await?,
-        )?;
+        )
+        .map_err(VestError::Io)?;
         println!("\nReport saved to: {}", output_path);
     }
 
     let db_path = get_db_path();
-    let pool = vest_storage::ConnectionPool::new(&db_path)?;
-    vest_storage::schema::run_migrations(pool.conn())?;
-    vest_storage::targets::insert_target(pool.conn(), target)?;
-    vest_storage::scans::insert_scan(pool.conn(), &scan_session)?;
+    let pool = vest_storage::ConnectionPool::new(&db_path)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    vest_storage::schema::run_migrations(pool.conn())
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    vest_storage::targets::insert_target(pool.conn(), target)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    vest_storage::scans::insert_scan(pool.conn(), &scan_session)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
     for finding in &findings {
         let mut f = finding.clone();
         f.scan_id = scan_session.id.clone();
         f.target_id = target.id.clone();
-        vest_storage::findings::insert_finding(pool.conn(), &f)?;
+        vest_storage::findings::insert_finding(pool.conn(), &f)
+            .map_err(|e| VestError::Storage(e.to_string()))?;
     }
 
     Ok(findings.len())
 }
 
+/// Run selected scanners. Returns findings from scanners that succeeded, plus any
+/// fatal per-scanner errors. Total failure (`ran_ok == 0`) is a hard error.
+/// Partial failure preserves findings for finalize, then the caller exits non-zero.
 async fn run_builtin_scanners(
     scanner_names: &[String],
     target: &Target,
     config: &vest_config::VestConfig,
     allow_memory_simulation: bool,
     allow_active_probes: bool,
-) -> Result<Vec<Finding>, Box<dyn std::error::Error>> {
+) -> Result<(Vec<Finding>, Vec<VestError>), VestError> {
     let mut all_findings = Vec::new();
-    let mut fatal_errors: Vec<String> = Vec::new();
+    let mut fatal_errors: Vec<VestError> = Vec::new();
     let mut ran_ok = 0usize;
 
     for scanner_name in scanner_names {
@@ -583,16 +669,19 @@ async fn run_builtin_scanners(
                     truncate_for_box(&format!("failed: {}", msg), 28)
                 );
                 // Unsupported / config / IO failures are fatal for that scanner.
-                fatal_errors.push(format!("{scanner_name}: {msg}"));
+                fatal_errors.push(match e {
+                    VestError::Config(m) => VestError::Config(format!("{scanner_name}: {m}")),
+                    other => VestError::Scan(format!("{scanner_name}: {other}")),
+                });
             }
         }
     }
 
     if ran_ok == 0 && !fatal_errors.is_empty() {
-        return Err(format!("Scanner failure: {}", fatal_errors.join("; ")).into());
+        return Err(scanner_failure_error(&fatal_errors));
     }
 
-    Ok(all_findings)
+    Ok((all_findings, fatal_errors))
 }
 
 fn mark_finding_source(finding: &mut Finding, source: &str, scanner: Option<&str>) {
@@ -1248,15 +1337,15 @@ async fn build_safety(
     Ok(checker)
 }
 
-fn detect_target(args: &ScanArgs) -> Result<Target, Box<dyn std::error::Error>> {
+fn detect_target(args: &ScanArgs) -> Result<Target, VestError> {
     let name = &args.target;
     let now = chrono::Utc::now();
 
     let target_type = if let Some(ref tt) = args.target_type {
         tt.parse::<TargetType>().map_err(|_| {
-            format!(
+            VestError::InvalidInput(format!(
                 "Invalid target type '{tt}'. Expected one of: process, binary, web, network, browser, file"
-            )
+            ))
         })?
     } else {
         guess_type(name)
@@ -1292,14 +1381,13 @@ type TargetFields = (Option<String>, Option<String>, Option<u32>, Option<String>
 
 /// Web/browser targets accept only `http`/`https`. Bare hosts become `https://host`.
 /// Schemes like `file:`, `javascript:`, or `data:` fail closed (never rewritten).
-fn resolve_http_target(name: &str) -> Result<TargetFields, Box<dyn std::error::Error>> {
+fn resolve_http_target(name: &str) -> Result<TargetFields, VestError> {
     if let Some((scheme, _rest)) = name.split_once("://") {
         let scheme = scheme.to_ascii_lowercase();
         if scheme != "http" && scheme != "https" {
-            return Err(format!(
+            return Err(VestError::InvalidInput(format!(
                 "Invalid web target URL scheme '{scheme}' (only http/https). Refusing to rewrite '{name}'."
-            )
-            .into());
+            )));
         }
         return Ok((None, Some(name.to_string()), None, None));
     }
