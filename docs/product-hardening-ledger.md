@@ -40,8 +40,8 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 |----|--------|----------|----------------|-------|--------|
 | K1 | **Fixed** | Was calling `SafetyChecker::permissive()` | `--no-approval` = non-interactive deny; no permissive path | CLI tests | `17d2232`+session |
 | K2 | **Open** | `RequireInteractive` → deny; no stdin prompt; `--approve-*` flips legacy booleans | Interactive prompt + opaque grant | acceptance 3–4 | pending |
-| K3 | **Fixed** | Agent tools used `ureq` in `scan.rs` | `http_get`/`http_post` via `ScopedHttpClient`; redirect re-auth | `agent_http_scoped_client.rs` | (see clearance tip) |
-| K3b | **Fixed** | `web_scan` reimplemented probes via `ureq` | `WebScanner::inspect_url`; probes gated like CLI | `agent_http_scoped_client.rs` | (see clearance tip) |
+| K3 | **Fixed** | Agent tools used `ureq` in `scan.rs` | `http_get`/`http_post` via `ScopedHttpClient`; redirect re-auth | `agent_http_scoped_client.rs` | `5a5fc2c` |
+| K3b | **Fixed** | `web_scan` reimplemented probes via `ureq` | `WebScanner::inspect_url`; probes gated like CLI | `agent_http_scoped_client.rs` | `5a5fc2c` |
 | K4 | **Partial** | LocalContent/ProcessMemory blocked; TargetContent may redact-only | Align filter_for_model with contract | egress tests | pending |
 | K5 | **Fixed** | Was forgeable `ApprovalDecision::Allow` | Opaque `ApprovedToolCall` | policy/approved tests | `1951cd2` |
 | K6 | **Fixed** | Was `DefaultHasher` on selected keys | SHA-256 over material args | policy tests | `1951cd2` |
