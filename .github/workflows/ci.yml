@@ -12,8 +12,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust
+        # Pin explicitly to match rust-toolchain.toml (1.96.1) so CI, local, and the
+        # ledger agree; `@stable` drift can break fmt/clippy resolution.
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.96.1
           components: rustfmt, clippy
 
       - name: Cache Cargo
