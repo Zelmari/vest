@@ -2,7 +2,9 @@
 
 **V**ulnerability **E**xploitation & **S**canning **T**oolkit — an offline-first security scanner written in Rust. It runs local scanners (files, web, binaries, network, browser, and an opt-in memory *simulation*) and can optionally drive LLM agents to help classify and hunt findings across multiple providers.
 
-> **Experimental.** Vest is not production-grade, not a full sandbox, and not “fully secure.” Model output is untrusted. Read [docs/security-model.md](docs/security-model.md) and [SECURITY.md](SECURITY.md) before relying on it for anything serious.
+> **Experimental.** Vest is not production-grade, not a full sandbox, and not “fully secure.” Model output is untrusted. Read [docs/security-model.md](docs/security-model.md), [docs/product-contract.md](docs/product-contract.md), and [SECURITY.md](SECURITY.md) before relying on it for anything serious.
+
+Product-hardening progress (living ledger): [docs/product-hardening-ledger.md](docs/product-hardening-ledger.md).
 
 ## How this repo was built
 
@@ -135,7 +137,9 @@ vest completions <bash|zsh|fish>
 
 Useful flags: `--scanner`, `--target-type`, `--provider`, `--mode`, `--format`, `--output`, `--allow-memory-simulation`, `-c` / `--config`.
 
-Exit codes (approximate): `0` ok · `2` bad input · `3` config · `4` authorisation · `5` scanner · `6` persistence · `7` soft provider failure.
+`--no-approval` means **do not prompt; deny approval-required operations**. It is not “allow everything.”
+
+Exit codes (approximate): `0` ok · `2` bad input · `3` config · `4` authorisation · `5` scanner · `6` persistence · `7` soft provider failure. Prefer typed `VestError` mapping when available.
 
 ## Testing
 
