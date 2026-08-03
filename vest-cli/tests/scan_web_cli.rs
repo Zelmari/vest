@@ -272,11 +272,11 @@ fn cli_web_scan_passive_by_default_does_not_hit_active_probe_paths() {
 }
 
 #[test]
-fn cli_web_scan_allow_active_probes_flag_hits_probe_paths() {
+fn cli_web_scan_allow_alone_does_not_hit_active_probe_paths() {
     let (port, stop, probe_hits) = spawn_probe_counting_server(PROBE_BAIT_HTML);
     let url = format!("http://127.0.0.1:{port}/");
 
-    let root = temp_root("web-active-flag");
+    let root = temp_root("web-allow-no-confirm");
     let vest_home = root.join("home");
     let cfg = root.join("vest.toml");
     let report = root.join("report.json");
@@ -287,18 +287,24 @@ fn cli_web_scan_allow_active_probes_flag_hits_probe_paths() {
 
     stop.store(true, Ordering::Relaxed);
     assert_success(&output);
+    assert_eq!(
+        probe_hits.load(Ordering::Relaxed),
+        0,
+        "--allow-active-probes without confirm must not run active probes"
+    );
+    let err = stderr(&output);
     assert!(
-        probe_hits.load(Ordering::Relaxed) > 0,
-        "--allow-active-probes must exercise active probe paths (.env/.git/POST/XSS)"
+        err.contains("not confirmed") || err.contains("confirm-active-probes"),
+        "must warn that probes need second consent key:\n{err}"
     );
 }
 
 #[test]
-fn cli_web_scan_config_allow_active_probes_hits_probe_paths() {
+fn cli_web_scan_config_alone_does_not_hit_active_probe_paths() {
     let (port, stop, probe_hits) = spawn_probe_counting_server(PROBE_BAIT_HTML);
     let url = format!("http://127.0.0.1:{port}/");
 
-    let root = temp_root("web-active-cfg");
+    let root = temp_root("web-cfg-no-confirm");
     let vest_home = root.join("home");
     let cfg = root.join("vest.toml");
     let report = root.join("report.json");
@@ -309,9 +315,72 @@ fn cli_web_scan_config_allow_active_probes_hits_probe_paths() {
 
     stop.store(true, Ordering::Relaxed);
     assert_success(&output);
+    assert_eq!(
+        probe_hits.load(Ordering::Relaxed),
+        0,
+        "config allow_active_probes alone must not run active probes without confirm"
+    );
+}
+
+#[test]
+fn cli_web_scan_allow_and_confirm_hits_probe_paths() {
+    let (port, stop, probe_hits) = spawn_probe_counting_server(PROBE_BAIT_HTML);
+    let url = format!("http://127.0.0.1:{port}/");
+
+    let root = temp_root("web-active-two-key");
+    let vest_home = root.join("home");
+    let cfg = root.join("vest.toml");
+    let report = root.join("report.json");
+    fs::create_dir_all(&vest_home).unwrap();
+    write_minimal_config(&cfg);
+
+    let output = run_cli_web_scan(
+        &vest_home,
+        &cfg,
+        &url,
+        &report,
+        &["--allow-active-probes", "--confirm-active-probes"],
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    assert_success(&output);
     assert!(
         probe_hits.load(Ordering::Relaxed) > 0,
-        "scanner.web.allow_active_probes=true must exercise active probe paths"
+        "allow + confirm must exercise active probe paths (.env/.git/POST/XSS)"
+    );
+    let err = stderr(&output);
+    assert!(
+        err.contains("CONSENT: active web probes ENABLED"),
+        "must acknowledge two-key consent on stderr:\n{err}"
+    );
+}
+
+#[test]
+fn cli_web_scan_config_and_approve_exploits_hits_probe_paths() {
+    let (port, stop, probe_hits) = spawn_probe_counting_server(PROBE_BAIT_HTML);
+    let url = format!("http://127.0.0.1:{port}/");
+
+    let root = temp_root("web-active-cfg-approve");
+    let vest_home = root.join("home");
+    let cfg = root.join("vest.toml");
+    let report = root.join("report.json");
+    fs::create_dir_all(&vest_home).unwrap();
+    write_config_with_active_probes(&cfg, true);
+
+    let output = run_cli_web_scan(&vest_home, &cfg, &url, &report, &["--approve-exploits"]);
+
+    // Let in-flight probe requests finish counting before stopping the listener.
+    thread::sleep(Duration::from_millis(50));
+    stop.store(true, Ordering::Relaxed);
+    assert_success(&output);
+    let err = stderr(&output);
+    assert!(
+        err.contains("CONSENT: active web probes ENABLED"),
+        "must acknowledge two-key consent on stderr:\n{err}"
+    );
+    assert!(
+        probe_hits.load(Ordering::Relaxed) > 0,
+        "config allow + --approve-exploits must exercise active probe paths\nstderr:\n{err}"
     );
 }
 

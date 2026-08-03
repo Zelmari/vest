@@ -33,4 +33,4 @@ Vest is **experimental**. Do not treat it as:
 - Real process-memory forensics unless a platform-specific real reader is implemented, enabled, and tested
 - A full multi-step interactive approval product (K2 provides exact CLI pre-grants + TTY one-shot only)
 
-CLI web scanning **is** passive by default; active probes require config or `--allow-active-probes`. Remaining gaps: [docs/clearance-plan.md](docs/clearance-plan.md).
+CLI web scanning **is** passive by default; active probes require allow (config / `--allow-active-probes`) **and** `--confirm-active-probes` or `--approve-exploits`. Remaining gaps: [docs/clearance-plan.md](docs/clearance-plan.md).

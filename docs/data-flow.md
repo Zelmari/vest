@@ -49,6 +49,6 @@ Egress is a second gate (`DataEgressClass` + session flags / approvals).
 |---------------------------|-------------------|
 | All HTTP goes through `ScopedHttpClient` | Agent CLI `http_get`/`http_post`/`web_scan`: yes. `WebScanner` crawl/fetch: yes (**WEB-1**). Provider transports remain separate. |
 | Interactive approval step always exists | Exact CLI pre-grants + optional TTY one-shot; non-TTY/`--no-approval` deny (**K2**). |
-| CLI web scan is passive | Default off; opt-in via config or `--allow-active-probes` (**N5** fixed). |
+| CLI web scan is passive | Default off; two-key consent (allow + confirm/approve-exploits) (**N5**/**B5**). |
 
 Clearance order / remaining work: [clearance-plan.md](clearance-plan.md).

@@ -23,7 +23,7 @@
 | 7 | B2 | Provider HTTP: no auto-redirect | done |
 | 8 | B3 | CDP WS loopback pin + browser_inspect effect honesty | done |
 | 9 | B4 | Nuclei: always constrain `-t` / disable update-check | done |
-| 10 | B5 | CLI active-probe consent parity with agent path | pending |
+| 10 | B5 | CLI active-probe consent parity with agent path | done |
 
 ### Wave C — Product unlocks
 | # | ID | Item | Status |
@@ -51,7 +51,7 @@
 - [x] B2 Provider redirect-none
 - [x] B3 CDP loopback pin
 - [x] B4 Nuclei template constraint
-- [ ] B5 Active probe consent
+- [x] B5 Active probe consent
 - [ ] C1 Fail-on-new baseline
 - [ ] C2 Resume
 - [ ] C3 SARIF

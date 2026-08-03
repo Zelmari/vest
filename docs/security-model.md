@@ -90,7 +90,7 @@ Vest must **not** be described as:
 - Real process-memory forensics unless a platform-specific real reader is enabled and tested
 - A full multi-step interactive-approval product (K2: exact pre-grants + TTY one-shot only)
 
-CLI web scanning **is** passive by default; active probes are opt-in (`scanner.web.allow_active_probes` or `--allow-active-probes`).
+CLI web scanning **is** passive by default; active probes need two-key consent (`scanner.web.allow_active_probes` or `--allow-active-probes`, **and** `--confirm-active-probes` or `--approve-exploits`).
 
 Current known-issue status: [product-hardening-ledger.md](product-hardening-ledger.md).  
 Clearance order: [clearance-plan.md](clearance-plan.md).  

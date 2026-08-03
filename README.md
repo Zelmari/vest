@@ -105,7 +105,7 @@ Severity numbers in reports are **heuristic estimates** on `severity_score_estim
 
 ### Web scan honesty
 
-CLI web scans are **passive by default** (`scanner.web.allow_active_probes = false`). Opt in with config or `--allow-active-probes`.
+CLI web scans are **passive by default** (`scanner.web.allow_active_probes = false`). Active probes need two-key consent: allow (`config` or `--allow-active-probes`) **and** `--confirm-active-probes` or `--approve-exploits`.
 
 ## Providers & keys
 
@@ -130,7 +130,7 @@ What is real today:
 - `requires_approval` on a tool definition is **not** a bypass.
 - Execution uses an opaque `ApprovedToolCall` minted by the policy engine (callers cannot forge `Allow`).
 - Local file content and process memory are **not** sent to remote models by default.
-- CLI web scans are passive by default; active probes are opt-in (**N5**).
+- CLI web scans are passive by default; active probes need allow + confirm/approve-exploits (**N5**/**B5**).
 - Agent `http_get` / `http_post` use `ScopedHttpClient` (redirect re-auth). `web_scan` goes through `WebScanner::inspect_url` with the same active-probe gating as CLI web scans (**K3**/**K3b**).
 - JSON/Markdown reports omit evidence and PoC by default; opt in with `--include-evidence` (still redacted best-effort) (**REP-1**).
 - Approval-required tools: exact CLI pre-grant (`--approve-writes` / `--approve-exploits` / `--approve-effect`) or TTY one-shot Allow; non-TTY without grants and `--no-approval` deny (**K2**).
@@ -156,7 +156,7 @@ vest config | providers | targets | scans | findings | report | tools | sandbox
 vest completions <bash|zsh|fish>
 ```
 
-Useful flags: `--scanner`, `--target-type`, `--provider`, `--offline` / `--no-ai`, `--mode`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`, `--approve-writes`, `--approve-exploits`, `--approve-effect`.
+Useful flags: `--scanner`, `--target-type`, `--provider`, `--offline` / `--no-ai`, `--mode`, `--format`, `--output`, `--include-evidence`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`, `--approve-writes`, `--approve-exploits`, `--approve-effect`, `--allow-active-probes`, `--confirm-active-probes`.
 
 When no provider is configured and `--provider` is omitted, the scan default is **`none`** (scanner-only). `--offline` and `--no-ai` force the same.
 

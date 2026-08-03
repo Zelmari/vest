@@ -65,7 +65,9 @@ fn scoped_client_for_url(
         max_body_bytes,
         ..HttpClientBudgets::default()
     };
-    ScopedHttpClient::try_new(scope, budgets).map_err(|e| e.to_string())
+    ScopedHttpClient::try_new(scope, budgets)
+        .map(|c| c.with_deny_private_targets(session.network.deny_private_targets()))
+        .map_err(|e| e.to_string())
 }
 
 fn block_on_scoped<F, T>(fut: F) -> Result<T, String>
@@ -290,13 +292,26 @@ pub async fn run(
         truncate_for_box(&scanner_names.join(", "), 35)
     );
 
-    let allow_active_probes = args.allow_active_probes || config.scanner.web.allow_active_probes;
+    // Two-key consent: allow (CLI flag or config) AND confirm (--confirm-active-probes
+    // or --approve-exploits). Config/allow alone never enables probes.
+    let probes_allowed = args.allow_active_probes || config.scanner.web.allow_active_probes;
+    let probes_confirmed = args.confirm_active_probes || args.approve_exploits;
+    let allow_active_probes = probes_allowed && probes_confirmed;
     let probes_label = if allow_active_probes { "on" } else { "off" };
     ui_line!(
         machine,
         "\u{2502} Active probes: {:<32} \u{2502}",
         probes_label
     );
+    if allow_active_probes {
+        eprintln!(
+            "CONSENT: active web probes ENABLED (allow + --confirm-active-probes/--approve-exploits)"
+        );
+    } else if probes_allowed && !probes_confirmed {
+        eprintln!(
+            "Active probes requested but not confirmed; pass --confirm-active-probes or --approve-exploits to enable."
+        );
+    }
 
     let (fs_scope, net_scope) = scopes_from_target(&target);
     let net_scope = net_scope.with_deny_private_targets(config.safety.deny_private_targets);
@@ -363,7 +378,7 @@ pub async fn run(
         &target,
         &config,
         args.allow_memory_simulation,
-        args.allow_active_probes,
+        allow_active_probes,
         machine,
     )
     .await?;
@@ -661,8 +676,7 @@ async fn run_builtin_scanners(
         let result = match scanner_name.as_str() {
             "web" if config.scanner.web.enabled => {
                 let w = &config.scanner.web;
-                // Passive by default: probes only when config or CLI flag opts in.
-                let probes = allow_active_probes || w.allow_active_probes;
+                // Consent already resolved by caller (allow + confirm/approve-exploits).
                 let scanner = vest_scanner::web::WebScanner::new()
                     .with_crawl_depth(w.crawl_depth)
                     .with_max_urls(w.crawl_max_urls as usize)
@@ -670,7 +684,8 @@ async fn run_builtin_scanners(
                     .with_respect_robots_txt(w.respect_robots_txt)
                     .with_max_response_bytes(w.max_response_bytes as usize)
                     .with_max_redirects(w.max_redirects)
-                    .with_allow_active_probes(probes)
+                    .with_allow_active_probes(allow_active_probes)
+                    .with_deny_private_targets(config.safety.deny_private_targets)
                     .with_connect_timeout_ms(w.connect_timeout_ms)
                     .with_timeout_seconds(w.request_timeout_seconds)
                     .with_max_concurrent_requests(w.max_concurrent_requests as usize);
@@ -939,7 +954,7 @@ fn build_tool_registry(
     registry.register(
         vest_agent::ToolDefinition {
             name: "web_scan".into(),
-            description: "Perform a web vulnerability scan against a URL via WebScanner. Fetches the page (redirect-safe), parses links and forms, and runs misconfiguration detection. Active exposure probes (.env/.git) run only when active probes are granted (config or --allow-active-probes).".into(),
+            description: "Perform a web vulnerability scan against a URL via WebScanner. Fetches the page (redirect-safe), parses links and forms, and runs misconfiguration detection. Active exposure probes (.env/.git) run only when two-key consent is present (allow via config/--allow-active-probes AND --confirm-active-probes or --approve-exploits).".into(),
             parameters: serde_json::json!({"url": "string"}),
             requires_approval: false,
             risk_level: ro,
@@ -958,6 +973,7 @@ fn build_tool_registry(
                 .with_crawl_depth(5)
                 .with_max_urls(100)
                 .with_allow_active_probes(allow_active_probes)
+                .with_deny_private_targets(session_web.network.deny_private_targets())
                 .with_respect_robots_txt(true);
 
             let handle = tokio::runtime::Handle::current();

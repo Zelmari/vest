@@ -181,8 +181,8 @@ fn dry_run_web_plan_shows_probes_and_net_scope_without_hitting_listener() {
 }
 
 #[test]
-fn dry_run_reflects_allow_active_probes_flag() {
-    let root = temp_root("dry-run-probes-on");
+fn dry_run_allow_alone_keeps_probes_off() {
+    let root = temp_root("dry-run-probes-allow-only");
     let vest_home = root.join("home");
     let cfg = root.join("vest.toml");
 
@@ -208,7 +208,51 @@ fn dry_run_reflects_allow_active_probes_flag() {
     assert_exit_code(&output, 0);
     let out = stdout(&output);
     assert!(
+        out.contains("Active probes: off"),
+        "allow without confirm must keep probes off in the plan:\n{out}"
+    );
+    let err = stderr(&output);
+    assert!(
+        err.contains("not confirmed") || err.contains("confirm-active-probes"),
+        "dry-run should warn about missing second consent key:\n{err}"
+    );
+}
+
+#[test]
+fn dry_run_reflects_two_key_active_probes_consent() {
+    let root = temp_root("dry-run-probes-on");
+    let vest_home = root.join("home");
+    let cfg = root.join("vest.toml");
+
+    fs::create_dir_all(&vest_home).unwrap();
+    write_minimal_config(&cfg);
+
+    let output = vest_cmd(&vest_home)
+        .arg("-c")
+        .arg(&cfg)
+        .arg("scan")
+        .arg("https://example.com")
+        .arg("--target-type")
+        .arg("web")
+        .arg("--scanner")
+        .arg("web")
+        .arg("--provider")
+        .arg("none")
+        .arg("--allow-active-probes")
+        .arg("--confirm-active-probes")
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+
+    assert_exit_code(&output, 0);
+    let out = stdout(&output);
+    assert!(
         out.contains("Active probes: on"),
-        "CLI flag should turn probes on in the plan:\n{out}"
+        "allow + confirm should turn probes on in the plan:\n{out}"
+    );
+    let err = stderr(&output);
+    assert!(
+        err.contains("CONSENT: active web probes ENABLED"),
+        "dry-run should acknowledge two-key consent on stderr:\n{err}"
     );
 }

@@ -30,10 +30,11 @@ an AI provider.
 - Useful without a model.
 
 **Actual today:** CLI web scan is passive-by-default. Active probes require
-`scanner.web.allow_active_probes = true` and/or `--allow-active-probes`.
+two-key consent: allow (`scanner.web.allow_active_probes` or `--allow-active-probes`)
+**and** `--confirm-active-probes` or `--approve-exploits`. Config/allow alone is not enough.
 Crawl/fetch HTTP goes through `ScopedHttpClient` (**WEB-1** cleared).
 
-### C — Active authorised checks — **partial**
+### C — Active authorised checks — **mostly works**
 
 **Intended:**
 
@@ -44,8 +45,8 @@ Crawl/fetch HTTP goes through `ScopedHttpClient` (**WEB-1** cleared).
 
 **Actual today:** active probes are a distinct `ToolEffect`. Operator can
 pre-grant via `--approve-exploits` / `--approve-effect active_network_probe`, or
-allow once on a TTY. Non-TTY without grants → deny. Builtin scanner probes
-opted in via config/flag still run without a separate approval step.
+allow once on a TTY. Non-TTY without grants → deny. Builtin CLI scanner probes
+use the same two-key consent (allow + confirm/approve-exploits) (**B5**).
 
 ### D — AI-assisted interpretation — **mostly works**
 
@@ -89,7 +90,7 @@ opted in via config/flag still run without a separate approval step.
 |----------|-------------------|
 | AI enabled? | Only if provider configured / selected |
 | Active web probes (library)? | Off unless enabled |
-| Active web probes (CLI `scan --scanner web`)? | Off unless config / `--allow-active-probes` |
+| Active web probes (CLI `scan --scanner web`)? | Off unless allow (config / `--allow-active-probes`) **and** `--confirm-active-probes` / `--approve-exploits` |
 | Symlink follow? | Off |
 | Local content → model? | Denied |
 | Process memory → model? | Denied |

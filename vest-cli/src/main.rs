@@ -140,10 +140,16 @@ pub struct ScanArgs {
     #[arg(long)]
     pub allow_memory_simulation: bool,
 
-    /// Enable active web vulnerability probes (.env/.git exposure checks, XSS/SQLi, etc.).
+    /// Opt in to active web vulnerability probes (.env/.git exposure, XSS/SQLi, etc.).
     /// Off by default; OR'd with `scanner.web.allow_active_probes` in config.
+    /// Probes stay off unless also confirmed via `--confirm-active-probes` or `--approve-exploits`.
     #[arg(long)]
     pub allow_active_probes: bool,
+
+    /// Second consent key for active web probes (with `--allow-active-probes` or config).
+    /// Also satisfied by `--approve-exploits`. Config/allow alone is not enough.
+    #[arg(long)]
+    pub confirm_active_probes: bool,
 
     /// Include finding evidence/PoC in JSON and Markdown reports.
     /// Off by default (REP-1); secrets are still redacted best-effort when enabled.
