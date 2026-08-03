@@ -1,5 +1,6 @@
 use crate::ScanArgs;
 use std::collections::BTreeSet;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vest_agent::{
@@ -10,6 +11,10 @@ use vest_core::traits::{Reporter, Scanner};
 use vest_core::types::{Finding, ScanMode, ScanStatus, Severity, Target, TargetType};
 use vest_core::{truncate_chars, DataEgressClass, ToolEffect};
 use vest_scanner::{HttpClientBudgets, ScopedHttpClient};
+
+/// Hard cap for agent `read_file`: never absorb more than this many bytes.
+/// Matches the tool description ("up to 10KB").
+const AGENT_READ_FILE_MAX_BYTES: u64 = 10_240;
 
 fn resolve_tool_path(session: &ExecutionSession, path: &str) -> Result<PathBuf, String> {
     resolve_read_path(&session.filesystem, Path::new(path))
@@ -83,6 +88,38 @@ fn agent_http_post(
         "body": truncated,
         "body_size": body.len(),
     }))
+}
+
+/// Sync bounded read used by [`agent_read_file`] (and the blocking pool).
+fn read_file_capped(path: &Path) -> Result<serde_json::Value, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("Cannot read file: {e}"))?;
+    let mut file = std::fs::File::open(path).map_err(|e| format!("Cannot read file: {e}"))?;
+    let mut buf = Vec::with_capacity(AGENT_READ_FILE_MAX_BYTES as usize);
+    file.by_ref()
+        .take(AGENT_READ_FILE_MAX_BYTES)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("Cannot read file: {e}"))?;
+    let text = String::from_utf8_lossy(&buf);
+    Ok(serde_json::json!({
+        "path": path.display().to_string(),
+        "size": meta.len(),
+        "content": text,
+        "bytes_read": buf.len(),
+        "truncated": meta.len() > buf.len() as u64,
+    }))
+}
+
+/// Agent `read_file` implementation (session-scoped, byte-capped, off async worker).
+fn agent_read_file(session: &ExecutionSession, path: &str) -> Result<serde_json::Value, String> {
+    let resolved = resolve_tool_path(session, path)?;
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::block_in_place(|| {
+        handle.block_on(async move {
+            tokio::task::spawn_blocking(move || read_file_capped(&resolved))
+                .await
+                .map_err(|e| format!("read_file task failed: {e}"))?
+        })
+    })
 }
 
 pub async fn run(
@@ -968,14 +1005,7 @@ fn build_tool_registry(
                 .get("path")
                 .and_then(|v| v.as_str())
                 .ok_or("path parameter required")?;
-            let resolved = resolve_tool_path(&session_read, path)?;
-            let data = std::fs::read(&resolved).map_err(|e| format!("Cannot read file: {}", e))?;
-            let text = String::from_utf8_lossy(&data[..data.len().min(10240)]);
-            Ok(serde_json::json!({
-                "path": resolved.display().to_string(),
-                "size": data.len(),
-                "content": text,
-            }))
+            agent_read_file(&session_read, path)
         },
     );
 
@@ -1266,3 +1296,7 @@ fn get_db_path() -> String {
 #[cfg(test)]
 #[path = "agent_http_scoped_client.rs"]
 mod agent_http_scoped_client;
+
+#[cfg(test)]
+#[path = "agent_read_file_bounded.rs"]
+mod agent_read_file_bounded;

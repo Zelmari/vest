@@ -46,7 +46,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K5 | **Fixed** | Was forgeable `ApprovalDecision::Allow` | Opaque `ApprovedToolCall` | policy/approved tests | `1951cd2` |
 | K6 | **Fixed** | Was `DefaultHasher` on selected keys | SHA-256 over material args | policy tests | `1951cd2` |
 | K7 | **Fixed** | Was `TOOL_FS_SCOPE` OnceLock | `ExecutionSession` Arc captured by tools | session unit test | `0f76c32` |
-| K8 | **Open** (hypothesis) | read_file likely full read | Bound + spawn_blocking | FS tests | pending |
+| K8 | **Fixed** | Was `std::fs::read` entire file then truncate | Cap via `Read::take` + `spawn_blocking` | `agent_read_file_bounded.rs` | pending-commit |
 | K9 | **Partial** | follow_symlinks exists; need prove containment | Contain or disable | adversarial FS | pending |
 | K10 | **Fixed** (web client) | `unwrap_or_default()` on Client | fail-closed + `ScopedHttpClient::try_new` | http_client tests | `0f76c32` |
 | K11 | **Investigate** | form submit method | Honour GET/POST | web tests | pending |
