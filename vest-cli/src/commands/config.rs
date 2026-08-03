@@ -1,6 +1,7 @@
 use crate::ConfigArgs;
 use std::path::{Path, PathBuf};
 use toml_edit::DocumentMut;
+use vest_core::error::VestError;
 
 pub async fn run(
     args: ConfigArgs,
@@ -75,11 +76,11 @@ pub async fn run(
         }
         ConfigArgs::Set { key, value } => {
             if !config_path.exists() {
-                println!(
+                return Err(VestError::Config(format!(
                     "No config file found at {}. Run 'vest config init' to create one.",
                     config_path.display()
-                );
-                return Ok(());
+                ))
+                .into());
             }
 
             let content = std::fs::read_to_string(&config_path)?;
@@ -88,14 +89,14 @@ pub async fn run(
             let valid_keys = gather_dotted_keys(&doc);
             if !valid_keys.contains(&key) && !key_starts_with_known_path(&doc, &key) {
                 let suggestions = closest_matches(&key, &valid_keys, 3);
-                println!("Unknown config key: '{}'", key);
+                let mut msg = format!("Unknown config key: '{key}'");
                 if !suggestions.is_empty() {
-                    println!("Did you mean?");
+                    msg.push_str("\nDid you mean?");
                     for s in suggestions {
-                        println!("  {}", s);
+                        msg.push_str(&format!("\n  {s}"));
                     }
                 }
-                return Ok(());
+                return Err(VestError::InvalidInput(msg).into());
             }
 
             let parsed_value = parse_value(&value);

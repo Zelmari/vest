@@ -127,6 +127,10 @@ pub async fn run(
     mut args: ScanArgs,
     config_path: impl AsRef<Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if args.resume.is_some() {
+        return Err(VestError::Unsupported("--resume is not implemented".into()).into());
+    }
+
     println!("\u{250c}{}\u{2510}", "\u{2500}".repeat(50));
     println!("\u{2502} {:^48} \u{2502}", "VEST SCAN");
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));

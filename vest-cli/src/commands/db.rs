@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use vest_core::error::VestError;
 use vest_storage::{schema, ConnectionPool};
 
 pub fn db_path() -> PathBuf {
@@ -26,11 +27,16 @@ pub fn db_path_as_str(path: &Path) -> Result<&str, String> {
 pub fn open_pool() -> Result<ConnectionPool, Box<dyn std::error::Error>> {
     let path = db_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            VestError::Storage(format!(
+                "cannot create database directory {}: {e}",
+                parent.display()
+            ))
+        })?;
     }
-    let path_str = db_path_as_str(&path)?;
-    let pool = ConnectionPool::new(path_str)?;
-    schema::run_migrations(pool.conn())?;
+    let path_str = db_path_as_str(&path).map_err(VestError::Storage)?;
+    let pool = ConnectionPool::new(path_str).map_err(|e| VestError::Storage(e.to_string()))?;
+    schema::run_migrations(pool.conn()).map_err(|e| VestError::Storage(e.to_string()))?;
     Ok(pool)
 }
 

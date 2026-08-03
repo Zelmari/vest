@@ -1,5 +1,6 @@
 use crate::commands::db;
 use crate::FindingsArgs;
+use vest_core::error::VestError;
 use vest_core::types::FindingStatus;
 use vest_storage::{findings, ConnectionPool};
 
@@ -106,68 +107,62 @@ fn list_findings(
 
 fn show_finding(pool: &ConnectionPool, id: String) -> Result<(), Box<dyn std::error::Error>> {
     let conn = pool.conn();
-    match findings::get_finding(conn, &id) {
-        Ok(f) => {
-            println!();
-            println!("  Title:       {}", f.title);
-            println!("  Severity:    {}", f.severity);
-            println!("  Class:       {}", f.vulnerability_class);
-            println!("  Confidence:  {:.2}", f.confidence);
-            println!("  Status:      {}", f.status);
-            println!(
-                "  CVSS:        {}",
-                f.cvss_score
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "N/A".into())
-            );
-            println!("  CWE:         {}", f.cwe_id.as_deref().unwrap_or("N/A"));
-            println!("  CVE:         {}", f.cve_id.as_deref().unwrap_or("N/A"));
-            println!("  Scan ID:     {}", f.scan_id);
-            println!("  Target ID:   {}", f.target_id);
-            println!();
-            println!("  Description:");
-            println!("    {}", f.description);
-            println!();
-            println!("  Location:    {}", f.location);
-            if let Some(ref poc) = f.poc {
-                println!();
-                println!("  Proof of Concept:");
-                println!("    {}", poc);
-            }
-            if let Some(ref rem) = f.remediation {
-                println!();
-                println!("  Remediation:");
-                println!("    {}", rem);
-            }
-            println!();
-        }
-        Err(e) => println!("Finding '{}' not found: {}", id, e),
+    let f = findings::get_finding(conn, &id)
+        .map_err(|_| VestError::FindingNotFound(format!("Finding '{id}' not found")))?;
+    println!();
+    println!("  Title:       {}", f.title);
+    println!("  Severity:    {}", f.severity);
+    println!("  Class:       {}", f.vulnerability_class);
+    println!("  Confidence:  {:.2}", f.confidence);
+    println!("  Status:      {}", f.status);
+    println!(
+        "  CVSS:        {}",
+        f.cvss_score
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "N/A".into())
+    );
+    println!("  CWE:         {}", f.cwe_id.as_deref().unwrap_or("N/A"));
+    println!("  CVE:         {}", f.cve_id.as_deref().unwrap_or("N/A"));
+    println!("  Scan ID:     {}", f.scan_id);
+    println!("  Target ID:   {}", f.target_id);
+    println!();
+    println!("  Description:");
+    println!("    {}", f.description);
+    println!();
+    println!("  Location:    {}", f.location);
+    if let Some(ref poc) = f.poc {
+        println!();
+        println!("  Proof of Concept:");
+        println!("    {}", poc);
     }
+    if let Some(ref rem) = f.remediation {
+        println!();
+        println!("  Remediation:");
+        println!("    {}", rem);
+    }
+    println!();
     Ok(())
 }
 
 fn validate_finding(pool: &ConnectionPool, id: String) -> Result<(), Box<dyn std::error::Error>> {
     let conn = pool.conn();
-    match findings::get_finding(conn, &id) {
-        Ok(f) => {
-            println!("Validating: {}", f.title);
-            if f.confidence < 0.3 {
-                println!(
-                    "  -> Marked as FALSE POSITIVE (low confidence: {:.2})",
-                    f.confidence
-                );
-                findings::update_finding_status(conn, &id, &FindingStatus::FalsePositive)?;
-            } else if f.confidence > 0.8 {
-                println!("  -> CONFIRMED (high confidence: {:.2})", f.confidence);
-                findings::update_finding_status(conn, &id, &FindingStatus::Confirmed)?;
-            } else {
-                println!(
-                    "  -> UNCERTAIN (confidence: {:.2}), kept as 'open'",
-                    f.confidence
-                );
-            }
-        }
-        Err(e) => println!("Finding '{}' not found: {}", id, e),
+    let f = findings::get_finding(conn, &id)
+        .map_err(|_| VestError::FindingNotFound(format!("Finding '{id}' not found")))?;
+    println!("Validating: {}", f.title);
+    if f.confidence < 0.3 {
+        println!(
+            "  -> Marked as FALSE POSITIVE (low confidence: {:.2})",
+            f.confidence
+        );
+        findings::update_finding_status(conn, &id, &FindingStatus::FalsePositive)?;
+    } else if f.confidence > 0.8 {
+        println!("  -> CONFIRMED (high confidence: {:.2})", f.confidence);
+        findings::update_finding_status(conn, &id, &FindingStatus::Confirmed)?;
+    } else {
+        println!(
+            "  -> UNCERTAIN (confidence: {:.2}), kept as 'open'",
+            f.confidence
+        );
     }
     Ok(())
 }
@@ -179,31 +174,30 @@ fn export_finding(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let conn = pool.conn();
     let fmt = format.unwrap_or_else(|| "terminal".into());
-    match findings::get_finding(conn, &id) {
-        Ok(f) => match fmt.as_str() {
-            "json" => {
-                let json = serde_json::to_string_pretty(&f)?;
-                println!("{}", json);
+    let f = findings::get_finding(conn, &id)
+        .map_err(|_| VestError::FindingNotFound(format!("Finding '{id}' not found")))?;
+    match fmt.as_str() {
+        "json" => {
+            let json = serde_json::to_string_pretty(&f)?;
+            println!("{}", json);
+        }
+        _ => {
+            println!("Finding: {}", f.title);
+            println!("  Severity: {}", f.severity);
+            println!("  Class: {}", f.vulnerability_class);
+            println!("  Confidence: {:.2}", f.confidence);
+            println!("  Description: {}", f.description);
+            if let Some(ref poc) = f.poc {
+                println!();
+                println!("  Proof of Concept:");
+                println!("    {}", poc);
             }
-            _ => {
-                println!("Finding: {}", f.title);
-                println!("  Severity: {}", f.severity);
-                println!("  Class: {}", f.vulnerability_class);
-                println!("  Confidence: {:.2}", f.confidence);
-                println!("  Description: {}", f.description);
-                if let Some(ref poc) = f.poc {
-                    println!();
-                    println!("  Proof of Concept:");
-                    println!("    {}", poc);
-                }
-                if let Some(ref rem) = f.remediation {
-                    println!();
-                    println!("  Remediation:");
-                    println!("    {}", rem);
-                }
+            if let Some(ref rem) = f.remediation {
+                println!();
+                println!("  Remediation:");
+                println!("    {}", rem);
             }
-        },
-        Err(e) => println!("Finding '{}' not found: {}", id, e),
+        }
     }
     Ok(())
 }

@@ -1,13 +1,14 @@
 use crate::ToolsArgs;
 use std::process::Command;
+use vest_core::error::VestError;
 
 #[allow(dead_code)]
 const KNOWN_TOOLS: &[&str] = &["nuclei", "sqlmap", "frida", "docker", "ollama"];
 
 pub async fn run(args: ToolsArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args {
-        ToolsArgs::Install { tool } => install_tool(&tool),
-        ToolsArgs::Update { tool } => update_tool(&tool),
+        ToolsArgs::Install { tool } => install_tool(&tool)?,
+        ToolsArgs::Update { tool } => update_tool(&tool)?,
         ToolsArgs::List => list_tools(),
     }
     Ok(())
@@ -18,7 +19,7 @@ fn is_known_tool(tool: &str) -> bool {
     KNOWN_TOOLS.contains(&tool)
 }
 
-fn install_tool(tool: &str) {
+fn install_tool(tool: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Installing external tool: {}", tool);
     match tool {
         "nuclei" => {
@@ -29,48 +30,65 @@ fn install_tool(tool: &str) {
                 println!("  Run:");
             }
             println!("  go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest");
+            Ok(())
         }
         "sqlmap" => {
             println!("  git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git");
             println!("  cd sqlmap");
             println!("  python sqlmap.py");
+            Ok(())
         }
         "frida" => {
             println!("  pip install frida-tools");
+            Ok(())
         }
         "docker" => {
             println!("  Visit: https://docs.docker.com/get-docker/");
+            Ok(())
         }
         "ollama" => {
             println!("  curl -fsSL https://ollama.com/install.sh | sh");
+            Ok(())
         }
-        _ => println!("  Unknown tool: {}. Try: vest tools list", tool),
+        _ => Err(
+            VestError::InvalidInput(format!("Unknown tool: {tool}. Try: vest tools list")).into(),
+        ),
     }
 }
 
-fn update_tool(tool: &str) {
+fn update_tool(tool: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Updating external tool: {}", tool);
     match tool {
         "nuclei" => {
             if vest_tools::NucleiTool::check_installed() {
                 println!("  Run: nuclei -update-templates");
+                Ok(())
             } else {
-                println!("  Nuclei is not installed. Run 'vest tools install nuclei' first.");
+                Err(VestError::InvalidInput(
+                    "Nuclei is not installed. Run 'vest tools install nuclei' first.".into(),
+                )
+                .into())
             }
         }
         "sqlmap" => {
             println!("  cd sqlmap && git pull");
+            Ok(())
         }
         "frida" => {
             println!("  pip install --upgrade frida-tools");
+            Ok(())
         }
         "docker" => {
             println!("  Docker updates are platform-specific. Check your Docker Desktop or package manager.");
+            Ok(())
         }
         "ollama" => {
             println!("  curl -fsSL https://ollama.com/install.sh | sh");
+            Ok(())
         }
-        _ => println!("  Unknown tool: {}. Try: vest tools list", tool),
+        _ => Err(
+            VestError::InvalidInput(format!("Unknown tool: {tool}. Try: vest tools list")).into(),
+        ),
     }
 }
 
