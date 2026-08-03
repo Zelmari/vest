@@ -36,7 +36,7 @@
 ### Wave D — Codebase health (as time allows)
 | # | ID | Item | Status |
 |---|----|------|--------|
-| 15 | D1 | Extract agent tools out of `scan.rs` | pending |
+| 15 | D1 | Extract agent tools out of `scan.rs` | done |
 | 16 | D2 | Typed tool errors (retire string handlers where practical) | pending |
 | 17 | D3 | Drop unused disasm deps or wire them; payloads crate triage | pending |
 
@@ -56,7 +56,7 @@
 - [x] C2 Resume (hidden from help; fail-closed unimplemented — no SQLite checkpoint)
 - [x] C3 SARIF
 - [x] C4 Profile discovery (`vest scan --list-profiles`; dry-run names selected profile)
-- [ ] D1 Tool extraction
+- [x] D1 Tool extraction
 - [ ] D2 Typed tool errors
 - [ ] D3 Dead deps/payloads
 
