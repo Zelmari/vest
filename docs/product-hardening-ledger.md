@@ -55,7 +55,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K11 | **Fixed** | form submit always POSTed | Honour GET/POST (allowlist); GET→query; missing method→GET | web form method tests | `a43df3f` |
 | K12 | **Fixed** | invalid `--target-type` guessed | Reject invalid explicit type | CLI | `17d2232` |
 | K13 | **Fixed** (util) | byte-index risk | `truncate_chars` in vest-core | unit | `17d2232` |
-| K14 | **Fixed** | string match still as legacy fallback | Scan/completions typed; legacy fallback last-resort for other cmds | `exit_codes_strict.rs` | `f83e640` |
+| K14 | **Fixed** | string match still as legacy fallback | All subcommands typed (`VestError`); legacy substring fallback removed — unknown errors exit 1 (`0f047c5`) | `exit_codes_strict.rs` / `unicode_truncation_cli.rs` | `f83e640` / `0f047c5` |
 | K15 | **Fixed** | all keys loaded | Allowlist Vest/provider keys | unit | `17d2232` |
 | K16 | **Fixed** | `Finding.cvss_score` + scanner heuristics labelled CVSS | Renamed to `severity_score_estimate`; reports never say CVSS for heuristics; SQLite column `cvss_score` dual-mapped | `severity_estimate_rename.rs` + report unit | 91ceff1 |
 | K17 | **Open** | prior audit “addressed” while CLI bypasses remain | Keep docs/ledger honest; close wiring gaps | ledger | ongoing |

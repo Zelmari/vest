@@ -169,7 +169,7 @@ When no provider is configured and `--provider` is omitted, the scan default is 
 
 CI gates: `--fail-on-severity high` exits `8` when any finding is at or above that severity; `--fail-on-new` exits `8` when finding titles appear that were absent from the previous scan of the same logical target (first scan sets the baseline).
 
-Exit codes: `0` ok · `2` bad input · `3` config · `4` authorisation · `5` scanner (including partial scanner fatal) · `6` persistence · `7` provider/agent soft failure with preserved findings · `8` findings gate (`--fail-on-severity` / `--fail-on-new`). Scan/completions use typed `VestError::cli_exit_code()`; other subcommands may still hit a last-resort string fallback.
+Exit codes: `0` ok · `2` bad input · `3` config · `4` authorisation · `5` scanner (including partial scanner fatal) · `6` persistence · `7` provider/agent soft failure with preserved findings · `8` findings gate (`--fail-on-severity` / `--fail-on-new`). All subcommands map errors via typed `VestError::cli_exit_code()`; unknown error types exit `1` (no message-text guessing).
 
 ## Testing
 
