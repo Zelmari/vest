@@ -42,7 +42,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K2 | **Open** | `RequireInteractive` → deny; no stdin prompt; `--approve-*` flips legacy booleans | Interactive prompt + opaque grant | acceptance 3–4 | pending |
 | K3 | **Fixed** | Agent tools used `ureq` in `scan.rs` | `http_get`/`http_post` via `ScopedHttpClient`; redirect re-auth | `agent_http_scoped_client.rs` | `5a5fc2c` |
 | K3b | **Fixed** | `web_scan` reimplemented probes via `ureq` | `WebScanner::inspect_url`; probes gated like CLI | `agent_http_scoped_client.rs` | `5a5fc2c` |
-| K4 | **Fixed** | TargetContent/PotentiallySecretBearing were redact-only | Default stub/metadata; flags for opt-in egress | `target_content_egress_tests.rs` | (this commit) |
+| K4 | **Fixed** | TargetContent/PotentiallySecretBearing were redact-only | Default stub/metadata; flags for opt-in egress | `target_content_egress_tests.rs` | `dbd5e0c` |
 | K5 | **Fixed** | Was forgeable `ApprovalDecision::Allow` | Opaque `ApprovedToolCall` | policy/approved tests | `1951cd2` |
 | K6 | **Fixed** | Was `DefaultHasher` on selected keys | SHA-256 over material args | policy tests | `1951cd2` |
 | K7 | **Fixed** | Was `TOOL_FS_SCOPE` OnceLock | `ExecutionSession` Arc captured by tools | session unit test | `0f76c32` |
