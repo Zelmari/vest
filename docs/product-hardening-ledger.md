@@ -72,6 +72,8 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | REP-1 | JSON/MD reports embed raw evidence/PoC (incl. `match_preview` secrets) by default | **Fixed** — omit evidence/PoC by default; `--include-evidence` / `general.include_report_evidence` opt-in with best-effort redaction; `vest-report/tests/secret_redaction.rs` |
 | POL-1 | Missing/non-string path/url skipped FS/net scope checks for scoped effects | **Fixed** — deny before handler when material target absent or wrong type; `adversarial_policy_tests.rs` + policy unit tests | `f918a47` |
 
+| BRW-1 | Browser path walk unbounded; CDP navigate/ loosely bounded; handler dropped | **Fixed** —  + symlink-off defaults; reject  navigate; cap CDP version body; keep handler task alive;  |  |
+
 ## Phase status
 
 | Phase | Status | Notes |
