@@ -5,6 +5,8 @@ use serde_json::Value;
 use vest_core::error::VestError;
 use vest_core::traits::LlmProvider;
 
+use crate::http_client::build_provider_client;
+
 pub struct OpenAiCompatProvider {
     pub name: String,
     pub api_key: Option<String>,
@@ -31,12 +33,22 @@ impl OpenAiCompatProvider {
         base_url: String,
         default_model: String,
     ) -> Self {
+        Self::with_timeout(name, api_key, base_url, default_model, None)
+    }
+
+    pub fn with_timeout(
+        name: String,
+        api_key: Option<String>,
+        base_url: String,
+        default_model: String,
+        timeout_seconds: Option<u64>,
+    ) -> Self {
         Self {
             name,
             api_key,
             base_url,
             default_model,
-            client: Client::new(),
+            client: build_provider_client(timeout_seconds),
         }
     }
 }

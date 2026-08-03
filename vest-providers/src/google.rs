@@ -6,6 +6,8 @@ use std::sync::Arc;
 use vest_core::error::VestError;
 use vest_core::LlmProvider;
 
+use crate::http_client::build_provider_client;
+
 /// Google AI / Gemini API key header (preferred over `?key=` query params).
 const GOOGLE_API_KEY_HEADER: &str = "x-goog-api-key";
 
@@ -70,11 +72,19 @@ fn scrub_api_key(message: &str, api_key: &str) -> String {
 
 impl GoogleProvider {
     pub fn new(api_key: String, default_model: Option<String>) -> Self {
+        Self::with_timeout(api_key, default_model, None)
+    }
+
+    pub fn with_timeout(
+        api_key: String,
+        default_model: Option<String>,
+        timeout_seconds: Option<u64>,
+    ) -> Self {
         Self {
             api_key,
             default_model: default_model.unwrap_or_else(|| "gemini-2.5-pro".into()),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
-            client: Client::new(),
+            client: build_provider_client(timeout_seconds),
         }
     }
 
@@ -199,7 +209,9 @@ impl LlmProvider for GoogleProvider {
             .map_err(|e| self.provider_err(format!("Google: Failed to list models: {}", e)))?;
 
         if !resp.status().is_success() {
-            return Ok(vec![self.default_model.clone()]);
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(self.provider_err(format!("Google: HTTP {}: {}", status, body)));
         }
 
         let list: GeminiModelListResponse = resp
@@ -239,8 +251,13 @@ impl LlmProvider for GoogleProvider {
 pub fn create_google_provider(
     api_key: String,
     default_model: Option<String>,
+    timeout_seconds: Option<u64>,
 ) -> Arc<dyn LlmProvider> {
-    Arc::new(GoogleProvider::new(api_key, default_model))
+    Arc::new(GoogleProvider::with_timeout(
+        api_key,
+        default_model,
+        timeout_seconds,
+    ))
 }
 
 #[cfg(test)]
@@ -421,5 +438,30 @@ mod tests {
             !text2.contains(SENTINEL_KEY),
             "list_models transport VestError must not contain API key: {text2}"
         );
+    }
+
+    #[tokio::test]
+    async fn list_models_fail_closed_on_http_error() {
+        let leak_body = format!(r#"{{"error":"bad key {SENTINEL_KEY}"}}"#).into_bytes();
+        let (port, stop, _captured) = spawn_capture_server(503, leak_body).await;
+        let base = format!("http://127.0.0.1:{port}/v1beta");
+        let provider = provider_for(&base);
+
+        let err = provider.list_models().await.unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("HTTP 503") || text.contains("503"),
+            "expected HTTP error, got: {text}"
+        );
+        assert!(
+            !text.contains(SENTINEL_KEY),
+            "list_models HTTP VestError must not contain API key: {text}"
+        );
+        assert!(
+            text.contains("[REDACTED]"),
+            "expected redaction marker: {text}"
+        );
+
+        stop.store(true, Ordering::Relaxed);
     }
 }

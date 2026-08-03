@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod fallback;
+pub mod http_client;
 pub mod openai_compat;
 pub mod provider;
 pub mod registry;

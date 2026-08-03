@@ -228,6 +228,7 @@ pub(crate) fn create_provider(
     config: &vest_config::VestConfig,
 ) -> Result<Arc<dyn LlmProvider>, VestError> {
     let provider_config = provider_config(config, name);
+    let timeout_seconds = provider_config.and_then(|c| c.timeout_seconds);
     let get_key = || get_api_key(name);
     let default_model = Some(model.to_string());
 
@@ -242,6 +243,7 @@ pub(crate) fn create_provider(
                 Some(key),
                 provider_config.and_then(|c| c.api_base.clone()),
                 default_model,
+                timeout_seconds,
             ))
         }
         "deepseek" => {
@@ -253,6 +255,7 @@ pub(crate) fn create_provider(
             Ok(vest_providers::deepseek::create_deepseek_provider(
                 Some(key),
                 default_model,
+                timeout_seconds,
             ))
         }
         "anthropic" => {
@@ -264,6 +267,7 @@ pub(crate) fn create_provider(
             Ok(vest_providers::anthropic::create_anthropic_provider(
                 key,
                 default_model,
+                timeout_seconds,
             ))
         }
         "google" => {
@@ -275,11 +279,13 @@ pub(crate) fn create_provider(
             Ok(vest_providers::google::create_google_provider(
                 key,
                 default_model,
+                timeout_seconds,
             ))
         }
         "ollama" => Ok(vest_providers::ollama::create_ollama_provider(
             provider_config.and_then(|c| c.api_base.clone()),
             default_model,
+            timeout_seconds,
         )),
         "groq" => {
             let key = get_key().ok_or_else(|| {
@@ -288,6 +294,7 @@ pub(crate) fn create_provider(
             Ok(vest_providers::groq::create_groq_provider(
                 Some(key),
                 default_model,
+                timeout_seconds,
             ))
         }
         "openrouter" => {
@@ -299,6 +306,7 @@ pub(crate) fn create_provider(
             Ok(vest_providers::openrouter::create_openrouter_provider(
                 Some(key),
                 default_model,
+                timeout_seconds,
             ))
         }
         _ => Err(VestError::Config(format!("Unknown provider: {}", name))),

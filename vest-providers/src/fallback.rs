@@ -59,13 +59,37 @@ impl FallbackChain {
         self
     }
 
+    async fn invoke_with_timeout<F, Fut>(
+        &self,
+        name: &str,
+        call: F,
+    ) -> Result<String, VestError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<String, VestError>>,
+    {
+        match self.per_provider_timeout {
+            Some(t) => match tokio::time::timeout(t, call()).await {
+                Ok(inner) => inner,
+                Err(_) => Err(VestError::Timeout(format!(
+                    "provider {name} timed out after {}ms",
+                    t.as_millis()
+                ))),
+            },
+            None => call().await,
+        }
+    }
+
     pub async fn chat(&self, messages: &[Value], model: &str) -> Result<String, VestError> {
         match self.strategy {
             FallbackStrategy::NextOnFailure => {
                 let mut last_error = VestError::Provider("All providers exhausted".into());
                 let mut errors: Vec<String> = Vec::new();
                 for (name, provider) in &self.providers {
-                    match provider.chat(messages, model).await {
+                    let outcome = self
+                        .invoke_with_timeout(name, || provider.chat(messages, model))
+                        .await;
+                    match outcome {
                         Ok(response) => return Ok(response),
                         Err(e) => {
                             tracing::warn!("Provider {} failed: {} — trying next", name, e);
@@ -86,11 +110,19 @@ impl FallbackChain {
             FallbackStrategy::NextOnRateLimit => {
                 let mut last_error = VestError::Provider("All providers exhausted".into());
                 for (name, provider) in &self.providers {
-                    match provider.chat(messages, model).await {
+                    let outcome = self
+                        .invoke_with_timeout(name, || provider.chat(messages, model))
+                        .await;
+                    match outcome {
                         Ok(response) => return Ok(response),
                         Err(e) => {
                             if matches!(e, VestError::RateLimited(_)) {
                                 tracing::warn!("Provider {} rate limited — trying next", name);
+                                last_error = e;
+                                continue;
+                            }
+                            if matches!(e, VestError::Timeout(_)) {
+                                tracing::warn!("Provider {} timed out — trying next", name);
                                 last_error = e;
                                 continue;
                             }
@@ -109,7 +141,10 @@ impl FallbackChain {
             FallbackStrategy::NextOnFailure => {
                 let mut last_error = VestError::Provider("All providers exhausted".into());
                 for (name, provider) in &self.providers {
-                    match provider.chat_stream(messages, model).await {
+                    let outcome = self
+                        .invoke_with_timeout(name, || provider.chat_stream(messages, model))
+                        .await;
+                    match outcome {
                         Ok(response) => return Ok(response),
                         Err(e) => {
                             tracing::warn!(
@@ -127,12 +162,23 @@ impl FallbackChain {
             FallbackStrategy::NextOnRateLimit => {
                 let mut last_error = VestError::Provider("All providers exhausted".into());
                 for (name, provider) in &self.providers {
-                    match provider.chat_stream(messages, model).await {
+                    let outcome = self
+                        .invoke_with_timeout(name, || provider.chat_stream(messages, model))
+                        .await;
+                    match outcome {
                         Ok(response) => return Ok(response),
                         Err(e) => {
                             if matches!(e, VestError::RateLimited(_)) {
                                 tracing::warn!(
                                     "Provider {} streaming rate limited — trying next",
+                                    name
+                                );
+                                last_error = e;
+                                continue;
+                            }
+                            if matches!(e, VestError::Timeout(_)) {
+                                tracing::warn!(
+                                    "Provider {} streaming timed out — trying next",
                                     name
                                 );
                                 last_error = e;
@@ -656,5 +702,60 @@ mod tests {
         assert_eq!(result, "seq-ok");
         assert_eq!(first_calls.load(Ordering::SeqCst), 1);
         assert_eq!(second_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_sequential_next_on_failure_respects_timeout() {
+        let gate = Arc::new(Notify::new());
+        let started = Arc::new(Notify::new());
+        let hanging: Arc<dyn LlmProvider> = Arc::new(ControllableProvider {
+            name: "hang".into(),
+            started: Arc::clone(&started),
+            gate: Arc::clone(&gate),
+            ok_response: Some("never".into()),
+            active: Arc::new(AtomicBool::new(false)),
+        });
+        let ok: Arc<dyn LlmProvider> = Arc::new(ImmediateProvider {
+            name: "ok".into(),
+            ok_response: Some("ok-resp".into()),
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+
+        let chain = FallbackChain::new(FallbackStrategy::NextOnFailure)
+            .with_per_provider_timeout(Some(Duration::from_millis(50)))
+            .with_providers(vec![("hang".into(), hanging), ("ok".into(), ok)]);
+
+        let start = tokio::time::Instant::now();
+        let result = chain.chat(&[], "m").await.unwrap();
+        let elapsed = start.elapsed();
+        assert_eq!(result, "ok-resp");
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "hanging provider must time out quickly, elapsed={elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sequential_timeout_exhaustion_is_timeout_or_provider() {
+        let gate = Arc::new(Notify::new());
+        let started = Arc::new(Notify::new());
+        let hanging: Arc<dyn LlmProvider> = Arc::new(ControllableProvider {
+            name: "hang".into(),
+            started,
+            gate,
+            ok_response: Some("never".into()),
+            active: Arc::new(AtomicBool::new(false)),
+        });
+
+        let chain = FallbackChain::new(FallbackStrategy::NextOnFailure)
+            .with_per_provider_timeout(Some(Duration::from_millis(40)))
+            .with_providers(vec![("hang".into(), hanging)]);
+
+        let err = chain.chat(&[], "m").await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("timed out") || matches!(err, VestError::Timeout(_)),
+            "expected timeout in exhaustion path, got: {msg}"
+        );
     }
 }

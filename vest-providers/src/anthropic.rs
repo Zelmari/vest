@@ -6,6 +6,8 @@ use std::sync::Arc;
 use vest_core::error::VestError;
 use vest_core::LlmProvider;
 
+use crate::http_client::build_provider_client;
+
 pub struct AnthropicProvider {
     pub api_key: String,
     pub default_model: String,
@@ -57,12 +59,20 @@ struct AnthropicResponseContent {
 
 impl AnthropicProvider {
     pub fn new(api_key: String, default_model: Option<String>) -> Self {
+        Self::with_timeout(api_key, default_model, None)
+    }
+
+    pub fn with_timeout(
+        api_key: String,
+        default_model: Option<String>,
+        timeout_seconds: Option<u64>,
+    ) -> Self {
         Self {
             api_key,
             default_model: default_model.unwrap_or_else(|| "claude-sonnet-4-20250514".into()),
             base_url: "https://api.anthropic.com/v1".into(),
             anthropic_version: "2023-06-01".into(),
-            client: Client::new(),
+            client: build_provider_client(timeout_seconds),
         }
     }
 
@@ -175,6 +185,11 @@ impl LlmProvider for AnthropicProvider {
 pub fn create_anthropic_provider(
     api_key: String,
     default_model: Option<String>,
+    timeout_seconds: Option<u64>,
 ) -> Arc<dyn LlmProvider> {
-    Arc::new(AnthropicProvider::new(api_key, default_model))
+    Arc::new(AnthropicProvider::with_timeout(
+        api_key,
+        default_model,
+        timeout_seconds,
+    ))
 }

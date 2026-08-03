@@ -183,8 +183,8 @@ N5 → K3 → K3b → REP-1 → PROV-1 → K4 → K2 → K5b → K8 → POL-1 �
 - [x] N3 doctor
 - [x] CFG-1 config validate zeros
 - [ ] PROV-2 SecretString providers
-- [ ] PROV-3 timeouts wired
-- [ ] PROV-4 google list_models
+- [x] PROV-3 timeouts wired
+- [x] PROV-4 google list_models
 - [ ] STOR-1/2/3 persistence
 - [ ] NUC-1 nuclei safety
 - [ ] K16 severity rename

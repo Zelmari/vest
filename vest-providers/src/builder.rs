@@ -9,43 +9,100 @@ impl ProviderBuilder {
         base_url: Option<String>,
         default_model: Option<String>,
     ) -> Arc<dyn LlmProvider> {
-        crate::openai::create_openai_provider(api_key, base_url, default_model)
+        Self::build_openai_with_timeout(api_key, base_url, default_model, None)
+    }
+
+    pub fn build_openai_with_timeout(
+        api_key: Option<String>,
+        base_url: Option<String>,
+        default_model: Option<String>,
+        timeout_seconds: Option<u64>,
+    ) -> Arc<dyn LlmProvider> {
+        crate::openai::create_openai_provider(api_key, base_url, default_model, timeout_seconds)
     }
 
     pub fn build_deepseek(
         api_key: Option<String>,
         default_model: Option<String>,
     ) -> Arc<dyn LlmProvider> {
-        crate::deepseek::create_deepseek_provider(api_key, default_model)
+        Self::build_deepseek_with_timeout(api_key, default_model, None)
+    }
+
+    pub fn build_deepseek_with_timeout(
+        api_key: Option<String>,
+        default_model: Option<String>,
+        timeout_seconds: Option<u64>,
+    ) -> Arc<dyn LlmProvider> {
+        crate::deepseek::create_deepseek_provider(api_key, default_model, timeout_seconds)
     }
 
     pub fn build_ollama(
         base_url: Option<String>,
         default_model: Option<String>,
     ) -> Arc<dyn LlmProvider> {
-        crate::ollama::create_ollama_provider(base_url, default_model)
+        Self::build_ollama_with_timeout(base_url, default_model, None)
+    }
+
+    pub fn build_ollama_with_timeout(
+        base_url: Option<String>,
+        default_model: Option<String>,
+        timeout_seconds: Option<u64>,
+    ) -> Arc<dyn LlmProvider> {
+        crate::ollama::create_ollama_provider(base_url, default_model, timeout_seconds)
     }
 
     pub fn build_anthropic(api_key: String, default_model: Option<String>) -> Arc<dyn LlmProvider> {
-        crate::anthropic::create_anthropic_provider(api_key, default_model)
+        Self::build_anthropic_with_timeout(api_key, default_model, None)
+    }
+
+    pub fn build_anthropic_with_timeout(
+        api_key: String,
+        default_model: Option<String>,
+        timeout_seconds: Option<u64>,
+    ) -> Arc<dyn LlmProvider> {
+        crate::anthropic::create_anthropic_provider(api_key, default_model, timeout_seconds)
     }
 
     pub fn build_google(api_key: String, default_model: Option<String>) -> Arc<dyn LlmProvider> {
-        crate::google::create_google_provider(api_key, default_model)
+        Self::build_google_with_timeout(api_key, default_model, None)
+    }
+
+    pub fn build_google_with_timeout(
+        api_key: String,
+        default_model: Option<String>,
+        timeout_seconds: Option<u64>,
+    ) -> Arc<dyn LlmProvider> {
+        crate::google::create_google_provider(api_key, default_model, timeout_seconds)
     }
 
     pub fn build_groq(
         api_key: Option<String>,
         default_model: Option<String>,
     ) -> Arc<dyn LlmProvider> {
-        crate::groq::create_groq_provider(api_key, default_model)
+        Self::build_groq_with_timeout(api_key, default_model, None)
+    }
+
+    pub fn build_groq_with_timeout(
+        api_key: Option<String>,
+        default_model: Option<String>,
+        timeout_seconds: Option<u64>,
+    ) -> Arc<dyn LlmProvider> {
+        crate::groq::create_groq_provider(api_key, default_model, timeout_seconds)
     }
 
     pub fn build_openrouter(
         api_key: Option<String>,
         default_model: Option<String>,
     ) -> Arc<dyn LlmProvider> {
-        crate::openrouter::create_openrouter_provider(api_key, default_model)
+        Self::build_openrouter_with_timeout(api_key, default_model, None)
+    }
+
+    pub fn build_openrouter_with_timeout(
+        api_key: Option<String>,
+        default_model: Option<String>,
+        timeout_seconds: Option<u64>,
+    ) -> Arc<dyn LlmProvider> {
+        crate::openrouter::create_openrouter_provider(api_key, default_model, timeout_seconds)
     }
 }
 
