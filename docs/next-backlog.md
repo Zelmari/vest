@@ -59,7 +59,7 @@
 - [x] C3 SARIF
 - [x] C4 Profile discovery (`vest scan --list-profiles`; dry-run names selected profile)
 - [x] D1 Tool extraction
-- [x] D2 Typed tool errors (`ToolError` on registry + CLI helpers; approval denials exit 4; residual: many handler bodies still `ToolError::Handler(String)`)
+- [x] D2 Typed tool errors (`ToolError` on registry + CLI helpers; approval denials exit 4; typed `MissingParameter`/`PathNotFound`/`Io`/`Client`/`Egress` variants replace stringly handler bodies — `e639536`; `Handler` remains last resort)
 - [x] D3 Dead deps/payloads (dropped unused capstone/iced-x86 + dead `disassembler` config; `vest-payloads` removed from workspace members, directory kept)
 
 ## Loop prompt

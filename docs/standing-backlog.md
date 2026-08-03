@@ -12,7 +12,7 @@
 - [x] `rust-toolchain.toml` pin (1.96.1) — added, matches ledger + CI
 - [x] Decide `vest-payloads/` — documented as intentional non-workspace orphan (README + AGENTS); delete remains an option
 - [x] K14 residual: typed exits for all non-scan subcommands — done (`0f047c5`); legacy string fallback removed; unicode byte-slice panics fixed
-- [ ] D2 residual: stringly `ToolError::Handler(String)` in agent tool handler bodies (`vest-agent`)
+- [x] D2 residual: stringly `ToolError::Handler` retired — done (`e639536`); typed `MissingParameter`/`PathNotFound`/`Io`/`Client`/`Egress` variants, `Handler` is last resort only
 - [ ] Provider embeddings: OpenAI-compat is wired; Anthropic/Google return honest "not implemented" — decide: wire Google/Anthropic or document embeddings as a non-goal in the contract
 - [ ] R3 (optional, hard): connect-time socket pin for `ScopedHttpClient` when `deny_private_targets` is on — standing residual otherwise, do not claim as fixed
 

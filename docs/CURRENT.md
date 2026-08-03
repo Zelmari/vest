@@ -14,7 +14,7 @@
 - R residuals (documented, not queued): DNS-rebinding TOCTOU (R3), no OS sandbox (R2), simulation-only memory (R4), no external audit (R6)
 - K17 honesty: keep docs/ledger honest; close wiring gaps — ongoing
 - K14: typed exits for all subcommands done (`0f047c5`) — legacy string fallback removed, unknown errors exit 1
-- D2 residual: stringly `ToolError::Handler(String)` in agent tool handler bodies
+- D2: stringly `ToolError::Handler` retired (`e639536`); `Handler` is last-resort only
 - Provider embeddings: OpenAI-compat implemented; Anthropic/Google are honest "not implemented" stubs — decide wire-or-reject
 - `vest-payloads/`: intentional non-workspace orphan (kept); deletion still an option
 

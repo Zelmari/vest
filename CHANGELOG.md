@@ -21,6 +21,7 @@ where practical for a pre-1.0 experimental toolkit.
 
 ### Cleared recently (on `main`)
 
+- **D2 (residual closed):** agent tool handler bodies now use typed `ToolError` categories (`MissingParameter`, `PathNotFound`, `Io`, `Client`, `Egress`) instead of coarse `Handler(String)`; `Handler` remains the documented last resort, egress-filter refusals are a typed category (`e639536`).
 - **K14 (residual closed):** all non-scan subcommands (config/providers/targets/scans/findings/report/tools/sandbox/doctor/policy) now return typed `VestError`; the legacy substring exit-code fallback is removed — unknown error types exit `1` instead of being guessed from message text. Sandbox danger-flag denials now exit `4` (authorisation), provider check/timeout failures exit `7`/`5`, missing DB rows on user-supplied ids exit `2`. UTF-8 byte-slice panics on multi-byte targets fixed (`truncate_chars`) (`0f047c5`).
 - **M1 — real `--resume`:** scans create a `running` row + SQLite per-scanner checkpoints before scanners run; `vest scan --resume <SCAN_ID>` continues remaining scanners and finalizes by update (`resume_cli.rs`).
 - **M2 — `vest policy explain`:** operator-facing explanation of effects, evaluation order, tool registry, CLI pre-grants, and grant/deny simulation (`policy_explain_cli.rs`).
