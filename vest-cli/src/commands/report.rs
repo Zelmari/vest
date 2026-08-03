@@ -1,6 +1,7 @@
 use crate::commands::db;
 use crate::ReportArgs;
 use vest_core::Reporter;
+use vest_core::VestError;
 use vest_storage::{findings, scans, ConnectionPool};
 
 pub async fn run(args: ReportArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -53,10 +54,10 @@ async fn generate_report(
                         .await?
                 }
                 other => {
-                    return Err(format!(
+                    return Err(VestError::UnsupportedFormat(format!(
                         "Unknown report format '{}'. Use terminal, json, sarif, or markdown.",
                         other
-                    )
+                    ))
                     .into())
                 }
             };
@@ -79,13 +80,13 @@ async fn generate_report(
                     ))
             });
             if let Some(parent) = report_path.parent() {
-                std::fs::create_dir_all(parent)?;
+                std::fs::create_dir_all(parent).map_err(VestError::Io)?;
             }
-            std::fs::write(&report_path, report)?;
+            std::fs::write(&report_path, report).map_err(VestError::Io)?;
             println!("\n  Report saved to: {}", report_path.display());
         }
         Err(e) => {
-            return Err(format!("Scan '{scan_id}' not found: {e}").into());
+            return Err(VestError::InvalidInput(format!("Scan '{scan_id}' not found: {e}")).into());
         }
     }
     Ok(())

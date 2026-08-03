@@ -505,36 +505,7 @@ fn exit_code_for_error(err: &(dyn std::error::Error + 'static)) -> i32 {
         }
         source = s.source();
     }
-    // Last-resort heuristics for remaining untyped `Box<dyn Error>` call sites
-    // (non-scan subcommands). Scan/completions prefer typed VestError (K14).
-    exit_code_for_message_legacy(&err.to_string())
-}
-
-fn exit_code_for_message_legacy(msg: &str) -> i32 {
-    let lower = msg.to_lowercase();
-    if lower.contains("config") || lower.contains("parse config") || lower.contains("vest.toml") {
-        return exit_code::CONFIG;
-    }
-    if lower.contains("authoris")
-        || lower.contains("authoriz")
-        || lower.contains("denied")
-        || lower.contains("approval")
-        || lower.contains("safety")
-    {
-        return exit_code::AUTHORISATION;
-    }
-    if lower.contains("persist") || lower.contains("sqlite") || lower.contains("database") {
-        return exit_code::PERSISTENCE;
-    }
-    if lower.contains("scanner") || lower.contains("scan failed") {
-        return exit_code::SCANNER;
-    }
-    if lower.contains("unsupported shell")
-        || (lower.contains("unknown") && lower.contains("format"))
-        || lower.contains("invalid")
-    {
-        return exit_code::INVALID_INPUT;
-    }
+    // Unknown error types are internal failures — never guess from message text (K14).
     exit_code::INTERNAL
 }
 
@@ -617,15 +588,16 @@ mod exit_code_tests {
     }
 
     #[test]
-    fn legacy_string_fallback() {
-        assert_eq!(
-            exit_code_for_message_legacy("Failed to load config: parse error"),
-            exit_code::CONFIG
-        );
-        assert_eq!(
-            exit_code_for_message_legacy("Unsupported shell: foo"),
-            exit_code::INVALID_INPUT
-        );
+    fn untyped_error_defaults_to_internal_not_guessed() {
+        // No substring guessing: an unknown error type is INTERNAL, never
+        // misclassified by message text (K14).
+        let err: Box<dyn std::error::Error> = Box::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "permission denied writing config",
+        ));
+        assert_eq!(exit_code_for_error(err.as_ref()), exit_code::INTERNAL);
+        let err: Box<dyn std::error::Error> = "plain string error".to_string().into();
+        assert_eq!(exit_code_for_error(err.as_ref()), exit_code::INTERNAL);
     }
 
     #[test]

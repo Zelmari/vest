@@ -58,6 +58,38 @@ fn unsupported_shell_exits_2() {
 }
 
 #[test]
+fn scans_show_missing_scan_exits_2() {
+    let root = temp_root("strict-scans-missing");
+    let vest_home = root.join("home");
+    fs::create_dir_all(&vest_home).unwrap();
+
+    let output = vest_cmd(&vest_home)
+        .arg("scans")
+        .arg("show")
+        .arg("scan-does-not-exist")
+        .output()
+        .unwrap();
+
+    assert_exit_code(&output, 2);
+}
+
+#[test]
+fn report_generate_missing_scan_exits_2() {
+    let root = temp_root("strict-report-missing");
+    let vest_home = root.join("home");
+    fs::create_dir_all(&vest_home).unwrap();
+
+    let output = vest_cmd(&vest_home)
+        .arg("report")
+        .arg("generate")
+        .arg("scan-does-not-exist")
+        .output()
+        .unwrap();
+
+    assert_exit_code(&output, 2);
+}
+
+#[test]
 fn invalid_target_type_exits_2() {
     let root = temp_root("strict-type");
     let vest_home = root.join("home");

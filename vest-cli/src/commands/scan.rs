@@ -57,7 +57,7 @@ pub async fn run(
     ui_line!(
         machine,
         "\u{2502} Target:      {:<35} \u{2502}",
-        &target_display[..target_display.len().min(35)]
+        vest_core::truncate_chars(target_display, 35)
     );
     ui_line!(
         machine,
@@ -257,7 +257,7 @@ pub async fn run(
             truncate_for_box(
                 &format!(
                     "Would scan {} via [{}]",
-                    &target_display[..target_display.len().min(20)],
+                    vest_core::truncate_chars(target_display, 20),
                     scanner_names.join(", ")
                 ),
                 48

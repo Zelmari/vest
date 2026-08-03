@@ -16,13 +16,15 @@ pub async fn run(
                 return Ok(());
             }
             let default_config = vest_config::default_config();
-            let toml_str = toml::to_string_pretty(&default_config)?;
-            std::fs::write(&path, toml_str)?;
+            let toml_str = toml::to_string_pretty(&default_config)
+                .map_err(|e| VestError::Config(format!("serialize config: {e}")))?;
+            std::fs::write(&path, toml_str).map_err(VestError::Io)?;
             println!("Created vest.toml with default configuration");
         }
         ConfigArgs::Show => match vest_config::load_config(&config_path) {
             Ok(config) => {
-                let toml_str = toml::to_string_pretty(&config)?;
+                let toml_str = toml::to_string_pretty(&config)
+                    .map_err(|e| VestError::Config(format!("serialize config: {e}")))?;
                 println!("Config loaded from: {}", config_path.display());
                 println!("{}", toml_str);
             }
@@ -30,20 +32,25 @@ pub async fn run(
                 println!("Could not load config: {}", e);
                 println!("Showing defaults:");
                 let default = vest_config::default_config();
-                let toml_str = toml::to_string_pretty(&default)?;
+                let toml_str = toml::to_string_pretty(&default)
+                    .map_err(|e| VestError::Config(format!("serialize config: {e}")))?;
                 println!("{}", toml_str);
             }
             Err(e) => {
-                return Err(format!(
+                return Err(VestError::Config(format!(
                     "Failed to load config {}: {e}. Refusing silent defaults for a present file.",
                     config_path.display()
-                )
+                ))
                 .into());
             }
         },
         ConfigArgs::Validate => {
-            let config = vest_config::load_config(&config_path)
-                .map_err(|e| format!("Configuration error at {}: {e}", config_path.display()))?;
+            let config = vest_config::load_config(&config_path).map_err(|e| {
+                VestError::Config(format!(
+                    "Configuration error at {}: {e}",
+                    config_path.display()
+                ))
+            })?;
             println!("Configuration is valid");
             println!(
                 "  Provider: {}",
@@ -83,8 +90,10 @@ pub async fn run(
                 .into());
             }
 
-            let content = std::fs::read_to_string(&config_path)?;
-            let mut doc = content.parse::<DocumentMut>()?;
+            let content = std::fs::read_to_string(&config_path).map_err(VestError::Io)?;
+            let mut doc = content
+                .parse::<DocumentMut>()
+                .map_err(|e| VestError::Config(format!("parse config: {e}")))?;
 
             let valid_keys = gather_dotted_keys(&doc);
             if !valid_keys.contains(&key) && !key_starts_with_known_path(&doc, &key) {
@@ -102,7 +111,7 @@ pub async fn run(
             let parsed_value = parse_value(&value);
             set_dotted_key(&mut doc, &key, parsed_value)?;
 
-            std::fs::write(&config_path, doc.to_string())?;
+            std::fs::write(&config_path, doc.to_string()).map_err(VestError::Io)?;
             println!("Set {} = {}", key, value);
         }
     }
@@ -126,7 +135,7 @@ fn set_dotted_key(
     doc: &mut DocumentMut,
     key: &str,
     value: toml_edit::Value,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), VestError> {
     let parts: Vec<&str> = key.split('.').collect();
     if parts.len() == 1 {
         doc[parts[0]] = toml_edit::Item::Value(value);
@@ -147,7 +156,9 @@ fn set_dotted_key(
                 }
             }
             .as_table_mut()
-            .ok_or_else(|| format!("'{}' is not a table", parts[0..=i].join(".")))?;
+            .ok_or_else(|| {
+                VestError::InvalidInput(format!("'{}' is not a table", parts[0..=i].join(".")))
+            })?;
         }
     }
     Ok(())

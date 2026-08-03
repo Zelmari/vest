@@ -1,6 +1,7 @@
 use crate::commands::db;
 use crate::TargetsArgs;
 use vest_core::types::{Target, TargetType};
+use vest_core::VestError;
 use vest_storage::targets;
 
 pub async fn run(args: TargetsArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -20,7 +21,7 @@ pub async fn run(args: TargetsArgs) -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", "-".repeat(100));
             for t in &list {
                 let id = &t.id[..t.id.len().min(34)];
-                let name = &t.name[..t.name.len().min(18)];
+                let name = vest_core::truncate_chars(&t.name, 18);
                 let details = match t.target_type {
                     TargetType::Web => t.url_str.as_deref().unwrap_or("no url"),
                     TargetType::Binary => t.path.as_deref().unwrap_or("no path"),
@@ -87,7 +88,8 @@ pub async fn run(args: TargetsArgs) -> Result<(), Box<dyn std::error::Error>> {
                 created_at: now,
                 updated_at: now,
             };
-            targets::insert_target(pool.conn(), &t)?;
+            targets::insert_target(pool.conn(), &t)
+                .map_err(|e| VestError::Storage(e.to_string()))?;
             println!(
                 "Added target: {} (type: {}, id: {})",
                 name,

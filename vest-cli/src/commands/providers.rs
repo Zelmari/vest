@@ -18,10 +18,10 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
                 return Ok(());
             } else {
                 vest_config::load_config(&config_path).map_err(|e| {
-                    format!(
+                    VestError::Config(format!(
                         "Failed to load config {}: {e}. Refusing silent defaults for a present file.",
                         config_path.display()
-                    )
+                    ))
                 })?
             };
 
@@ -94,10 +94,10 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
             let config_path = find_vest_toml();
             let config = if config_path.exists() {
                 vest_config::load_config(&config_path).map_err(|e| {
-                    format!(
+                    VestError::Config(format!(
                         "Failed to load config {}: {e}. Refusing to fall back to defaults for a present config file.",
                         config_path.display()
-                    )
+                    ))
                 })?
             } else {
                 eprintln!(
@@ -155,7 +155,9 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
             }
 
             if failures > 0 {
-                return Err(format!("{} provider check(s) failed", failures).into());
+                return Err(
+                    VestError::Provider(format!("{} provider check(s) failed", failures)).into(),
+                );
             }
         }
         ProvidersArgs::Models { provider } => {
@@ -167,7 +169,9 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
             let models =
                 tokio::time::timeout(Duration::from_secs(30), provider_client.list_models())
                     .await
-                    .map_err(|_| format!("Timed out listing models for {}", provider))??;
+                    .map_err(|_| {
+                        VestError::Timeout(format!("Timed out listing models for {}", provider))
+                    })??;
 
             for model in models {
                 println!("  {}", model);
@@ -179,10 +183,15 @@ pub async fn run(args: ProvidersArgs) -> Result<(), Box<dyn std::error::Error>> 
                     let mut child = std::process::Command::new("ollama")
                         .arg("pull")
                         .arg(&model)
-                        .spawn()?;
-                    let status = child.wait()?;
+                        .spawn()
+                        .map_err(VestError::Io)?;
+                    let status = child.wait().map_err(VestError::Io)?;
                     if !status.success() {
-                        return Err(format!("ollama pull exited with {}", status).into());
+                        return Err(VestError::Provider(format!(
+                            "ollama pull exited with {}",
+                            status
+                        ))
+                        .into());
                     }
                 }
                 _ => {

@@ -75,22 +75,26 @@ fn list_findings(
     );
     println!("\u{2502} {}", "-".repeat(108));
 
-    let mut stmt = conn.prepare(&query)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(&params), |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, f64>(3)?,
-            row.get::<_, String>(4)?,
-        ))
-    })?;
+    let mut stmt = conn
+        .prepare(&query)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(&params), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|e| VestError::Storage(e.to_string()))?;
 
     let mut count = 0;
     for row in rows {
-        let (id, title, sev, conf, class) = row?;
+        let (id, title, sev, conf, class) = row.map_err(|e| VestError::Storage(e.to_string()))?;
         let short_id = &id[..id.len().min(34)];
-        let short_title = &title[..title.len().min(22)];
+        let short_title = vest_core::truncate_chars(&title, 22);
         println!(
             "\u{2502} {:<36} | {:<24} | {:<10} | {:<8.2} | {:<20} \u{2502}",
             short_id, short_title, sev, conf, class
@@ -154,10 +158,12 @@ fn validate_finding(pool: &ConnectionPool, id: String) -> Result<(), Box<dyn std
             "  -> Marked as FALSE POSITIVE (low confidence: {:.2})",
             f.confidence
         );
-        findings::update_finding_status(conn, &id, &FindingStatus::FalsePositive)?;
+        findings::update_finding_status(conn, &id, &FindingStatus::FalsePositive)
+            .map_err(|e| VestError::Storage(e.to_string()))?;
     } else if f.confidence > 0.8 {
         println!("  -> CONFIRMED (high confidence: {:.2})", f.confidence);
-        findings::update_finding_status(conn, &id, &FindingStatus::Confirmed)?;
+        findings::update_finding_status(conn, &id, &FindingStatus::Confirmed)
+            .map_err(|e| VestError::Storage(e.to_string()))?;
     } else {
         println!(
             "  -> UNCERTAIN (confidence: {:.2}), kept as 'open'",
@@ -178,7 +184,7 @@ fn export_finding(
         .map_err(|_| VestError::FindingNotFound(format!("Finding '{id}' not found")))?;
     match fmt.as_str() {
         "json" => {
-            let json = serde_json::to_string_pretty(&f)?;
+            let json = serde_json::to_string_pretty(&f).map_err(VestError::Json)?;
             println!("{}", json);
         }
         _ => {
@@ -205,44 +211,64 @@ fn export_finding(
 fn stats_dashboard(pool: &ConnectionPool) -> Result<(), Box<dyn std::error::Error>> {
     let conn = pool.conn();
 
-    let total: i64 = conn.query_row("SELECT COUNT(*) FROM findings", [], |r| r.get(0))?;
-    let critical: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM findings WHERE severity='critical'",
-        [],
-        |r| r.get(0),
-    )?;
-    let high: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM findings WHERE severity='high'",
-        [],
-        |r| r.get(0),
-    )?;
-    let medium: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM findings WHERE severity='medium'",
-        [],
-        |r| r.get(0),
-    )?;
-    let low: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM findings WHERE severity='low'",
-        [],
-        |r| r.get(0),
-    )?;
-    let info: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM findings WHERE severity='info'",
-        [],
-        |r| r.get(0),
-    )?;
-    let confirmed: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM findings WHERE status='confirmed'",
-        [],
-        |r| r.get(0),
-    )?;
-    let fps: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM findings WHERE status='false_positive'",
-        [],
-        |r| r.get(0),
-    )?;
-    let total_scans: i64 = conn.query_row("SELECT COUNT(*) FROM scans", [], |r| r.get(0))?;
-    let total_targets: i64 = conn.query_row("SELECT COUNT(*) FROM targets", [], |r| r.get(0))?;
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM findings", [], |r| r.get(0))
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let critical: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM findings WHERE severity='critical'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let high: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM findings WHERE severity='high'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let medium: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM findings WHERE severity='medium'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let low: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM findings WHERE severity='low'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let info: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM findings WHERE severity='info'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let confirmed: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM findings WHERE status='confirmed'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let fps: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM findings WHERE status='false_positive'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let total_scans: i64 = conn
+        .query_row("SELECT COUNT(*) FROM scans", [], |r| r.get(0))
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let total_targets: i64 = conn
+        .query_row("SELECT COUNT(*) FROM targets", [], |r| r.get(0))
+        .map_err(|e| VestError::Storage(e.to_string()))?;
 
     fn bar(count: i64, width: usize) -> String {
         let n = (count as usize * width / 15).min(width);
@@ -266,14 +292,18 @@ fn stats_dashboard(pool: &ConnectionPool) -> Result<(), Box<dyn std::error::Erro
 
     println!();
     println!("  Top Vulnerability Classes:");
-    let mut stmt = conn.prepare(
-        "SELECT vulnerability_class, COUNT(*) as cnt FROM findings GROUP BY vulnerability_class ORDER BY cnt DESC LIMIT 5",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT vulnerability_class, COUNT(*) as cnt FROM findings GROUP BY vulnerability_class ORDER BY cnt DESC LIMIT 5",
+        )
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| VestError::Storage(e.to_string()))?;
     for row in rows {
-        let (class, count) = row?;
+        let (class, count) = row.map_err(|e| VestError::Storage(e.to_string()))?;
         println!("    {:<30} {:>3}", class, count);
     }
     println!();

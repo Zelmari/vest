@@ -1,6 +1,7 @@
 use crate::commands::db;
 use crate::ScansArgs;
 use vest_core::types::{Finding, ScanSession};
+use vest_core::VestError;
 use vest_storage::{findings, scans, targets};
 
 pub async fn run(args: ScansArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -14,7 +15,11 @@ pub async fn run(args: ScansArgs) -> Result<(), Box<dyn std::error::Error>> {
                 println!("Deleted scan {}", id);
                 Ok(())
             }
-            Err(e) => Err(e.into()),
+            Err(e) => Err(match &e {
+                vest_storage::StorageError::NotFound(_) => VestError::InvalidInput(e.to_string()),
+                other => VestError::Storage(other.to_string()),
+            }
+            .into()),
         },
     }
 }
@@ -25,9 +30,10 @@ fn list_scans(
     limit: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut scan_list = if let Some(target_id) = target_id {
-        scans::list_scans_by_target(pool.conn(), &target_id)?
+        scans::list_scans_by_target(pool.conn(), &target_id)
+            .map_err(|e| VestError::Storage(e.to_string()))?
     } else {
-        scans::list_scans(pool.conn())?
+        scans::list_scans(pool.conn()).map_err(|e| VestError::Storage(e.to_string()))?
     };
 
     if let Some(limit) = limit {
@@ -62,8 +68,12 @@ fn show_scan(
     pool: &vest_storage::ConnectionPool,
     id: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let scan = scans::get_scan(pool.conn(), &id)?;
-    let finding_list = findings::list_findings_by_scan(pool.conn(), &id)?;
+    let scan = scans::get_scan(pool.conn(), &id).map_err(|e| match &e {
+        vest_storage::StorageError::NotFound(_) => VestError::InvalidInput(e.to_string()),
+        other => VestError::Storage(other.to_string()),
+    })?;
+    let finding_list = findings::list_findings_by_scan(pool.conn(), &id)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
     let target = targets::get_target(pool.conn(), &scan.target_id).ok();
 
     println!("Scan: {}", scan.id);

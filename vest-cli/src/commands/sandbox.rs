@@ -1,6 +1,7 @@
 use crate::SandboxArgs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use vest_core::VestError;
 
 const DOCKER_NOT_INSTALLED_MSG: &str =
     "Docker is not installed. Install from https://docs.docker.com/get-docker/";
@@ -19,34 +20,33 @@ fn binary_installed(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn find_dockerfile() -> Result<PathBuf, String> {
-    let cwd =
-        std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+fn find_dockerfile() -> Result<PathBuf, VestError> {
+    let cwd = std::env::current_dir().map_err(VestError::Io)?;
     let local = cwd.join("Dockerfile");
     if local.exists() {
         return Ok(local);
     }
 
-    let home =
-        std::env::var("HOME").map_err(|_| "HOME environment variable is not set".to_string())?;
+    let home = std::env::var("HOME")
+        .map_err(|_| VestError::Sandbox("HOME environment variable is not set".into()))?;
     let vest_dockerfile = PathBuf::from(home).join(".vest").join("Dockerfile");
     if vest_dockerfile.exists() {
         return Ok(vest_dockerfile);
     }
 
-    Err(NO_DOCKERFILE_MSG.to_string())
+    Err(VestError::Sandbox(NO_DOCKERFILE_MSG.to_string()))
 }
 
 /// Reject docker run passthrough flags that weaken isolation (CLI-SANDBOX).
-fn validate_extra_args(extra_args: &[String]) -> Result<(), String> {
+fn validate_extra_args(extra_args: &[String]) -> Result<(), VestError> {
     let mut i = 0;
     while i < extra_args.len() {
         let arg = &extra_args[i];
 
         if is_privileged_flag(arg) {
-            return Err(format!(
+            return Err(VestError::ApprovalDenied(format!(
                 "Refusing dangerous docker sandbox flag `{arg}` (grants full host capabilities). {EXPERIMENTAL_WARNING}"
-            ));
+            )));
         }
 
         if let Some(value) = option_value(arg, &["-v", "--volume"]) {
@@ -135,10 +135,12 @@ fn validate_extra_args(extra_args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn expect_value<'a>(args: &'a [String], i: usize, flag: &str) -> Result<&'a str, String> {
-    args.get(i + 1)
-        .map(|s| s.as_str())
-        .ok_or_else(|| format!("Missing value for docker flag `{flag}`. {EXPERIMENTAL_WARNING}"))
+fn expect_value<'a>(args: &'a [String], i: usize, flag: &str) -> Result<&'a str, VestError> {
+    args.get(i + 1).map(|s| s.as_str()).ok_or_else(|| {
+        VestError::InvalidInput(format!(
+            "Missing value for docker flag `{flag}`. {EXPERIMENTAL_WARNING}"
+        ))
+    })
 }
 
 fn option_value<'a>(arg: &'a str, flags: &[&str]) -> Option<&'a str> {
@@ -156,62 +158,62 @@ fn is_privileged_flag(arg: &str) -> bool {
     lower == "--privileged" || lower.starts_with("--privileged=")
 }
 
-fn deny_host_namespace(flag: &str, value: &str) -> Result<(), String> {
+fn deny_host_namespace(flag: &str, value: &str) -> Result<(), VestError> {
     if value.eq_ignore_ascii_case("host") {
-        return Err(format!(
+        return Err(VestError::ApprovalDenied(format!(
             "Refusing dangerous docker sandbox flag `{flag}={value}` (host namespace). {EXPERIMENTAL_WARNING}"
-        ));
+        )));
     }
     Ok(())
 }
 
-fn deny_dangerous_cap(flag: &str, value: &str) -> Result<(), String> {
+fn deny_dangerous_cap(flag: &str, value: &str) -> Result<(), VestError> {
     let lower = value.to_ascii_lowercase();
     if lower == "all" || lower.contains("sys_admin") || lower.contains("sys_ptrace") {
-        return Err(format!(
+        return Err(VestError::ApprovalDenied(format!(
             "Refusing dangerous docker sandbox flag `{flag}={value}` (capability escalation). {EXPERIMENTAL_WARNING}"
-        ));
+        )));
     }
     Ok(())
 }
 
-fn deny_dangerous_security_opt(flag: &str, value: &str) -> Result<(), String> {
+fn deny_dangerous_security_opt(flag: &str, value: &str) -> Result<(), VestError> {
     let lower = value.to_ascii_lowercase();
     if lower.contains("seccomp=unconfined")
         || lower.contains("apparmor=unconfined")
         || lower.contains("label=disable")
     {
-        return Err(format!(
+        return Err(VestError::ApprovalDenied(format!(
             "Refusing dangerous docker sandbox flag `{flag}={value}` (disables confinement). {EXPERIMENTAL_WARNING}"
-        ));
+        )));
     }
     Ok(())
 }
 
-fn deny_dangerous_device(flag: &str, value: &str) -> Result<(), String> {
+fn deny_dangerous_device(flag: &str, value: &str) -> Result<(), VestError> {
     let lower = value.to_ascii_lowercase();
     if lower == "/" || lower == "all" || lower.starts_with("/dev/") {
-        return Err(format!(
+        return Err(VestError::ApprovalDenied(format!(
             "Refusing dangerous docker sandbox flag `{flag}={value}` (host device access). {EXPERIMENTAL_WARNING}"
-        ));
+        )));
     }
     Ok(())
 }
 
-fn deny_dangerous_volume(flag: &str, value: &str) -> Result<(), String> {
+fn deny_dangerous_volume(flag: &str, value: &str) -> Result<(), VestError> {
     if is_dangerous_volume_spec(value) {
-        return Err(format!(
+        return Err(VestError::ApprovalDenied(format!(
             "Refusing dangerous docker volume mount `{flag} {value}` (host root / sensitive path). {EXPERIMENTAL_WARNING}"
-        ));
+        )));
     }
     Ok(())
 }
 
-fn deny_dangerous_mount(flag: &str, value: &str) -> Result<(), String> {
+fn deny_dangerous_mount(flag: &str, value: &str) -> Result<(), VestError> {
     if is_dangerous_mount_spec(value) {
-        return Err(format!(
+        return Err(VestError::ApprovalDenied(format!(
             "Refusing dangerous docker mount `{flag} {value}` (host root / sensitive path). {EXPERIMENTAL_WARNING}"
-        ));
+        )));
     }
     Ok(())
 }
@@ -270,12 +272,12 @@ fn is_sensitive_host_path(path: &str) -> bool {
         || normalized.ends_with("docker.sock")
 }
 
-pub async fn run(args: SandboxArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(args: SandboxArgs) -> Result<(), VestError> {
     eprintln!("{EXPERIMENTAL_WARNING}");
 
     if !binary_installed("docker") {
         eprintln!("{}", DOCKER_NOT_INSTALLED_MSG);
-        return Err("Docker is not installed".into());
+        return Err(VestError::Sandbox("Docker is not installed".into()));
     }
 
     match args {
@@ -284,14 +286,14 @@ pub async fn run(args: SandboxArgs) -> Result<(), Box<dyn std::error::Error>> {
             let dir = dockerfile.parent().unwrap_or(Path::new("."));
             let status = build_command(dir).status()?;
             if !status.success() {
-                return Err("docker build failed".into());
+                return Err(VestError::Sandbox("docker build failed".into()));
             }
         }
         SandboxArgs::Start { extra_args } => {
             validate_extra_args(&extra_args)?;
             let status = start_command(&extra_args).status()?;
             if !status.success() {
-                return Err("docker run failed".into());
+                return Err(VestError::Sandbox("docker run failed".into()));
             }
         }
         SandboxArgs::Clean => {
@@ -320,13 +322,13 @@ fn start_command(extra_args: &[String]) -> Command {
     cmd
 }
 
-fn remove_containers() -> Result<(), Box<dyn std::error::Error>> {
+fn remove_containers() -> Result<(), VestError> {
     let output = Command::new("docker")
         .args(["ps", "-aq", "--filter", &format!("ancestor={}", IMAGE_NAME)])
         .output()?;
 
     if !output.status.success() {
-        return Err("docker ps failed".into());
+        return Err(VestError::Sandbox("docker ps failed".into()));
     }
 
     let ids = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -341,13 +343,13 @@ fn remove_containers() -> Result<(), Box<dyn std::error::Error>> {
     }
     let status = cmd.status()?;
     if !status.success() {
-        return Err("docker rm failed".into());
+        return Err(VestError::Sandbox("docker rm failed".into()));
     }
 
     Ok(())
 }
 
-fn remove_image() -> Result<(), Box<dyn std::error::Error>> {
+fn remove_image() -> Result<(), VestError> {
     let status = Command::new("docker").args(["rmi", IMAGE_NAME]).status()?;
     if !status.success() {
         eprintln!(
@@ -438,16 +440,36 @@ mod tests {
     fn test_find_dockerfile_not_found() {
         let result = find_dockerfile();
         if let Err(msg) = result {
-            assert!(msg.contains("No Dockerfile found"));
-            assert!(msg.contains("experimental"));
+            assert!(msg.to_string().contains("No Dockerfile found"));
+            assert!(msg.to_string().contains("experimental"));
         }
     }
 
     #[test]
     fn rejects_privileged() {
         let err = validate_extra_args(&["--privileged".into()]).unwrap_err();
-        assert!(err.contains("--privileged"));
-        assert!(err.contains("experimental"));
+        assert!(err.to_string().contains("--privileged"));
+        assert!(err.to_string().contains("experimental"));
+    }
+
+    #[test]
+    fn denials_are_typed_approval_denied() {
+        let err = validate_extra_args(&["--privileged".into()]).unwrap_err();
+        assert!(
+            matches!(err, VestError::ApprovalDenied(_)),
+            "dangerous flag denial must map to exit 4: {err}"
+        );
+        let err = validate_extra_args(&["--pid".into(), "host".into()]).unwrap_err();
+        assert!(matches!(err, VestError::ApprovalDenied(_)));
+    }
+
+    #[test]
+    fn missing_flag_value_is_typed_invalid_input() {
+        let err = validate_extra_args(&["-v".into()]).unwrap_err();
+        assert!(
+            matches!(err, VestError::InvalidInput(_)),
+            "missing docker flag value must map to exit 2: {err}"
+        );
     }
 
     #[test]
@@ -461,10 +483,10 @@ mod tests {
         ] {
             let err = validate_extra_args(&args).unwrap_err();
             assert!(
-                err.contains("host"),
+                err.to_string().contains("host"),
                 "expected host-namespace rejection for {args:?}: {err}"
             );
-            assert!(err.contains("experimental"));
+            assert!(err.to_string().contains("experimental"));
         }
     }
 
@@ -482,10 +504,10 @@ mod tests {
         ] {
             let err = validate_extra_args(&args).unwrap_err();
             assert!(
-                err.contains("volume") || err.contains("mount"),
+                err.to_string().contains("volume") || err.to_string().contains("mount"),
                 "expected volume/mount rejection for {args:?}: {err}"
             );
-            assert!(err.contains("experimental"));
+            assert!(err.to_string().contains("experimental"));
         }
     }
 
@@ -507,10 +529,10 @@ mod tests {
     #[test]
     fn rejects_cap_add_all_and_unconfined_seccomp() {
         let err = validate_extra_args(&["--cap-add=ALL".into()]).unwrap_err();
-        assert!(err.contains("--cap-add"));
+        assert!(err.to_string().contains("--cap-add"));
         let err = validate_extra_args(&["--security-opt".into(), "seccomp=unconfined".into()])
             .unwrap_err();
-        assert!(err.contains("security-opt") || err.contains("seccomp"));
+        assert!(err.to_string().contains("security-opt") || err.to_string().contains("seccomp"));
     }
 
     #[test]
