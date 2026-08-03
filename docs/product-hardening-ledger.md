@@ -55,7 +55,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K13 | **Fixed** (util) | byte-index risk | `truncate_chars` in vest-core | unit | `17d2232` |
 | K14 | **Fixed** | string match still as legacy fallback | Scan/completions typed; legacy fallback last-resort for other cmds | `exit_codes_strict.rs` | `f83e640` |
 | K15 | **Fixed** | all keys loaded | Allowlist Vest/provider keys | unit | `17d2232` |
-| K16 | **Fixed** | `Finding.cvss_score` + scanner heuristics labelled CVSS | Renamed to `severity_score_estimate`; reports never say CVSS for heuristics; SQLite column `cvss_score` dual-mapped | `severity_estimate_rename.rs` + report unit | pending |
+| K16 | **Fixed** | `Finding.cvss_score` + scanner heuristics labelled CVSS | Renamed to `severity_score_estimate`; reports never say CVSS for heuristics; SQLite column `cvss_score` dual-mapped | `severity_estimate_rename.rs` + report unit | 91ceff1 |
 | K17 | **Open** | prior audit “addressed” while CLI bypasses remain | Keep docs/ledger honest; close wiring gaps | ledger | ongoing |
 | K18 | **Ongoing** | prior pass merged | Regression suite | workspace tests | ongoing |
 
