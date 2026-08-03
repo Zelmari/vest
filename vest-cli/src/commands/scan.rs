@@ -155,6 +155,7 @@ pub async fn run(
         &target,
         &config,
         args.allow_memory_simulation,
+        args.allow_active_probes,
     )
     .await?;
 
@@ -346,6 +347,7 @@ async fn run_builtin_scanners(
     target: &Target,
     config: &vest_config::VestConfig,
     allow_memory_simulation: bool,
+    allow_active_probes: bool,
 ) -> Result<Vec<Finding>, Box<dyn std::error::Error>> {
     let mut all_findings = Vec::new();
     let mut fatal_errors: Vec<String> = Vec::new();
@@ -355,6 +357,8 @@ async fn run_builtin_scanners(
         let result = match scanner_name.as_str() {
             "web" if config.scanner.web.enabled => {
                 let w = &config.scanner.web;
+                // Passive by default: probes only when config or CLI flag opts in.
+                let probes = allow_active_probes || w.allow_active_probes;
                 let scanner = vest_scanner::web::WebScanner::new()
                     .with_crawl_depth(w.crawl_depth)
                     .with_max_urls(w.crawl_max_urls as usize)
@@ -362,8 +366,7 @@ async fn run_builtin_scanners(
                     .with_respect_robots_txt(w.respect_robots_txt)
                     .with_max_response_bytes(w.max_response_bytes as usize)
                     .with_max_redirects(w.max_redirects)
-                    // Explicit CLI web scan enables active probes; config may also request them.
-                    .with_allow_active_probes(true)
+                    .with_allow_active_probes(probes)
                     .with_connect_timeout_ms(w.connect_timeout_ms)
                     .with_timeout_seconds(w.request_timeout_seconds)
                     .with_max_concurrent_requests(w.max_concurrent_requests as usize);

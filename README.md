@@ -105,7 +105,7 @@ Severity numbers in reports are **heuristic estimates**, not real CVSS vectors. 
 
 ### Web scan honesty
 
-The web scanner *can* run with active probes off. The CLI `vest scan … --scanner web` path currently forces `with_allow_active_probes(true)`, so a normal CLI web scan is **not** passive-by-default. That is a known gap (see the product ledger).
+CLI web scans are **passive by default** (`scanner.web.allow_active_probes = false`). Opt in with config or `--allow-active-probes`.
 
 ## Providers & keys
 

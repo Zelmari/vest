@@ -29,9 +29,8 @@ an AI provider.
 - Active probes **off** unless explicitly enabled and authorised.
 - Useful without a model.
 
-**Actual today:** the scanner API supports probes-off, but the CLI web scan path
-currently calls `with_allow_active_probes(true)`. Treat a normal CLI web scan as
-**active-capable**, not passive-by-default, until that gate is fixed.
+**Actual today:** CLI web scan is passive-by-default. Active probes require
+`scanner.web.allow_active_probes = true` and/or `--allow-active-probes`.
 
 ### C — Active authorised checks — **partial**
 
@@ -43,8 +42,8 @@ currently calls `with_allow_active_probes(true)`. Treat a normal CLI web scan as
 - Audit what was attempted.
 
 **Actual today:** active probes are a distinct `ToolEffect`, but there is **no
-interactive approval prompt**. Policy `RequireInteractive` → deny. CLI web scan
-enables probes without a separate approval step.
+interactive approval prompt**. Policy `RequireInteractive` → deny. When probes
+are opted in (config/flag), they still run without a separate approval step.
 
 ### D — AI-assisted interpretation — **mostly works**
 

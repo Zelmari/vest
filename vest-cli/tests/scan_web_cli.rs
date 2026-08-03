@@ -6,10 +6,14 @@ use common::*;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+
+/// HTML with a form so active XSS/SQLi probes have something to POST against when enabled.
+const PROBE_BAIT_HTML: &[u8] =
+    b"<html><body><form action=\"/login\" method=\"POST\"><input name=\"q\" type=\"text\"></form></body></html>";
 
 fn spawn_static_server(body: &'static [u8]) -> (u16, Arc<AtomicBool>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -40,6 +44,88 @@ fn spawn_static_server(body: &'static [u8]) -> (u16, Arc<AtomicBool>) {
     });
     thread::sleep(Duration::from_millis(30));
     (port, stop)
+}
+
+/// Loopback server that counts classic active-probe request signatures.
+fn spawn_probe_counting_server(body: &'static [u8]) -> (u16, Arc<AtomicBool>, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let probe_hits = Arc::new(AtomicUsize::new(0));
+    let hits = probe_hits.clone();
+    thread::spawn(move || {
+        while !flag.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((mut sock, _)) => {
+                    let mut buf = [0u8; 8192];
+                    let n = sock.read(&mut buf).unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    // Paths / patterns exercised by WebScanner when allow_active_probes is true.
+                    if req.contains(".env")
+                        || req.contains(".git")
+                        || req.contains("POST")
+                        || req.contains("alert")
+                    {
+                        hits.fetch_add(1, Ordering::Relaxed);
+                    }
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let mut bytes = resp.into_bytes();
+                    bytes.extend_from_slice(body);
+                    let _ = sock.write_all(&bytes);
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    thread::sleep(Duration::from_millis(30));
+    (port, stop, probe_hits)
+}
+
+fn write_config_with_active_probes(path: &std::path::Path, allow: bool) {
+    write_minimal_config(path);
+    let mut toml = fs::read_to_string(path).unwrap();
+    toml = toml.replacen(
+        "[scanner.web]\nenabled = true\n",
+        &format!("[scanner.web]\nenabled = true\nallow_active_probes = {allow}\n"),
+        1,
+    );
+    fs::write(path, toml).unwrap();
+}
+
+fn run_cli_web_scan(
+    vest_home: &std::path::Path,
+    cfg: &std::path::Path,
+    url: &str,
+    report: &std::path::Path,
+    extra_args: &[&str],
+) -> std::process::Output {
+    let mut cmd = vest_cmd(vest_home);
+    cmd.arg("-c")
+        .arg(cfg)
+        .arg("scan")
+        .arg(url)
+        .arg("--target-type")
+        .arg("web")
+        .arg("--scanner")
+        .arg("web")
+        .arg("--provider")
+        .arg("none")
+        .arg("--format")
+        .arg("json")
+        .arg("--output")
+        .arg(report);
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    cmd.output().unwrap()
 }
 
 fn spawn_redirect_escape_server(evil_port: u16) -> (u16, Arc<AtomicBool>) {
@@ -159,6 +245,74 @@ fn cli_web_scan_redirect_escape_does_not_crash_or_follow_off_origin() {
             combined(&output)
         );
     }
+}
+
+#[test]
+fn cli_web_scan_passive_by_default_does_not_hit_active_probe_paths() {
+    let (port, stop, probe_hits) = spawn_probe_counting_server(PROBE_BAIT_HTML);
+    let url = format!("http://127.0.0.1:{port}/");
+
+    let root = temp_root("web-passive");
+    let vest_home = root.join("home");
+    let cfg = root.join("vest.toml");
+    let report = root.join("report.json");
+    fs::create_dir_all(&vest_home).unwrap();
+    // Minimal config omits allow_active_probes → serde default false.
+    write_minimal_config(&cfg);
+
+    let output = run_cli_web_scan(&vest_home, &cfg, &url, &report, &[]);
+
+    stop.store(true, Ordering::Relaxed);
+    assert_success(&output);
+    assert_eq!(
+        probe_hits.load(Ordering::Relaxed),
+        0,
+        "default CLI web scan must not request .env/.git/POST/XSS probe paths"
+    );
+}
+
+#[test]
+fn cli_web_scan_allow_active_probes_flag_hits_probe_paths() {
+    let (port, stop, probe_hits) = spawn_probe_counting_server(PROBE_BAIT_HTML);
+    let url = format!("http://127.0.0.1:{port}/");
+
+    let root = temp_root("web-active-flag");
+    let vest_home = root.join("home");
+    let cfg = root.join("vest.toml");
+    let report = root.join("report.json");
+    fs::create_dir_all(&vest_home).unwrap();
+    write_minimal_config(&cfg);
+
+    let output = run_cli_web_scan(&vest_home, &cfg, &url, &report, &["--allow-active-probes"]);
+
+    stop.store(true, Ordering::Relaxed);
+    assert_success(&output);
+    assert!(
+        probe_hits.load(Ordering::Relaxed) > 0,
+        "--allow-active-probes must exercise active probe paths (.env/.git/POST/XSS)"
+    );
+}
+
+#[test]
+fn cli_web_scan_config_allow_active_probes_hits_probe_paths() {
+    let (port, stop, probe_hits) = spawn_probe_counting_server(PROBE_BAIT_HTML);
+    let url = format!("http://127.0.0.1:{port}/");
+
+    let root = temp_root("web-active-cfg");
+    let vest_home = root.join("home");
+    let cfg = root.join("vest.toml");
+    let report = root.join("report.json");
+    fs::create_dir_all(&vest_home).unwrap();
+    write_config_with_active_probes(&cfg, true);
+
+    let output = run_cli_web_scan(&vest_home, &cfg, &url, &report, &[]);
+
+    stop.store(true, Ordering::Relaxed);
+    assert_success(&output);
+    assert!(
+        probe_hits.load(Ordering::Relaxed) > 0,
+        "scanner.web.allow_active_probes=true must exercise active probe paths"
+    );
 }
 
 #[test]

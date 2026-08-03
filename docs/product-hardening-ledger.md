@@ -23,7 +23,7 @@ Binary: `vest` (`vest-cli`). Feature: `browser` (default).
 
 ## Product use cases (summary)
 
-See [product-contract.md](product-contract.md): A offline local, B passive web (**CLI gap**), C active (no prompt UI), D AI egress, E tool-use, F CI, G degraded, H large target.
+See [product-contract.md](product-contract.md): A offline local, B passive web, C active (no prompt UI), D AI egress, E tool-use, F CI, G degraded, H large target.
 
 ## Threat boundaries
 
@@ -65,7 +65,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web (
 | N2 | `config validate` historically soft-failed (fixed on prior branch; re-verify) | verify |
 | N3 | No `vest doctor` / `policy explain` | open |
 | N4 | No explicit `--offline` / `--no-ai` flags (provider none only) | open |
-| N5 | CLI web scan forces `with_allow_active_probes(true)` | open (breaks passive contract B) |
+| N5 | CLI web scan forces `with_allow_active_probes(true)` | **Fixed** — default off; config OR `--allow-active-probes`; `scan_web_cli` probe-hit tests |
 
 ## Phase status
 

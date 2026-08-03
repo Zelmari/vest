@@ -217,7 +217,7 @@ pub struct WebScannerConfig {
     #[serde(default = "default_max_redirects")]
     pub max_redirects: u32,
     /// When false (default), only passive crawl / header checks run.
-    /// Active vulnerability probes require an explicit enable (CLI web scan sets this).
+    /// Active vulnerability probes require an explicit enable via config or `--allow-active-probes`.
     #[serde(default)]
     pub allow_active_probes: bool,
     #[serde(default = "default_connect_timeout_ms")]

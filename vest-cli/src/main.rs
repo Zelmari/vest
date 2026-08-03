@@ -132,6 +132,11 @@ pub struct ScanArgs {
     /// scanning fails closed / reports unsupported.
     #[arg(long)]
     pub allow_memory_simulation: bool,
+
+    /// Enable active web vulnerability probes (.env/.git exposure checks, XSS/SQLi, etc.).
+    /// Off by default; OR'd with `scanner.web.allow_active_probes` in config.
+    #[arg(long)]
+    pub allow_active_probes: bool,
 }
 
 #[derive(Subcommand)]

@@ -49,4 +49,4 @@ Egress is a second gate (`DataEgressClass` + session flags / approvals).
 |---------------------------|-------------------|
 | All HTTP goes through `ScopedHttpClient` | Scanner web client: yes foundations. Agent CLI tools: still `ureq`. |
 | Interactive approval step always exists | No prompt UI; `RequireInteractive` → deny. |
-| CLI web scan is passive | CLI enables active probes today. |
+| CLI web scan is passive | Default off; opt-in via config or `--allow-active-probes`. |
