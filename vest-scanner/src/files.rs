@@ -3,8 +3,9 @@
 //! # Limits: security vs performance
 //!
 //! **Security limits** (path escape / content exfiltration):
-//! - [`FileTraversalLimits::follow_symlinks`] (default `false`) — prevents symlink escape and
-//!   requires loop detection when enabled
+//! - [`FileTraversalLimits::follow_symlinks`] (default `false`) — when false, skips symlinks;
+//!   when true, follows only if the resolved path stays under the canonical scan root (escape
+//!   targets are skipped; loops still detected via inode identity)
 //! - [`FileTraversalLimits::max_file_size_bytes`] — do not silently read arbitrarily large files
 //! - [`FileTraversalLimits::ignore_globs`] — skip names/suffixes that must not be opened
 //!
@@ -74,6 +75,8 @@ impl FileTraversalLimits {
 pub enum SkipReason {
     Symlink,
     SymlinkLoop,
+    /// Resolved path (after symlink follow) escaped the canonical scan root.
+    OutsideRoot,
     TooLarge,
     Unreadable,
     Ignored,
@@ -134,10 +137,26 @@ fn identity_key(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// True if `path` equals `root` or is a proper descendant (component-wise).
+/// Rejects prefix collisions such as `/tmp/root` vs `/tmp/root-evil`.
+fn path_within_root(path: &Path, root: &Path) -> bool {
+    let path_comps: Vec<_> = path.components().collect();
+    let root_comps: Vec<_> = root.components().collect();
+    if path_comps.len() < root_comps.len() {
+        return false;
+    }
+    path_comps
+        .iter()
+        .zip(root_comps.iter())
+        .all(|(a, b)| a == b)
+}
+
 /// Collect files under `root` honouring [`FileTraversalLimits`].
 ///
 /// Paths in the outcome are sorted for deterministic ordering. Symlinks are skipped when
-/// `follow_symlinks` is false. Unreadable entries are recorded and skipped (no panic).
+/// `follow_symlinks` is false. When following is enabled, resolved paths must remain under
+/// the canonical scan root or they are skipped as [`SkipReason::OutsideRoot`]. Unreadable
+/// entries are recorded and skipped (no panic).
 pub fn collect_files_bounded(
     root: &Path,
     limits: &FileTraversalLimits,
@@ -196,8 +215,10 @@ pub fn collect_files_bounded(
         }
     };
 
+    let canonical_root = identity_key(root);
+
     if root_meta.is_file() {
-        let key = identity_key(root);
+        let key = canonical_root.clone();
         if !visited.insert(key) {
             skipped.push((root.to_path_buf(), SkipReason::SymlinkLoop));
             return Ok(TraversalOutcome {
@@ -231,8 +252,7 @@ pub fn collect_files_bounded(
 
     // BFS-style stack: (path, depth). Depth 0 is the root directory itself.
     let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
-    let root_key = identity_key(root);
-    visited.insert(root_key);
+    visited.insert(canonical_root.clone());
 
     while let Some((dir, depth)) = stack.pop() {
         if truncated {
@@ -292,6 +312,11 @@ pub fn collect_files_bounded(
             };
 
             let key = identity_key(&child);
+            // Containment: never traverse or collect resolved paths outside the scan root.
+            if !path_within_root(&key, &canonical_root) {
+                skipped.push((child, SkipReason::OutsideRoot));
+                continue;
+            }
             if !visited.insert(key) {
                 skipped.push((child, SkipReason::SymlinkLoop));
                 continue;
@@ -1480,6 +1505,44 @@ mod tests {
             assert!(outcome.files.iter().any(|p| p.ends_with("real.txt")));
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_collect_follow_symlinks_skips_escape_outside_root() {
+        let dir = unique_temp_dir("symlink_escape");
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let outside = std::env::temp_dir().join(format!(
+            "vest-files-outside-root-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), b"outside-leak").unwrap();
+        std::fs::write(dir.join("ok.txt"), b"ok").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("escape")).unwrap();
+
+        let limits = FileTraversalLimits {
+            follow_symlinks: true,
+            ..FileTraversalLimits::default()
+        };
+        let outcome = collect_files_bounded(&dir, &limits).unwrap();
+        assert_eq!(outcome.files.len(), 1);
+        assert!(outcome.files[0].ends_with("ok.txt"));
+        assert!(
+            !outcome.files.iter().any(|p| p.ends_with("secret.txt")),
+            "escaped /tmp path must not be collected: {:?}",
+            outcome.files
+        );
+        assert!(outcome
+            .skipped
+            .iter()
+            .any(|(p, r)| p.ends_with("escape") && *r == SkipReason::OutsideRoot));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&outside).ok();
     }
 
     #[test]
