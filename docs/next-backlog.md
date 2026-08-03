@@ -2,6 +2,7 @@
 
 **Branch:** `main` only  
 **Started tip:** `2afc753`  
+**Completed tip:** `6656021` — all A/B/C/D checkboxes cleared  
 **Method:** Clear items one-by-one; commit at each meaningful change; keep CI green.  
 **Standing non-claims (R1–R6):** not in this queue.
 
