@@ -74,6 +74,7 @@ impl ApprovedNetworkScope {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn unrestricted() -> Self {
         Self {
             origins: Vec::new(),

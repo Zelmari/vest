@@ -77,6 +77,7 @@ impl ApprovedFilesystemScope {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     /// Test-only: do not enforce root membership (policy may still evaluate effects).
     pub fn unrestricted() -> Self {
         Self {

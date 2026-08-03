@@ -78,6 +78,7 @@ impl SafetyChecker {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     /// Test-only permissive checker (still denies Unknown effects).
     pub fn permissive() -> Self {
         Self {
@@ -97,6 +98,7 @@ impl SafetyChecker {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn new_allowing(allowed: bool) -> Self {
         if allowed {
             Self::permissive()

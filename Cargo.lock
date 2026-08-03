@@ -2792,6 +2792,7 @@ dependencies = [
  "tokio",
  "toml",
  "uuid",
+ "vest-agent",
  "vest-core",
 ]
 

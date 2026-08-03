@@ -48,6 +48,7 @@ impl AuthorisationContext {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     /// Test-only: unrestricted scopes + permissive effects. Unknown effects still deny.
     pub fn permissive_for_tests(session_id: impl Into<String>) -> Self {
         Self {
@@ -65,6 +66,7 @@ impl AuthorisationContext {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     /// Alias for [`Self::permissive_for_tests`] with a fixed session id.
     pub fn permissive() -> Self {
         Self::permissive_for_tests("permissive")

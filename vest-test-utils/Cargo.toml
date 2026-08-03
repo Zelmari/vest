@@ -13,6 +13,7 @@ uuid.workspace = true
 tokio = { workspace = true, features = ["time"] }
 
 vest-core = { workspace = true }
+vest-agent = { workspace = true, features = ["test-utils"] }
 
 [dev-dependencies]
 toml.workspace = true

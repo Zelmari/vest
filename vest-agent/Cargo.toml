@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# Exposes permissive/unrestricted auth helpers for tests (POL-2).
+test-utils = []
+
 [dependencies]
 async-trait.workspace = true
 tokio.workspace = true
