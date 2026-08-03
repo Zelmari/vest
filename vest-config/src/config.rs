@@ -196,10 +196,17 @@ pub struct BinaryScannerConfig {
     pub check_mitigations: bool,
     #[serde(default)]
     pub find_rop_gadgets: bool,
+    /// Per-file read/parse cap for binary scans (BIN-1). Default 256 MiB.
+    #[serde(default = "default_binary_max_file_size_mb")]
+    pub max_file_size_mb: u32,
 }
 
 fn default_disassembler() -> String {
     "capstone".into()
+}
+
+fn default_binary_max_file_size_mb() -> u32 {
+    256
 }
 
 impl Default for BinaryScannerConfig {
@@ -214,7 +221,17 @@ impl Default for BinaryScannerConfig {
             disassembler: "capstone".into(),
             check_mitigations: true,
             find_rop_gadgets: false,
+            max_file_size_mb: default_binary_max_file_size_mb(),
         }
+    }
+}
+
+impl BinaryScannerConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_file_size_mb == 0 {
+            return Err("scanner.binary.max_file_size_mb must be non-zero".into());
+        }
+        Ok(())
     }
 }
 

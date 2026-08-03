@@ -36,6 +36,11 @@ pub fn validate_config(config: &VestConfig) -> Result<(), VestError> {
     config.scanner.web.validate().map_err(VestError::Config)?;
     config
         .scanner
+        .binary
+        .validate()
+        .map_err(VestError::Config)?;
+    config
+        .scanner
         .network
         .validate()
         .map_err(VestError::Config)?;

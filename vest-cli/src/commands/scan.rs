@@ -614,7 +614,8 @@ async fn run_builtin_scanners(
                 let scanner = vest_scanner::binary::BinaryScanner::new()
                     .with_sink_catalogs(config.scanner.binary.sink_catalogs.clone())
                     .with_mitigations(config.scanner.binary.check_mitigations)
-                    .with_rop(config.scanner.binary.find_rop_gadgets);
+                    .with_rop(config.scanner.binary.find_rop_gadgets)
+                    .with_max_file_size_mb(config.scanner.binary.max_file_size_mb);
                 run_scanner("binary", scanner, target).await
             }
             "memory" if config.scanner.memory.enabled => {
