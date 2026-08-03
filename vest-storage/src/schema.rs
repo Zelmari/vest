@@ -107,6 +107,15 @@ pub fn run_migrations(conn: &Connection) -> Result<(), StorageError> {
             timestamp       TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS scan_scanner_checkpoints (
+            scan_id         TEXT NOT NULL REFERENCES scans(id),
+            scanner         TEXT NOT NULL,
+            status          TEXT NOT NULL,
+            completed_at    TEXT NOT NULL,
+            error           TEXT,
+            PRIMARY KEY (scan_id, scanner)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_targets_type ON targets(type);
         CREATE INDEX IF NOT EXISTS idx_targets_name ON targets(name);
         CREATE INDEX IF NOT EXISTS idx_scans_target ON scans(target_id);
@@ -125,6 +134,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), StorageError> {
         CREATE INDEX IF NOT EXISTS idx_memory_pattern ON scan_memory(pattern_hash, pattern_type, COALESCE(target_hash, ''));
         CREATE INDEX IF NOT EXISTS idx_actions_scan ON agent_actions(scan_id);
         CREATE INDEX IF NOT EXISTS idx_actions_sequence ON agent_actions(scan_id, sequence);
+        CREATE INDEX IF NOT EXISTS idx_checkpoints_scan ON scan_scanner_checkpoints(scan_id);
         ",
     )
     .map_err(|e| StorageError::Migration(format!("Failed to run migrations: {}", e)))?;

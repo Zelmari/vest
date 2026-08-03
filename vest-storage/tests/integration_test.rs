@@ -274,6 +274,82 @@ mod integration_tests {
         assert!(matches!(err, StorageError::NotFound(_)));
     }
 
+    #[test]
+    fn test_scanner_checkpoint_upsert_and_list() {
+        let conn = setup_db();
+        let target = make_target("t.exe", TargetType::File);
+        targets::insert_target(&conn, &target).unwrap();
+        let mut scan = make_scan("scan-cp", &target.id, ScanMode::Pipeline);
+        scan.status = ScanStatus::Running;
+        scans::insert_scan(&conn, &scan).unwrap();
+
+        checkpoints::upsert_scanner_checkpoint(&conn, "scan-cp", "files", "completed", None)
+            .unwrap();
+        checkpoints::upsert_scanner_checkpoint(
+            &conn,
+            "scan-cp",
+            "web",
+            "failed",
+            Some("timeout"),
+        )
+        .unwrap();
+        // Idempotent upsert
+        checkpoints::upsert_scanner_checkpoint(&conn, "scan-cp", "files", "completed", None)
+            .unwrap();
+
+        let completed = checkpoints::list_completed_scanner_names(&conn, "scan-cp").unwrap();
+        assert_eq!(completed, vec!["files".to_string()]);
+
+        let all = checkpoints::list_scanner_checkpoints(&conn, "scan-cp").unwrap();
+        assert_eq!(all.len(), 2);
+        let web = all.iter().find(|c| c.scanner == "web").unwrap();
+        assert_eq!(web.status, "failed");
+        assert_eq!(web.error.as_deref(), Some("timeout"));
+    }
+
+    #[test]
+    fn test_update_scan_finalize_and_delete_cleans_checkpoints() {
+        let conn = setup_db();
+        let target = make_target("t.exe", TargetType::File);
+        targets::insert_target(&conn, &target).unwrap();
+        let mut scan = make_scan("scan-fin", &target.id, ScanMode::Pipeline);
+        scan.status = ScanStatus::Running;
+        scans::insert_scan(&conn, &scan).unwrap();
+        checkpoints::upsert_scanner_checkpoint(&conn, "scan-fin", "files", "completed", None)
+            .unwrap();
+
+        scans::update_scan_finalize(
+            &conn,
+            "scan-fin",
+            &scans::ScanFinalizeUpdate {
+                status: &ScanStatus::Completed,
+                completed_at: Utc::now(),
+                duration_ms: 42,
+                total_findings: 1,
+                critical_count: 0,
+                high_count: 0,
+                medium_count: 1,
+                low_count: 0,
+                info_count: 0,
+                agent_model: None,
+            },
+        )
+        .unwrap();
+        let done = scans::get_scan(&conn, "scan-fin").unwrap();
+        assert_eq!(done.status, ScanStatus::Completed);
+        assert_eq!(done.duration_ms, Some(42));
+        assert_eq!(done.total_findings, 1);
+
+        scans::delete_scan(&conn, "scan-fin").unwrap();
+        assert!(matches!(
+            scans::get_scan(&conn, "scan-fin"),
+            Err(StorageError::NotFound(_))
+        ));
+        assert!(checkpoints::list_scanner_checkpoints(&conn, "scan-fin")
+            .unwrap()
+            .is_empty());
+    }
+
     // Finding tests
 
     #[test]

@@ -1,5 +1,6 @@
 pub mod agent_actions;
 pub mod artifacts;
+pub mod checkpoints;
 pub mod connection;
 pub mod error;
 pub mod findings;

@@ -1,8 +1,58 @@
+use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use vest_core::types::{ScanSession, ScanStatus};
 
 use crate::error::StorageError;
 use crate::row::{parse_datetime, parse_json, parse_optional_datetime, require_rows_affected};
+
+/// Finalize / progress update for an existing running scan.
+pub struct ScanFinalizeUpdate<'a> {
+    pub status: &'a ScanStatus,
+    pub completed_at: DateTime<Utc>,
+    pub duration_ms: i64,
+    pub total_findings: u64,
+    pub critical_count: u64,
+    pub high_count: u64,
+    pub medium_count: u64,
+    pub low_count: u64,
+    pub info_count: u64,
+    pub agent_model: Option<&'a str>,
+}
+
+pub fn update_scan_finalize(
+    conn: &Connection,
+    id: &str,
+    update: &ScanFinalizeUpdate<'_>,
+) -> Result<(), StorageError> {
+    let rows = conn.execute(
+        "UPDATE scans SET
+            status = ?1,
+            completed_at = ?2,
+            duration_ms = ?3,
+            total_findings = ?4,
+            critical_count = ?5,
+            high_count = ?6,
+            medium_count = ?7,
+            low_count = ?8,
+            info_count = ?9,
+            agent_model = ?10
+         WHERE id = ?11",
+        rusqlite::params![
+            update.status.to_string(),
+            update.completed_at.to_rfc3339(),
+            update.duration_ms,
+            update.total_findings as i64,
+            update.critical_count as i64,
+            update.high_count as i64,
+            update.medium_count as i64,
+            update.low_count as i64,
+            update.info_count as i64,
+            update.agent_model,
+            id,
+        ],
+    )?;
+    require_rows_affected(rows, "Scan", id)
+}
 
 pub fn insert_scan(conn: &Connection, scan: &ScanSession) -> Result<(), StorageError> {
     conn.execute(
@@ -122,6 +172,20 @@ pub fn update_scan_status(
 }
 
 pub fn delete_scan(conn: &Connection, id: &str) -> Result<(), StorageError> {
+    // Child rows first (no ON DELETE CASCADE on checkpoints/findings/actions).
+    crate::checkpoints::delete_checkpoints_for_scan(conn, id)?;
+    conn.execute(
+        "DELETE FROM agent_actions WHERE scan_id = ?1",
+        rusqlite::params![id],
+    )?;
+    conn.execute(
+        "DELETE FROM artifacts WHERE scan_id = ?1",
+        rusqlite::params![id],
+    )?;
+    conn.execute(
+        "DELETE FROM findings WHERE scan_id = ?1",
+        rusqlite::params![id],
+    )?;
     conn.execute("DELETE FROM scans WHERE id = ?1", rusqlite::params![id])?;
     Ok(())
 }
