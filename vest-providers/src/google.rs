@@ -5,14 +5,16 @@ use serde_json::Value;
 use std::sync::Arc;
 use vest_core::error::VestError;
 use vest_core::LlmProvider;
+use vest_core::SecretString;
 
 use crate::http_client::build_provider_client;
 
 /// Google AI / Gemini API key header (preferred over `?key=` query params).
 const GOOGLE_API_KEY_HEADER: &str = "x-goog-api-key";
 
+#[derive(Debug)]
 pub struct GoogleProvider {
-    pub api_key: String,
+    pub api_key: SecretString,
     pub default_model: String,
     pub base_url: String,
     client: Client,
@@ -81,7 +83,7 @@ impl GoogleProvider {
         timeout_seconds: Option<u64>,
     ) -> Self {
         Self {
-            api_key,
+            api_key: SecretString::new(api_key),
             default_model: default_model.unwrap_or_else(|| "gemini-2.5-pro".into()),
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             client: build_provider_client(timeout_seconds),
@@ -89,7 +91,7 @@ impl GoogleProvider {
     }
 
     fn provider_err(&self, message: impl AsRef<str>) -> VestError {
-        VestError::Provider(scrub_api_key(message.as_ref(), &self.api_key))
+        VestError::Provider(scrub_api_key(message.as_ref(), self.api_key.expose()))
     }
 
     fn convert_messages(&self, messages: &[Value]) -> Vec<GeminiContent> {
@@ -154,7 +156,7 @@ impl LlmProvider for GoogleProvider {
         let resp = self
             .client
             .post(&url)
-            .header(GOOGLE_API_KEY_HEADER, &self.api_key)
+            .header(GOOGLE_API_KEY_HEADER, self.api_key.expose())
             .json(&req)
             .send()
             .await
@@ -164,7 +166,7 @@ impl LlmProvider for GoogleProvider {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             let err = if status.as_u16() == 429 {
-                VestError::RateLimited(scrub_api_key("Google: rate limited", &self.api_key))
+                VestError::RateLimited(scrub_api_key("Google: rate limited", self.api_key.expose()))
             } else {
                 self.provider_err(format!("Google: HTTP {}: {}", status, body))
             };
@@ -203,7 +205,7 @@ impl LlmProvider for GoogleProvider {
         let resp = self
             .client
             .get(&url)
-            .header(GOOGLE_API_KEY_HEADER, &self.api_key)
+            .header(GOOGLE_API_KEY_HEADER, self.api_key.expose())
             .send()
             .await
             .map_err(|e| self.provider_err(format!("Google: Failed to list models: {}", e)))?;
@@ -324,6 +326,20 @@ mod tests {
         let scrubbed = scrub_api_key(&msg, SENTINEL_KEY);
         assert!(!scrubbed.contains(SENTINEL_KEY));
         assert!(scrubbed.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn debug_never_contains_api_key() {
+        let provider = GoogleProvider::new(SENTINEL_KEY.to_string(), Some("gemini-test".into()));
+        let debug = format!("{provider:?}");
+        assert!(
+            !debug.contains(SENTINEL_KEY),
+            "Debug must not contain API key: {debug}"
+        );
+        assert!(
+            debug.contains("REDACTED"),
+            "expected redaction marker: {debug}"
+        );
     }
 
     #[tokio::test]

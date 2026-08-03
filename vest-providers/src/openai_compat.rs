@@ -4,26 +4,17 @@ use serde::Deserialize;
 use serde_json::Value;
 use vest_core::error::VestError;
 use vest_core::traits::LlmProvider;
+use vest_core::SecretString;
 
 use crate::http_client::build_provider_client;
 
+#[derive(Debug)]
 pub struct OpenAiCompatProvider {
     pub name: String,
-    pub api_key: Option<String>,
+    pub api_key: Option<SecretString>,
     pub base_url: String,
     pub default_model: String,
     client: Client,
-}
-
-impl std::fmt::Debug for OpenAiCompatProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenAiCompatProvider")
-            .field("name", &self.name)
-            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
-            .field("base_url", &self.base_url)
-            .field("default_model", &self.default_model)
-            .finish()
-    }
 }
 
 impl OpenAiCompatProvider {
@@ -45,7 +36,7 @@ impl OpenAiCompatProvider {
     ) -> Self {
         Self {
             name,
-            api_key,
+            api_key: api_key.map(SecretString::new),
             base_url,
             default_model,
             client: build_provider_client(timeout_seconds),
@@ -129,7 +120,7 @@ impl LlmProvider for OpenAiCompatProvider {
 
         let mut http_req = self.client.post(&url).json(&body);
         if let Some(ref api_key) = self.api_key {
-            http_req = http_req.bearer_auth(api_key);
+            http_req = http_req.bearer_auth(api_key.expose());
         }
 
         let resp = http_req.send().await.map_err(|e| {
@@ -171,7 +162,7 @@ impl LlmProvider for OpenAiCompatProvider {
 
         let mut http_req = self.client.post(&url).json(&body);
         if let Some(ref api_key) = self.api_key {
-            http_req = http_req.bearer_auth(api_key);
+            http_req = http_req.bearer_auth(api_key.expose());
         }
 
         let resp = http_req.send().await.map_err(|e| {
@@ -218,7 +209,7 @@ impl LlmProvider for OpenAiCompatProvider {
 
         let mut http_req = self.client.get(&url);
         if let Some(ref api_key) = self.api_key {
-            http_req = http_req.bearer_auth(api_key);
+            http_req = http_req.bearer_auth(api_key.expose());
         }
 
         let resp = http_req.send().await.map_err(|e| {
@@ -258,7 +249,7 @@ impl LlmProvider for OpenAiCompatProvider {
 
         let mut http_req = self.client.post(&url).json(&body);
         if let Some(ref api_key) = self.api_key {
-            http_req = http_req.bearer_auth(api_key);
+            http_req = http_req.bearer_auth(api_key.expose());
         }
 
         let resp = http_req.send().await.map_err(|e| {
@@ -286,5 +277,48 @@ impl LlmProvider for OpenAiCompatProvider {
             .next()
             .map(|d| d.embedding)
             .ok_or_else(|| VestError::Provider(format!("{}: No embedding returned", self.name)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SENTINEL_KEY: &str = "VEST_OPENAI_COMPAT_SENTINEL_KEY_PROV2_DO_NOT_LEAK";
+
+    #[test]
+    fn debug_never_contains_api_key() {
+        let provider = OpenAiCompatProvider::new(
+            "test".into(),
+            Some(SENTINEL_KEY.into()),
+            "https://example.invalid/v1".into(),
+            "test-model".into(),
+        );
+        let debug = format!("{provider:?}");
+        assert!(
+            !debug.contains(SENTINEL_KEY),
+            "Debug must not contain API key: {debug}"
+        );
+        assert!(
+            debug.contains("REDACTED"),
+            "expected redaction marker: {debug}"
+        );
+    }
+
+    #[tokio::test]
+    async fn transport_error_does_not_echo_key() {
+        let provider = OpenAiCompatProvider::new(
+            "test".into(),
+            Some(SENTINEL_KEY.into()),
+            "http://127.0.0.1:1/v1".into(),
+            "test-model".into(),
+        );
+        let messages = vec![serde_json::json!({"role":"user","content":"hi"})];
+        let err = provider.chat(&messages, "test-model").await.unwrap_err();
+        let text = err.to_string();
+        assert!(
+            !text.contains(SENTINEL_KEY),
+            "VestError must not contain API key: {text}"
+        );
     }
 }

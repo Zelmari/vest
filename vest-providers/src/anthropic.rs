@@ -5,11 +5,13 @@ use serde_json::Value;
 use std::sync::Arc;
 use vest_core::error::VestError;
 use vest_core::LlmProvider;
+use vest_core::SecretString;
 
 use crate::http_client::build_provider_client;
 
+#[derive(Debug)]
 pub struct AnthropicProvider {
-    pub api_key: String,
+    pub api_key: SecretString,
     pub default_model: String,
     pub base_url: String,
     pub anthropic_version: String,
@@ -68,7 +70,7 @@ impl AnthropicProvider {
         timeout_seconds: Option<u64>,
     ) -> Self {
         Self {
-            api_key,
+            api_key: SecretString::new(api_key),
             default_model: default_model.unwrap_or_else(|| "claude-sonnet-4-20250514".into()),
             base_url: "https://api.anthropic.com/v1".into(),
             anthropic_version: "2023-06-01".into(),
@@ -132,7 +134,7 @@ impl LlmProvider for AnthropicProvider {
         let resp = self
             .client
             .post(&url)
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", self.api_key.expose())
             .header("anthropic-version", &self.anthropic_version)
             .json(&req)
             .send()
@@ -192,4 +194,39 @@ pub fn create_anthropic_provider(
         default_model,
         timeout_seconds,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vest_core::LlmProvider;
+
+    const SENTINEL_KEY: &str = "VEST_ANTHROPIC_SENTINEL_KEY_PROV2_DO_NOT_LEAK";
+
+    #[test]
+    fn debug_never_contains_api_key() {
+        let provider = AnthropicProvider::new(SENTINEL_KEY.into(), Some("claude-test".into()));
+        let debug = format!("{provider:?}");
+        assert!(
+            !debug.contains(SENTINEL_KEY),
+            "Debug must not contain API key: {debug}"
+        );
+        assert!(
+            debug.contains("REDACTED"),
+            "expected redaction marker: {debug}"
+        );
+    }
+
+    #[tokio::test]
+    async fn transport_error_does_not_echo_key() {
+        let mut provider = AnthropicProvider::new(SENTINEL_KEY.into(), Some("claude-test".into()));
+        provider.base_url = "http://127.0.0.1:1/v1".into();
+        let messages = vec![serde_json::json!({"role":"user","content":"hi"})];
+        let err = provider.chat(&messages, "claude-test").await.unwrap_err();
+        let text = err.to_string();
+        assert!(
+            !text.contains(SENTINEL_KEY),
+            "VestError must not contain API key: {text}"
+        );
+    }
 }
