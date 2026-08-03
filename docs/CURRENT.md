@@ -1,6 +1,6 @@
 # CURRENT — one-screen status
 
-**HEAD:** `936e564` — docs: acceptance rows for resume, policy explain, nuclei (M1–M3). Product tip: `9148199` (M3 `--scanner nuclei`).
+**HEAD:** `b64612a` — docs: embeddings non-goal. Standing-backlog items K14 + D2 + embeddings decided; last open item is the parked R3 residual (optional).
 
 **Last shipped majors:**
 
