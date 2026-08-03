@@ -936,7 +936,10 @@ allowed_networks = []
         };
         assert!(agent.validate().is_ok());
         agent.max_concurrent_agents = 0;
-        assert!(agent.validate().unwrap_err().contains("max_concurrent_agents"));
+        assert!(agent
+            .validate()
+            .unwrap_err()
+            .contains("max_concurrent_agents"));
 
         let mut net = NetworkScannerConfig::default();
         assert!(net.validate().is_ok());
@@ -959,7 +962,10 @@ allowed_networks = []
         };
         assert!(prov.validate("openai").is_ok());
         prov.timeout_seconds = Some(0);
-        assert!(prov.validate("openai").unwrap_err().contains("timeout_seconds"));
+        assert!(prov
+            .validate("openai")
+            .unwrap_err()
+            .contains("timeout_seconds"));
     }
 
     #[test]

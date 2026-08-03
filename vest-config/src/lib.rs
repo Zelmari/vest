@@ -34,7 +34,11 @@ pub fn validate_config(config: &VestConfig) -> Result<(), VestError> {
     config.agent.validate().map_err(VestError::Config)?;
     config.scanner.files.validate().map_err(VestError::Config)?;
     config.scanner.web.validate().map_err(VestError::Config)?;
-    config.scanner.network.validate().map_err(VestError::Config)?;
+    config
+        .scanner
+        .network
+        .validate()
+        .map_err(VestError::Config)?;
     if config.scanner.memory.max_memory_per_scan_mb == 0 {
         return Err(VestError::Config(
             "scanner.memory.max_memory_per_scan_mb must be > 0".into(),

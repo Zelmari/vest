@@ -59,11 +59,7 @@ impl FallbackChain {
         self
     }
 
-    async fn invoke_with_timeout<F, Fut>(
-        &self,
-        name: &str,
-        call: F,
-    ) -> Result<String, VestError>
+    async fn invoke_with_timeout<F, Fut>(&self, name: &str, call: F) -> Result<String, VestError>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<String, VestError>>,
