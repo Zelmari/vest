@@ -1,11 +1,70 @@
 #![cfg(feature = "browser")]
 
+//! Browser / CDP scanner with bounded filesystem walks and scoped navigation.
+//!
+//! # Limits
+//! - Local path scans reuse [`crate::files::collect_files_bounded`] (depth / count /
+//!   size / symlink policy).
+//! - CDP navigate allows only `http`/`https` (rejects `file://` and other schemes).
+//! - Chrome DevTools `json/version` HTTP body is capped ([`CDP_VERSION_BODY_MAX_BYTES`]).
+
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use std::path::Path;
+use url::Url;
 use vest_core::error::VestError;
 use vest_core::ids::new_id;
 use vest_core::types::{Finding, FindingStatus, Severity, Target, VulnerabilityClass};
 use vest_core::Scanner;
+
+use crate::files::{collect_files_bounded, FileTraversalLimits};
+
+/// Max bytes accepted from Chrome's `/json/version` endpoint (JSON is tiny).
+pub const CDP_VERSION_BODY_MAX_BYTES: u64 = 64 * 1024;
+
+/// Default traversal bounds for browser static analysis of a local tree.
+pub fn browser_default_limits() -> FileTraversalLimits {
+    FileTraversalLimits {
+        max_depth: 16,
+        max_files: 5_000,
+        max_file_size_bytes: 32 * 1024 * 1024,
+        max_total_bytes: 256 * 1024 * 1024,
+        follow_symlinks: false,
+        ignore_globs: Vec::new(),
+    }
+}
+
+/// Reject dangerous or unsupported schemes before CDP navigate.
+///
+/// Only `http` and `https` are allowed. `file://` is explicitly rejected so a
+/// browser target URL cannot open arbitrary local files via Chrome.
+pub fn validate_navigate_url(url: &str) -> Result<(), String> {
+    let parsed = Url::parse(url).map_err(|e| format!("Invalid navigate URL: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {
+            if parsed.host_str().is_none() {
+                return Err("Navigate URL missing host".into());
+            }
+            Ok(())
+        }
+        "file" => Err("Navigate URL scheme 'file' is not allowed".into()),
+        scheme => Err(format!(
+            "Navigate URL scheme '{scheme}' is not allowed (only http/https)"
+        )),
+    }
+}
+
+/// Parse `webSocketDebuggerUrl` from a Chrome `/json/version` JSON body.
+pub fn parse_chrome_ws_debugger_url(body: &str) -> Result<String, String> {
+    let json: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("Invalid JSON: {e}"))?;
+    json.get("webSocketDebuggerUrl")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            "No webSocketDebuggerUrl in Chrome response. Is Chrome running with --remote-debugging-port=9222?".into()
+        })
+}
 
 pub struct BrowserScanner {
     pub name: String,
@@ -14,8 +73,8 @@ pub struct BrowserScanner {
     pub check_storage: bool,
     pub check_websockets: bool,
     pub check_wasm: bool,
+    pub limits: FileTraversalLimits,
 }
-
 impl BrowserScanner {
     pub fn new() -> Self {
         Self {
@@ -27,6 +86,7 @@ impl BrowserScanner {
             check_storage: true,
             check_websockets: true,
             check_wasm: true,
+            limits: browser_default_limits(),
         }
     }
 
@@ -45,21 +105,38 @@ impl BrowserScanner {
         self
     }
 
+    pub fn with_limits(mut self, limits: FileTraversalLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
     pub async fn inspect_page(url: &str) -> Result<serde_json::Value, String> {
+        validate_navigate_url(url)?;
+
         let ws_url = Self::get_chrome_ws_url()
             .await
             .map_err(|e| format!("Chrome not found: {}", e))?;
 
-        let (mut browser, _handler) = chromiumoxide::Browser::connect(&ws_url)
+        let (mut browser, mut handler) = chromiumoxide::Browser::connect(&ws_url)
             .await
             .map_err(|e| format!("Failed to connect to Chrome: {}", e))?;
 
-        let page = browser
-            .new_page(url)
-            .await
-            .map_err(|e| format!("Failed to navigate to {}: {}", url, e))?;
+        // Keep the CDP handler future alive for the lifetime of the session.
+        let handler_task = tokio::spawn(async move {
+            while let Some(h) = handler.next().await {
+                if h.is_err() {
+                    break;
+                }
+            }
+        });
 
-        // Wait for page to load
+        let outcome = async {
+            let page = browser
+                .new_page(url)
+                .await
+                .map_err(|e| format!("Failed to navigate to {}: {}", url, e))?;
+
+            // Wait for page to load
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
         let mut result = serde_json::json!({
@@ -208,36 +285,43 @@ impl BrowserScanner {
             }
         }
 
-        // Close the page and browser
-        page.close().await.ok();
-        browser.close().await.ok();
+            // Close the page
+            page.close().await.ok();
+            Ok::<_, String>(result)
+        }
+        .await;
 
-        Ok(result)
+        browser.close().await.ok();
+        let _ = handler_task.await;
+        outcome
     }
 
     async fn get_chrome_ws_url() -> Result<String, String> {
         let body = tokio::task::spawn_blocking(|| {
-        ureq::get("http://localhost:9222/json/version")
-            .call()
-            .map_err(|e| format!("Cannot reach Chrome DevTools on port 9222: {}. Start Chrome with: chrome --remote-debugging-port=9222", e))
-            .and_then(|resp| {
-                resp.into_body().read_to_string()
-                    .map_err(|e| format!("Failed to read response: {}", e))
-            })
-    }).await.map_err(|e| format!("Task join error: {}", e))??;
+            ureq::get("http://localhost:9222/json/version")
+                .call()
+                .map_err(|e| {
+                    format!(
+                        "Cannot reach Chrome DevTools on port 9222: {}. Start Chrome with: chrome --remote-debugging-port=9222",
+                        e
+                    )
+                })
+                .and_then(|resp| {
+                    resp.into_body()
+                        .into_with_config()
+                        .limit(CDP_VERSION_BODY_MAX_BYTES)
+                        .read_to_string()
+                        .map_err(|e| format!("Failed to read response: {e}"))
+                })
+        })
+        .await
+        .map_err(|e| format!("Task join error: {e}"))??;
 
-        let json: serde_json::Value =
-            serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {}", e))?;
-        json.get("webSocketDebuggerUrl")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "No webSocketDebuggerUrl in Chrome response. Is Chrome running with --remote-debugging-port=9222?".into())
+        parse_chrome_ws_debugger_url(&body)
     }
 
-    fn read_target_files(path: &Path) -> Result<Vec<(String, String)>, VestError> {
-        let mut files = Vec::new();
-        collect_files(path, &mut files)?;
-        Ok(files)
+    fn read_target_files(&self, path: &Path) -> Result<Vec<(String, String)>, VestError> {
+        read_target_files_bounded(path, &self.limits)
     }
 
     fn analyze_storage_safety(&self, files: &[(String, String)]) -> Vec<Finding> {
@@ -659,6 +743,7 @@ impl BrowserScanner {
     }
 
     async fn scan_url(&self, url: &str) -> Result<Vec<Finding>, VestError> {
+        validate_navigate_url(url).map_err(VestError::Config)?;
         tracing::info!("Starting CDP browser scan of: {}", url);
 
         let page_data = Self::inspect_page(url)
@@ -824,41 +909,66 @@ impl BrowserScanner {
     }
 }
 
-fn collect_files(dir: &Path, files: &mut Vec<(String, String)>) -> Result<(), VestError> {
-    if !dir.exists() {
-        return Ok(());
+/// Bounded local-tree collect for browser static analysis.
+///
+/// Reuses [`collect_files_bounded`] for depth/count/size/symlink policy, then
+/// reads each selected file (lossy UTF-8) up to the per-file size already enforced
+/// by traversal limits.
+pub fn read_target_files_bounded(
+    path: &Path,
+    limits: &FileTraversalLimits,
+) -> Result<Vec<(String, String)>, VestError> {
+    let outcome = collect_files_bounded(path, limits)?;
+    if outcome.truncated {
+        tracing::warn!(
+            "Browser path traversal truncated under {}: {:?}",
+            path.display(),
+            outcome.truncation_reason
+        );
+    }
+    for (skipped_path, reason) in &outcome.skipped {
+        tracing::debug!(
+            "Browser scan skipped {}: {:?}",
+            skipped_path.display(),
+            reason
+        );
     }
 
-    if dir.is_file() {
-        let content = std::fs::read_to_string(dir).map_err(VestError::Io)?;
-        let name = dir
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        files.push((name, content));
-        return Ok(());
-    }
-
-    let entries = std::fs::read_dir(dir).map_err(VestError::Io)?;
-    for entry in entries {
-        let entry = entry.map_err(VestError::Io)?;
-        let path = entry.path();
-        if path.is_file() {
-            let name = path
-                .file_name()
+    let mut files = Vec::new();
+    for file_path in outcome.files {
+        let data = match std::fs::read(&file_path) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::debug!("Unreadable {}: {}", file_path.display(), e);
+                continue;
+            }
+        };
+        if data.len() as u64 > limits.max_file_size_bytes {
+            continue;
+        }
+        let content = String::from_utf8_lossy(&data).into_owned();
+        let name = if path.is_file() {
+            path.file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
-                .to_string();
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                files.push((name, content));
-            }
-        } else if path.is_dir() {
-            collect_files(&path, files)?;
-        }
+                .into_owned()
+        } else {
+            file_path
+                .strip_prefix(path)
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    file_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+        };
+        files.push((name, content));
     }
-
-    Ok(())
+    Ok(files)
 }
 
 impl Default for BrowserScanner {
@@ -903,7 +1013,7 @@ impl Scanner for BrowserScanner {
         }
 
         tracing::info!("Starting browser scan of: {}", path.display());
-        let files = Self::read_target_files(path)?;
+        let files = self.read_target_files(path)?;
         self.scan_files(target, &files)
     }
 }
@@ -1071,5 +1181,156 @@ mod tests {
         assert!(!scanner.check_storage);
         assert!(!scanner.check_websockets);
         assert!(!scanner.check_wasm);
+    }
+
+    #[test]
+    fn validate_navigate_rejects_file_scheme() {
+        let err = validate_navigate_url("file:///etc/passwd").unwrap_err();
+        assert!(
+            err.to_lowercase().contains("file"),
+            "expected file scheme rejection: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_navigate_rejects_javascript_and_data() {
+        assert!(validate_navigate_url("javascript:alert(1)").is_err());
+        assert!(validate_navigate_url("data:text/html,hi").is_err());
+    }
+
+    #[test]
+    fn validate_navigate_allows_http_https() {
+        assert!(validate_navigate_url("http://127.0.0.1:8080/").is_ok());
+        assert!(validate_navigate_url("https://example.com/app").is_ok());
+    }
+
+    #[test]
+    fn parse_chrome_ws_debugger_url_ok() {
+        let body = r#"{"webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/abc"}"#;
+        let ws = parse_chrome_ws_debugger_url(body).unwrap();
+        assert!(ws.starts_with("ws://"));
+    }
+
+    #[test]
+    fn parse_chrome_ws_debugger_url_missing_field() {
+        assert!(parse_chrome_ws_debugger_url(r#"{"Browser":"Chrome"}"#).is_err());
+    }
+
+    #[test]
+    fn cdp_version_body_limit_is_tight() {
+        const {
+            assert!(CDP_VERSION_BODY_MAX_BYTES <= 64 * 1024);
+            assert!(CDP_VERSION_BODY_MAX_BYTES >= 1024);
+        }
+    }
+
+    #[test]
+    fn browser_default_limits_do_not_follow_symlinks() {
+        let limits = browser_default_limits();
+        assert!(!limits.follow_symlinks);
+        assert!(limits.max_depth > 0);
+        assert!(limits.max_files > 0);
+    }
+
+    #[test]
+    fn read_target_files_respects_max_depth() {
+        let root = std::env::temp_dir().join(format!(
+            "vest-brw-depth-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut cur = root.clone();
+        for i in 0..8 {
+            cur = cur.join(format!("d{i}"));
+            std::fs::create_dir_all(&cur).unwrap();
+        }
+        std::fs::write(
+            cur.join("deep.js"),
+            "localStorage.setItem('password', 'deep-secret');",
+        )
+        .unwrap();
+
+        let limits = FileTraversalLimits {
+            max_depth: 2,
+            max_files: 100,
+            max_file_size_bytes: 1024 * 1024,
+            max_total_bytes: 10_000_000,
+            follow_symlinks: false,
+            ignore_globs: vec![],
+        };
+        let files = read_target_files_bounded(&root, &limits).unwrap();
+        let blob = files
+            .iter()
+            .map(|(_, c)| c.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !blob.contains("deep-secret"),
+            "depth limit must stop before deep file: {blob:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn read_target_files_skips_symlink_escape_by_default() {
+        let root = std::env::temp_dir().join(format!(
+            "vest-brw-symlink-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let inside = root.join("in");
+        let outside = root.join("out");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(
+            outside.join("leak.js"),
+            "localStorage.setItem('password', 'outside-only-secret');",
+        )
+        .unwrap();
+        std::fs::write(inside.join("ok.js"), "console.log('ok');").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, inside.join("link")).unwrap();
+
+        let files = read_target_files_bounded(&inside, &browser_default_limits()).unwrap();
+        let blob = files
+            .iter()
+            .map(|(_, c)| c.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !blob.contains("outside-only-secret"),
+            "symlink escape must not read outside content: {blob:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_url_rejects_file_scheme_without_chrome() {
+        let scanner = BrowserScanner::new();
+        let target = Target {
+            id: "t".into(),
+            name: "file-url".into(),
+            target_type: vest_core::types::TargetType::Browser,
+            path: None,
+            url_str: Some("file:///tmp/x.html".into()),
+            pid: None,
+            host: None,
+            metadata: serde_json::json!({}),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt.block_on(scanner.scan(&target)).unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("file") || msg.contains("scheme") || msg.contains("not allowed"),
+            "expected file:// rejection, got: {msg}"
+        );
     }
 }
