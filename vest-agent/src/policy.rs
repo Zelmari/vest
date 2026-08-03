@@ -164,6 +164,22 @@ impl NormalisedToolCall {
     }
 }
 
+/// Scoped FS/network effects require a concrete string target; missing or
+/// non-string path/url must deny before scope checks can be skipped.
+fn require_material_string_target(
+    args: &Value,
+    key: &str,
+    effect: ToolEffect,
+) -> Result<(), String> {
+    match args.get(key) {
+        Some(Value::String(_)) => Ok(()),
+        Some(_) => Err(format!(
+            "{key} must be a string for effect {effect} (fail closed)"
+        )),
+        None => Err(format!("missing {key} for effect {effect} (fail closed)")),
+    }
+}
+
 /// Canonical JSON value for digesting: object keys sorted recursively.
 fn canonical_args(args: &Value) -> Value {
     match args {
@@ -258,13 +274,29 @@ impl PolicyEngine {
             return ApprovalDecision::deny("unknown tool effect (fail closed)");
         }
 
-        if let Some(path) = &call.path {
-            if call.effect.reads_local_content()
-                || matches!(
-                    call.effect,
-                    ToolEffect::LocalMetadataRead | ToolEffect::LocalWrite
-                )
+        let needs_fs_path = call.effect.reads_local_content()
+            || matches!(
+                call.effect,
+                ToolEffect::LocalMetadataRead | ToolEffect::LocalWrite
+            );
+        if needs_fs_path {
+            if let Err(reason) =
+                require_material_string_target(&call.material_args, "path", call.effect)
             {
+                return ApprovalDecision::deny(reason);
+            }
+        }
+
+        if call.effect.is_network() {
+            if let Err(reason) =
+                require_material_string_target(&call.material_args, "url", call.effect)
+            {
+                return ApprovalDecision::deny(reason);
+            }
+        }
+
+        if let Some(path) = &call.path {
+            if needs_fs_path {
                 if let Err(e) = resolve_read_path(&ctx.filesystem, path) {
                     return ApprovalDecision::deny(format!("filesystem scope: {e}"));
                 }
@@ -536,6 +568,77 @@ mod tests {
             serde_json::json!({"path": outside.to_string_lossy()}),
         );
         assert!(!engine.evaluate(&ctx, &c).is_allow());
+    }
+
+    #[test]
+    fn missing_path_denied_for_scoped_fs_effects() {
+        let engine = PolicyEngine::new();
+        let ctx = AuthorisationContext::permissive();
+        for effect in [
+            ToolEffect::LocalFileContentRead,
+            ToolEffect::LocalWrite,
+            ToolEffect::LocalMetadataRead,
+        ] {
+            let c = call("tool", effect, serde_json::json!({}));
+            match engine.evaluate(&ctx, &c) {
+                ApprovalDecision::Deny { reason } => {
+                    assert!(reason.contains("missing path"), "{reason}");
+                }
+                other => panic!("expected deny for {effect:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn non_string_path_denied_for_scoped_fs_effects() {
+        let engine = PolicyEngine::new();
+        let ctx = AuthorisationContext::permissive();
+        for bad in [
+            serde_json::json!({"path": ["/etc/passwd"]}),
+            serde_json::json!({"path": {"file": "/etc/passwd"}}),
+            serde_json::json!({"path": 1}),
+            serde_json::json!({"path": true}),
+            serde_json::json!({"path": null}),
+        ] {
+            let c = call("read_file", ToolEffect::LocalFileContentRead, bad);
+            match engine.evaluate(&ctx, &c) {
+                ApprovalDecision::Deny { reason } => {
+                    assert!(reason.contains("must be a string"), "{reason}");
+                }
+                other => panic!("expected deny, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn missing_or_non_string_url_denied_for_network_effects() {
+        let engine = PolicyEngine::new();
+        let ctx = AuthorisationContext::permissive();
+        for effect in [
+            ToolEffect::NetworkMetadataRead,
+            ToolEffect::PassiveNetworkRequest,
+            ToolEffect::ActiveNetworkProbe,
+            ToolEffect::StateChangingNetworkRequest,
+        ] {
+            let missing = call("http", effect, serde_json::json!({}));
+            match engine.evaluate(&ctx, &missing) {
+                ApprovalDecision::Deny { reason } => {
+                    assert!(reason.contains("missing url"), "{reason}");
+                }
+                other => panic!("expected deny for missing url + {effect:?}, got {other:?}"),
+            }
+            let bad = call(
+                "http",
+                effect,
+                serde_json::json!({"url": {"host": "evil.test"}}),
+            );
+            match engine.evaluate(&ctx, &bad) {
+                ApprovalDecision::Deny { reason } => {
+                    assert!(reason.contains("must be a string"), "{reason}");
+                }
+                other => panic!("expected deny for non-string url + {effect:?}, got {other:?}"),
+            }
+        }
     }
 
     fn tempfile_dir() -> TempDir {

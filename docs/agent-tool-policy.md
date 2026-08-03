@@ -40,6 +40,7 @@ model proposes tool call
   -> PolicyEngine::evaluate(AuthorisationContext, call)
        - empty tool id → deny
        - unknown effect → deny
+       - material target required: FS effects need string `path`; network effects need string `url` (missing/non-string deny)
        - filesystem scope check (canonical path under ApprovedFilesystemScope)
        - network scope check (parsed origin under ApprovedNetworkScope)
        - matching ApprovalToken (tool, effect, target, arg digest, session, TTL)

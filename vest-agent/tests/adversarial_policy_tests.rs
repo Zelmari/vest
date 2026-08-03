@@ -195,6 +195,127 @@ fn execute_shim_is_not_a_policy_bypass() {
 }
 
 #[test]
+fn missing_path_denied_before_handler_even_when_permissive() {
+    let ran = Arc::new(AtomicUsize::new(0));
+    let ran2 = ran.clone();
+    let mut registry = ToolRegistry::new();
+    registry.register(read_file_def(), move |_| {
+        ran2.fetch_add(1, Ordering::SeqCst);
+        Ok(serde_json::json!({"content": "LEAKED"}))
+    });
+    let ctx = AuthorisationContext::permissive();
+    let policy = PolicyEngine::new();
+
+    let err = registry
+        .invoke(&policy, &ctx, "read_file", serde_json::json!({}))
+        .unwrap_err();
+    assert!(
+        err.to_lowercase().contains("missing path"),
+        "expected missing-path deny, got: {err}"
+    );
+    assert_eq!(ran.load(Ordering::SeqCst), 0, "handler must not run");
+}
+
+#[test]
+fn non_string_path_denied_before_handler() {
+    let ran = Arc::new(AtomicUsize::new(0));
+    let ran2 = ran.clone();
+    let mut registry = ToolRegistry::new();
+    registry.register(read_file_def(), move |_| {
+        ran2.fetch_add(1, Ordering::SeqCst);
+        Ok(serde_json::json!({"content": "LEAKED"}))
+    });
+    let ctx = AuthorisationContext::permissive();
+    let policy = PolicyEngine::new();
+
+    for args in [
+        serde_json::json!({"path": ["/etc/passwd"]}),
+        serde_json::json!({"path": {"p": "/etc/passwd"}}),
+        serde_json::json!({"path": null}),
+    ] {
+        let err = registry
+            .invoke(&policy, &ctx, "read_file", args)
+            .unwrap_err();
+        assert!(
+            err.to_lowercase().contains("must be a string"),
+            "expected non-string path deny, got: {err}"
+        );
+        assert_eq!(ran.load(Ordering::SeqCst), 0, "handler must not run");
+    }
+}
+
+#[test]
+fn missing_or_non_string_url_denied_before_handler() {
+    let ran = Arc::new(AtomicUsize::new(0));
+    let ran2 = ran.clone();
+    let mut registry = ToolRegistry::new();
+    registry.register(http_get_def(), move |_| {
+        ran2.fetch_add(1, Ordering::SeqCst);
+        Ok(serde_json::json!({"body": "LEAKED"}))
+    });
+    let ctx = AuthorisationContext::permissive();
+    let policy = PolicyEngine::new();
+
+    let err = registry
+        .invoke(&policy, &ctx, "http_get", serde_json::json!({}))
+        .unwrap_err();
+    assert!(
+        err.to_lowercase().contains("missing url"),
+        "expected missing-url deny, got: {err}"
+    );
+    assert_eq!(ran.load(Ordering::SeqCst), 0);
+
+    let err2 = registry
+        .invoke(
+            &policy,
+            &ctx,
+            "http_get",
+            serde_json::json!({"url": ["http://evil.test/"]}),
+        )
+        .unwrap_err();
+    assert!(
+        err2.to_lowercase().contains("must be a string"),
+        "expected non-string url deny, got: {err2}"
+    );
+    assert_eq!(ran.load(Ordering::SeqCst), 0, "handler must not run");
+}
+
+#[test]
+fn local_write_missing_path_denied_before_handler() {
+    let ran = Arc::new(AtomicUsize::new(0));
+    let ran2 = ran.clone();
+    let mut registry = ToolRegistry::new();
+    registry.register(
+        ToolDefinition::new(
+            "write_file",
+            "Write a local file",
+            serde_json::json!({"type":"object"}),
+            ToolEffect::LocalWrite,
+            DataEgressClass::LocalMetadata,
+        ),
+        move |_| {
+            ran2.fetch_add(1, Ordering::SeqCst);
+            Ok(serde_json::json!({"ok": true}))
+        },
+    );
+    let ctx = AuthorisationContext::permissive();
+    let policy = PolicyEngine::new();
+    let err = registry
+        .invoke(
+            &policy,
+            &ctx,
+            "write_file",
+            serde_json::json!({"path": {"nested": "x"}}),
+        )
+        .unwrap_err();
+    assert!(
+        err.to_lowercase().contains("must be a string"),
+        "expected non-string path deny, got: {err}"
+    );
+    assert_eq!(ran.load(Ordering::SeqCst), 0, "handler must not run");
+}
+
+#[test]
 fn approval_token_invalidated_when_args_mutate() {
     let root = tempfile_root("token-mut");
     let jail = root.join("jail");
