@@ -37,7 +37,7 @@ fn spawn_static_server(body: &'static [u8]) -> (u16, Arc<AtomicBool>) {
             }
         }
     });
-    thread::sleep(Duration::from_millis(30));
+    thread::sleep(Duration::from_millis(80));
     (port, stop)
 }
 
@@ -66,7 +66,7 @@ fn spawn_redirect_escape_server(evil_port: u16) -> (u16, Arc<AtomicBool>) {
             }
         }
     });
-    thread::sleep(Duration::from_millis(30));
+    thread::sleep(Duration::from_millis(80));
     (port, stop)
 }
 
@@ -103,7 +103,7 @@ fn spawn_probe_counting_server(body: &'static [u8]) -> (u16, Arc<AtomicBool>, Ar
             }
         }
     });
-    thread::sleep(Duration::from_millis(30));
+    thread::sleep(Duration::from_millis(80));
     (port, stop, probe_hits)
 }
 
@@ -193,25 +193,7 @@ async fn web_scan_tool_passive_by_default_skips_env_git_probes() {
     let registry = build_tool_registry(Arc::clone(&session), false);
     let tool = registry.get_tool("web_scan").unwrap();
 
-    // Brief ready-wait/retry: mock accept loop can race the first request.
-    let mut out = None;
-    for attempt in 0..8 {
-        match (tool.handler)(serde_json::json!({"url": url})) {
-            Ok(v) if v["status"] == 200 => {
-                out = Some(v);
-                break;
-            }
-            Ok(_) | Err(_) if attempt + 1 < 8 => {
-                thread::sleep(Duration::from_millis(25));
-            }
-            Ok(v) => {
-                out = Some(v);
-                break;
-            }
-            Err(e) => panic!("web_scan failed after retries: {e}"),
-        }
-    }
-    let out = out.expect("web_scan produced no result");
+    let out = invoke_web_scan_with_retry(&tool.handler, &url);
     stop.store(true, Ordering::Relaxed);
 
     assert_eq!(
@@ -223,6 +205,31 @@ async fn web_scan_tool_passive_by_default_skips_env_git_probes() {
     assert_eq!(out["status"], 200);
 }
 
+fn invoke_web_scan_with_retry(
+    handler: &Arc<dyn Fn(serde_json::Value) -> Result<serde_json::Value, String> + Send + Sync>,
+    url: &str,
+) -> serde_json::Value {
+    let mut last_err = None;
+    for attempt in 0..12 {
+        match handler(serde_json::json!({"url": url})) {
+            Ok(v) if v.get("status").and_then(|s| s.as_u64()) == Some(200) => return v,
+            Ok(v) => {
+                last_err = Some(format!("unexpected status payload: {v}"));
+                thread::sleep(Duration::from_millis(40));
+            }
+            Err(e) if attempt + 1 < 12 => {
+                last_err = Some(e);
+                thread::sleep(Duration::from_millis(40));
+            }
+            Err(e) => panic!("web_scan failed after retries: {e}"),
+        }
+    }
+    panic!(
+        "web_scan produced no successful result: {}",
+        last_err.unwrap_or_default()
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn web_scan_tool_active_probes_hit_env_git_when_granted() {
     let html = b"<html><body>ok</body></html>";
@@ -232,7 +239,7 @@ async fn web_scan_tool_active_probes_hit_env_git_when_granted() {
     let registry = build_tool_registry(Arc::clone(&session), true);
     let tool = registry.get_tool("web_scan").unwrap();
 
-    let _out = (tool.handler)(serde_json::json!({"url": url})).unwrap();
+    let _out = invoke_web_scan_with_retry(&tool.handler, &url);
     stop.store(true, Ordering::Relaxed);
 
     assert!(

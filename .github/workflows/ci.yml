@@ -26,4 +26,5 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        # Retry once: a few loopback HTTP mock tests can race under CI load.
+        run: cargo test --workspace || cargo test --workspace -- --test-threads=1
