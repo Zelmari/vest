@@ -413,15 +413,38 @@ impl WebScanner {
                 .await
                 .map_err(|e| VestError::Internal(format!("semaphore closed: {e}")))?;
 
-            let mut builder = match method {
-                "POST" => self.client.post(current.clone()),
-                _ => self.client.get(current.clone()),
+            let builder = match method {
+                "POST" => {
+                    let mut b = self
+                        .client
+                        .post(current.clone())
+                        .header("User-Agent", &self.user_agent);
+                    if let Some(fields) = form {
+                        let owned: Vec<(String, String)> = fields.to_vec();
+                        b = b.form(&owned);
+                    }
+                    b
+                }
+                _ => {
+                    // GET (and any non-POST caller): fields go in the query string,
+                    // never in a request body.
+                    let request_url = if let Some(fields) = form {
+                        let mut u = current.clone();
+                        {
+                            let mut pairs = u.query_pairs_mut();
+                            for (k, v) in fields {
+                                pairs.append_pair(k, v);
+                            }
+                        }
+                        u
+                    } else {
+                        current.clone()
+                    };
+                    self.client
+                        .get(request_url)
+                        .header("User-Agent", &self.user_agent)
+                }
             };
-            builder = builder.header("User-Agent", &self.user_agent);
-            if let Some(fields) = form {
-                let owned: Vec<(String, String)> = fields.to_vec();
-                builder = builder.form(&owned);
-            }
 
             let resp = builder.send().await.map_err(|e| {
                 if e.is_timeout() || e.is_connect() {
@@ -581,10 +604,12 @@ impl WebScanner {
                 continue;
             };
 
+            // HTML default for missing/empty method is GET.
             let method = method_re
                 .captures(form_tag.as_str())
-                .map(|c| c[1].to_string().to_uppercase())
-                .unwrap_or_else(|| "POST".into());
+                .map(|c| c[1].trim().to_ascii_uppercase())
+                .filter(|m| !m.is_empty())
+                .unwrap_or_else(|| "GET".into());
 
             let mut inputs: Vec<(String, String)> = Vec::new();
             for icap in input_tag_re.captures_iter(form_html) {
@@ -1196,12 +1221,22 @@ impl WebScanner {
     async fn submit_form_scoped(
         &self,
         action: &str,
-        _method: &str,
+        method: &str,
         param: &str,
         value: &str,
         scope: &NetworkScope,
         request_count: &AtomicUsize,
     ) -> Result<(u16, String, bool), VestError> {
+        // Allowlist only HTML form methods we honour for probes.
+        let method = match method.trim().to_ascii_uppercase().as_str() {
+            "GET" => "GET",
+            "POST" => "POST",
+            other => {
+                return Err(VestError::Scan(format!(
+                    "unsupported form method '{other}' (only GET/POST allowed)"
+                )));
+            }
+        };
         let url =
             Url::parse(action).map_err(|e| VestError::Scan(format!("invalid form action: {e}")))?;
         if !scope.allows(&url) {
@@ -1211,7 +1246,7 @@ impl WebScanner {
         }
         let fields = vec![(param.to_string(), value.to_string())];
         let (_final, status, _headers, body) = self
-            .request_with_redirects("POST", &url, scope, request_count, Some(&fields))
+            .request_with_redirects(method, &url, scope, request_count, Some(&fields))
             .await?;
         let body = body
             .map(|b| String::from_utf8_lossy(&b).into_owned())
@@ -1381,7 +1416,19 @@ mod tests {
         let forms = scanner.parse_forms(html, "https://example.com");
         assert_eq!(forms.len(), 1);
         assert!(forms[0].action.contains("login"));
+        assert_eq!(forms[0].method, "POST");
         assert_eq!(forms[0].inputs.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_forms_missing_method_defaults_to_get() {
+        let scanner = WebScanner::new();
+        let html = r#"<form action="/search">
+            <input name="q" type="text">
+        </form>"#;
+        let forms = scanner.parse_forms(html, "https://example.com");
+        assert_eq!(forms.len(), 1);
+        assert_eq!(forms[0].method, "GET");
     }
 
     #[test]
@@ -1467,6 +1514,7 @@ mod tests {
         </form>"#;
         let forms = scanner.parse_forms(html, "http://localhost:5555");
         assert_eq!(forms.len(), 1);
+        assert_eq!(forms[0].method, "GET");
         assert_eq!(forms[0].inputs.len(), 1);
         assert_eq!(forms[0].inputs[0].0, "q");
         assert_eq!(forms[0].inputs[0].1, "text");
@@ -1796,6 +1844,75 @@ Disallow: /\n";
         let counter = AtomicUsize::new(0);
         let result = scanner.fetch_page_scoped(&url, &scope, &counter).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_submit_form_get_uses_query_string() {
+        let seen = Arc::new(std::sync::Mutex::new(String::new()));
+        let seen2 = seen.clone();
+        let handler: TestHandler = Arc::new(move |req: String| {
+            *seen2.lock().unwrap() = req.clone();
+            (200u16, hdr(&[]), b"ok".to_vec())
+        });
+        let (port, stop) = spawn_http_server(handler).await;
+        let action = format!("http://127.0.0.1:{port}/search");
+        let scope = NetworkScope::from_url(&Url::parse(&action).unwrap()).unwrap();
+        let scanner = WebScanner::new();
+        let counter = AtomicUsize::new(0);
+        let (status, _, _) = scanner
+            .submit_form_scoped(&action, "GET", "q", "probe-value", &scope, &counter)
+            .await
+            .unwrap();
+        assert_eq!(status, 200);
+        let req = seen.lock().unwrap().clone();
+        assert!(
+            req.starts_with("GET /search?"),
+            "expected GET with query, got: {req}"
+        );
+        assert!(req.contains("q=probe-value") || req.contains("q=probe%2Dvalue"));
+        assert!(!req.contains("POST"));
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn test_submit_form_post_uses_body() {
+        let seen = Arc::new(std::sync::Mutex::new(String::new()));
+        let seen2 = seen.clone();
+        let handler: TestHandler = Arc::new(move |req: String| {
+            *seen2.lock().unwrap() = req.clone();
+            (200u16, hdr(&[]), b"ok".to_vec())
+        });
+        let (port, stop) = spawn_http_server(handler).await;
+        let action = format!("http://127.0.0.1:{port}/login");
+        let scope = NetworkScope::from_url(&Url::parse(&action).unwrap()).unwrap();
+        let scanner = WebScanner::new();
+        let counter = AtomicUsize::new(0);
+        let (status, _, _) = scanner
+            .submit_form_scoped(&action, "POST", "user", "alice", &scope, &counter)
+            .await
+            .unwrap();
+        assert_eq!(status, 200);
+        let req = seen.lock().unwrap().clone();
+        assert!(req.starts_with("POST /login"), "expected POST, got: {req}");
+        assert!(req.contains("user=alice"));
+        assert!(!req.contains("GET /login?"));
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
+    async fn test_submit_form_rejects_non_allowlisted_method() {
+        let handler: TestHandler = Arc::new(|_req: String| (200u16, hdr(&[]), b"ok".to_vec()));
+        let (port, stop) = spawn_http_server(handler).await;
+        let action = format!("http://127.0.0.1:{port}/x");
+        let scope = NetworkScope::from_url(&Url::parse(&action).unwrap()).unwrap();
+        let scanner = WebScanner::new();
+        let counter = AtomicUsize::new(0);
+        let err = scanner
+            .submit_form_scoped(&action, "PUT", "a", "b", &scope, &counter)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unsupported form method"));
+        stop.store(true, Ordering::Relaxed);
     }
 
     #[test]

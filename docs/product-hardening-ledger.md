@@ -49,7 +49,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K8 | **Fixed** | Was `std::fs::read` entire file then truncate | Cap via `Read::take` + `spawn_blocking` | `agent_read_file_bounded.rs` | `b7a0744` |
 | K9 | **Partial** | follow_symlinks exists; need prove containment | Contain or disable | adversarial FS | pending |
 | K10 | **Fixed** (web client) | `unwrap_or_default()` on Client | fail-closed + `ScopedHttpClient::try_new` | http_client tests | `0f76c32` |
-| K11 | **Investigate** | form submit method | Honour GET/POST | web tests | pending |
+| K11 | **Fixed** | form submit always POSTed | Honour GET/POST (allowlist); GET→query; missing method→GET | web form method tests | (this commit) |
 | K12 | **Fixed** | invalid `--target-type` guessed | Reject invalid explicit type | CLI | `17d2232` |
 | K13 | **Fixed** (util) | byte-index risk | `truncate_chars` in vest-core | unit | `17d2232` |
 | K14 | **Partial** | string match still as legacy fallback | Prefer `VestError::cli_exit_code()` | unit | `17d2232` |
