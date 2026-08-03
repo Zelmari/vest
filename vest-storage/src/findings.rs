@@ -4,6 +4,9 @@ use vest_core::types::{Finding, FindingStatus, Severity};
 use crate::error::StorageError;
 use crate::row::{parse_datetime, parse_json, parse_optional_json, require_rows_affected};
 
+// SQLite column remains `cvss_score` for backward compatibility; Rust field is
+// `Finding.severity_score_estimate`.
+
 pub fn insert_finding(conn: &Connection, finding: &Finding) -> Result<(), StorageError> {
     conn.execute(
         "INSERT INTO findings (id, scan_id, target_id, title, description, vulnerability_class,
@@ -20,7 +23,7 @@ pub fn insert_finding(conn: &Connection, finding: &Finding) -> Result<(), Storag
             finding.severity.to_string(),
             finding.confidence,
             finding.status.to_string(),
-            finding.cvss_score,
+            finding.severity_score_estimate,
             finding.cve_id,
             finding.cwe_id,
             serde_json::to_string(&finding.evidence)?,
@@ -130,7 +133,7 @@ pub fn update_finding(conn: &Connection, finding: &Finding) -> Result<(), Storag
             finding.severity.to_string(),
             finding.confidence,
             finding.status.to_string(),
-            finding.cvss_score,
+            finding.severity_score_estimate,
             finding.cve_id,
             finding.cwe_id,
             serde_json::to_string(&finding.evidence)?,
@@ -181,7 +184,7 @@ fn row_to_finding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Finding> {
             .get::<_, String>(8)?
             .parse()
             .map_err(|_| rusqlite::Error::InvalidColumnName(8.to_string()))?,
-        cvss_score: row.get(9)?,
+        severity_score_estimate: row.get(9)?,
         cve_id: row.get(10)?,
         cwe_id: row.get(11)?,
         evidence: parse_json(&evidence_str, 12)?,

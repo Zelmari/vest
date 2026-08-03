@@ -262,7 +262,7 @@ mod tests {
             severity: vest_core::types::Severity::High,
             confidence: 0.9,
             status: vest_core::types::FindingStatus::Open,
-            cvss_score: None,
+            severity_score_estimate: None,
             cve_id: None,
             cwe_id: None,
             evidence: json!({"Authorization": "Bearer SECRET"}),

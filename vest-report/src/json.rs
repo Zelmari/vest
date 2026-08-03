@@ -53,7 +53,7 @@ struct JsonFinding {
     vulnerability_class: String,
     severity: String,
     confidence: f64,
-    cvss_score: Option<f64>,
+    severity_score_estimate: Option<f64>,
     cwe_id: Option<String>,
     cve_id: Option<String>,
     evidence: serde_json::Value,
@@ -134,7 +134,7 @@ impl Reporter for JsonReporter {
                     vulnerability_class: f.vulnerability_class.to_string(),
                     severity: f.severity.to_string(),
                     confidence: f.confidence,
-                    cvss_score: f.cvss_score,
+                    severity_score_estimate: f.severity_score_estimate,
                     cwe_id: f.cwe_id.clone(),
                     cve_id: f.cve_id.clone(),
                     evidence: sanitize_evidence(&f.evidence, self.options),
@@ -219,7 +219,7 @@ mod tests {
             severity,
             confidence: 0.9,
             status: vest_core::types::FindingStatus::Open,
-            cvss_score: Some(8.5),
+            severity_score_estimate: Some(8.5),
             cve_id: None,
             cwe_id: Some("CWE-79".into()),
             evidence: serde_json::json!({"test": true}),
@@ -259,6 +259,15 @@ mod tests {
         assert!(json.contains("\"critical\""));
         assert!(json.contains("\"buffer_overflow\""));
         assert!(json.contains("\"xss\""));
+        assert!(json.contains("\"severity_score_estimate\""));
+        assert!(
+            !json.contains("\"cvss_score\""),
+            "JSON reports must not emit legacy cvss_score key for heuristics"
+        );
+        assert!(
+            !json.to_uppercase().contains("CVSS"),
+            "heuristic scores must not be labelled CVSS: {json}"
+        );
 
         let _parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     }

@@ -33,7 +33,7 @@ where practical for a pre-1.0 experimental toolkit.
 ### Still open (honest)
 
 - `WebScanner` not yet fully on `ScopedHttpClient` — **WEB-1**.
-- Some scanners still populate heuristic `cvss_score` values.
+- Scanner heuristics populate `severity_score_estimate` (not labelled as CVSS).
 
 See [docs/clearance-plan.md](docs/clearance-plan.md) for the ordered remaining list.
 

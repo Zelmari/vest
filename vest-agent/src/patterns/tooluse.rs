@@ -327,7 +327,7 @@ When done scanning, respond with a JSON report. Use severity values critical, hi
       "vulnerability_class": "xss",
       "severity": "high",
       "confidence": 0.9,
-      "cvss_score": 7.5,
+      "severity_score_estimate": 7.5,
       "cve_id": null,
       "cwe_id": "CWE-79",
       "evidence": {},
@@ -412,8 +412,8 @@ struct LlmFindingDraft {
     confidence: f64,
     evidence: serde_json::Value,
     location: serde_json::Value,
-    #[serde(default)]
-    cvss_score: Option<f64>,
+    #[serde(default, alias = "cvss_score")]
+    severity_score_estimate: Option<f64>,
     #[serde(default)]
     cve_id: Option<String>,
     #[serde(default)]
@@ -492,8 +492,8 @@ fn draft_to_finding(draft: LlmFindingDraft, target: &Target) -> Option<Finding> 
         severity,
         confidence: draft.confidence.clamp(0.0, 1.0),
         status: FindingStatus::Open,
-        cvss_score: draft
-            .cvss_score
+        severity_score_estimate: draft
+            .severity_score_estimate
             .filter(|score| (0.0..=10.0).contains(score)),
         cve_id: draft.cve_id,
         cwe_id: draft.cwe_id,
@@ -632,7 +632,7 @@ mod tests {
                 "vulnerability_class": "xss",
                 "severity": "high",
                 "confidence": 0.95,
-                "cvss_score": 7.5,
+                "severity_score_estimate": 7.5,
                 "cwe_id": "CWE-79",
                 "evidence": {"parameter": "q"},
                 "location": {"url": "/search?q=test"}
@@ -662,7 +662,7 @@ mod tests {
     "vulnerability_class": "sql injection",
     "severity": "critical",
     "confidence": 2.0,
-    "cvss_score": 11.0,
+    "severity_score_estimate": 11.0,
     "evidence": {"payload": "' OR 1=1--"},
     "location": {"url": "/login"}
   }]
@@ -676,7 +676,29 @@ mod tests {
             VulnerabilityClass::SQLInjection
         );
         assert_eq!(findings[0].confidence, 1.0);
-        assert_eq!(findings[0].cvss_score, None);
+        assert_eq!(findings[0].severity_score_estimate, None);
+    }
+
+    #[test]
+    fn test_parse_final_findings_accepts_legacy_cvss_score_alias() {
+        let target = make_target();
+        let response = r#"{
+            "scan_complete": true,
+            "findings": [{
+                "title": "Legacy score key",
+                "description": "LLM still emitted cvss_score.",
+                "vulnerability_class": "xss",
+                "severity": "high",
+                "confidence": 0.8,
+                "cvss_score": 7.5,
+                "evidence": {},
+                "location": {"url": "/x"}
+            }]
+        }"#;
+
+        let findings = parse_final_findings(response, &target);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity_score_estimate, Some(7.5));
     }
 
     #[test]

@@ -43,7 +43,7 @@ fn secret_finding() -> Finding {
         severity: Severity::High,
         confidence: 0.95,
         status: FindingStatus::Open,
-        cvss_score: Some(7.0),
+        severity_score_estimate: Some(7.0),
         cve_id: None,
         cwe_id: Some("CWE-798".into()),
         evidence: serde_json::json!({

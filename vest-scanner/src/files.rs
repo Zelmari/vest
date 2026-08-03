@@ -483,7 +483,7 @@ impl FileScanner {
                     severity: Severity::Medium,
                     confidence: 0.7,
                     status: FindingStatus::Open,
-                    cvss_score: Some(5.0),
+                    severity_score_estimate: Some(5.0),
                     cve_id: None,
                     cwe_id: Some("CWE-506".into()),
                     evidence: serde_json::json!({
@@ -589,7 +589,7 @@ impl FileScanner {
                         severity: *severity,
                         confidence: 0.75,
                         status: FindingStatus::Open,
-                        cvss_score: match severity {
+                        severity_score_estimate: match severity {
                             Severity::Critical => Some(9.0),
                             Severity::High => Some(7.5),
                             Severity::Medium => Some(5.0),
@@ -657,7 +657,7 @@ impl FileScanner {
                 severity: Severity::Medium,
                 confidence: 0.8,
                 status: FindingStatus::Open,
-                cvss_score: Some(5.3),
+                severity_score_estimate: Some(5.3),
                 cve_id: None,
                 cwe_id: Some("CWE-538".into()),
                 evidence: serde_json::json!({
@@ -835,7 +835,7 @@ impl FileScanner {
                     severity: sp.severity,
                     confidence: 0.85,
                     status: FindingStatus::Open,
-                    cvss_score: match sp.severity {
+                    severity_score_estimate: match sp.severity {
                         Severity::Critical => Some(9.0),
                         Severity::High => Some(7.5),
                         Severity::Medium => Some(5.0),
@@ -882,7 +882,7 @@ impl FileScanner {
                 severity: Severity::High,
                 confidence: 0.9,
                 status: FindingStatus::Open,
-                cvss_score: Some(7.5),
+                severity_score_estimate: Some(7.5),
                 cve_id: None,
                 cwe_id: Some("CWE-538".into()),
                 evidence: serde_json::json!({

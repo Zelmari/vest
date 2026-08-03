@@ -1,6 +1,10 @@
 use crate::error::StorageError;
 use rusqlite::Connection;
 
+/// Schema for Vest storage.
+///
+/// Note: findings keep SQLite column `cvss_score` for compatibility; Rust maps it
+/// to [`vest_core::types::Finding::severity_score_estimate`].
 pub fn run_migrations(conn: &Connection) -> Result<(), StorageError> {
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;

@@ -23,7 +23,7 @@ fn test_finding_json_injection_attack() {
             severity: Severity::Info,
             confidence: 0.5,
             status: FindingStatus::Open,
-            cvss_score: None,
+            severity_score_estimate: None,
             cve_id: None,
             cwe_id: None,
             evidence: serde_json::Value::String(malicious.to_string()),
@@ -62,7 +62,7 @@ fn test_very_deeply_nested_json_evidence() {
         severity: Severity::Info,
         confidence: 0.5,
         status: FindingStatus::Open,
-        cvss_score: None,
+        severity_score_estimate: None,
         cve_id: None,
         cwe_id: None,
         evidence: value.clone(),
@@ -98,7 +98,7 @@ fn test_very_wide_json_evidence() {
         severity: Severity::Info,
         confidence: 0.5,
         status: FindingStatus::Open,
-        cvss_score: None,
+        severity_score_estimate: None,
         cve_id: None,
         cwe_id: None,
         evidence: serde_json::Value::Object(map),
@@ -194,7 +194,7 @@ fn test_finding_serialization_is_stable() {
         severity: Severity::High,
         confidence: 0.75,
         status: FindingStatus::Open,
-        cvss_score: Some(7.5),
+        severity_score_estimate: Some(7.5),
         cve_id: Some("CVE-2024-0001".into()),
         cwe_id: Some("CWE-79".into()),
         evidence: serde_json::json!({"url": "https://test.com"}),
@@ -228,7 +228,7 @@ fn test_finding_roundtrip_preserves_all_data() {
         severity: Severity::Critical,
         confidence: 0.99,
         status: FindingStatus::Confirmed,
-        cvss_score: Some(9.8),
+        severity_score_estimate: Some(9.8),
         cve_id: Some("CVE-2024-99999".into()),
         cwe_id: Some("CWE-120".into()),
         evidence: serde_json::json!({
@@ -258,7 +258,10 @@ fn test_finding_roundtrip_preserves_all_data() {
     assert_eq!(deser.vulnerability_class, finding.vulnerability_class);
     assert_eq!(deser.severity, finding.severity);
     assert_eq!(deser.confidence, finding.confidence);
-    assert_eq!(deser.cvss_score, finding.cvss_score);
+    assert_eq!(
+        deser.severity_score_estimate,
+        finding.severity_score_estimate
+    );
     assert_eq!(deser.cve_id, finding.cve_id);
     assert_eq!(deser.cwe_id, finding.cwe_id);
     assert_eq!(deser.poc, finding.poc);
@@ -330,7 +333,7 @@ fn test_finding_all_vuln_classes_roundtrip() {
             severity: Severity::Info,
             confidence: 0.5,
             status: FindingStatus::Open,
-            cvss_score: None,
+            severity_score_estimate: None,
             cve_id: None,
             cwe_id: None,
             evidence: serde_json::json!({}),
@@ -370,7 +373,7 @@ fn test_finding_confidence_edge_values() {
             severity: Severity::Info,
             confidence: *conf,
             status: FindingStatus::Open,
-            cvss_score: None,
+            severity_score_estimate: None,
             cve_id: None,
             cwe_id: None,
             evidence: serde_json::json!({}),
@@ -411,7 +414,7 @@ fn test_finding_null_byte_injection_in_strings() {
             severity: Severity::Info,
             confidence: 0.5,
             status: FindingStatus::Open,
-            cvss_score: None,
+            severity_score_estimate: None,
             cve_id: None,
             cwe_id: None,
             evidence: serde_json::json!({}),
@@ -445,7 +448,7 @@ fn test_empty_and_minimal_json() {
         severity: Severity::Info,
         confidence: 0.0,
         status: FindingStatus::Open,
-        cvss_score: None,
+        severity_score_estimate: None,
         cve_id: None,
         cwe_id: None,
         evidence: serde_json::json!({}),

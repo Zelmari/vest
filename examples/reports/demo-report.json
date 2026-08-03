@@ -25,7 +25,7 @@
       "vulnerability_class": "unknown",
       "severity": "critical",
       "confidence": 0.75,
-      "cvss_score": 9.0,
+      "severity_score_estimate": 9.0,
       "cwe_id": "CWE-798",
       "cve_id": null,
       "evidence": {
@@ -52,7 +52,7 @@
       "vulnerability_class": "unknown",
       "severity": "critical",
       "confidence": 0.75,
-      "cvss_score": 9.0,
+      "severity_score_estimate": 9.0,
       "cwe_id": "CWE-798",
       "cve_id": null,
       "evidence": {

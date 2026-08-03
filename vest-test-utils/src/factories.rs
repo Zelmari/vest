@@ -19,7 +19,7 @@ pub struct FindingFactory {
     severity: Severity,
     confidence: f64,
     status: FindingStatus,
-    cvss_score: Option<f64>,
+    severity_score_estimate: Option<f64>,
     cve_id: Option<String>,
     cwe_id: Option<String>,
     evidence: serde_json::Value,
@@ -43,7 +43,7 @@ impl FindingFactory {
             severity: Severity::Medium,
             confidence: 0.75,
             status: FindingStatus::Open,
-            cvss_score: None,
+            severity_score_estimate: None,
             cve_id: None,
             cwe_id: None,
             evidence: serde_json::json!({"factory": true}),
@@ -83,32 +83,32 @@ impl FindingFactory {
             .vulnerability_class(classes[rng.gen_range(0..classes.len())])
             .confidence(rng.gen::<f64>())
             .status(statuses[rng.gen_range(0..statuses.len())])
-            .cvss_score(Some(rng.gen_range(0.0..10.0)))
+            .severity_score_estimate(Some(rng.gen_range(0.0..10.0)))
     }
 
     pub fn critical() -> Self {
         Self::new()
             .severity(Severity::Critical)
             .confidence(0.95)
-            .cvss_score(Some(9.8))
+            .severity_score_estimate(Some(9.8))
     }
     pub fn high() -> Self {
         Self::new()
             .severity(Severity::High)
             .confidence(0.85)
-            .cvss_score(Some(7.5))
+            .severity_score_estimate(Some(7.5))
     }
     pub fn medium() -> Self {
         Self::new()
             .severity(Severity::Medium)
             .confidence(0.7)
-            .cvss_score(Some(5.5))
+            .severity_score_estimate(Some(5.5))
     }
     pub fn low() -> Self {
         Self::new()
             .severity(Severity::Low)
             .confidence(0.5)
-            .cvss_score(Some(2.5))
+            .severity_score_estimate(Some(2.5))
     }
     pub fn info() -> Self {
         Self::new().severity(Severity::Info).confidence(0.3)
@@ -138,8 +138,8 @@ impl FindingFactory {
         self.status = s;
         self
     }
-    pub fn cvss_score(mut self, s: Option<f64>) -> Self {
-        self.cvss_score = s;
+    pub fn severity_score_estimate(mut self, s: Option<f64>) -> Self {
+        self.severity_score_estimate = s;
         self
     }
     pub fn cwe(mut self, c: impl Into<String>) -> Self {
@@ -167,7 +167,7 @@ impl FindingFactory {
             severity: self.severity,
             confidence: self.confidence,
             status: self.status,
-            cvss_score: self.cvss_score,
+            severity_score_estimate: self.severity_score_estimate,
             cve_id: self.cve_id,
             cwe_id: self.cwe_id,
             evidence: self.evidence,

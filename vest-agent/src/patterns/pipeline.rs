@@ -97,7 +97,7 @@ impl PipelinePhase {
             PipelinePhase::Reporting => {
                 "You are a reporting agent. Compile all validated findings into a structured report. \
                  Rank by severity (Critical > High > Medium > Low > Info). For each finding, provide: \
-                 title, description, vulnerability class, severity, CVSS score if applicable, CWE reference, \
+                 title, description, vulnerability class, severity, severity score estimate if applicable, CWE reference, \
                  evidence summary, reproduction steps, remediation recommendation. Note any false positives \
                  that were filtered out during validation."
             }
@@ -246,8 +246,8 @@ impl PipelineRunner {
             ));
             for f in &self.initial_findings {
                 prompt.push_str(&format!(
-                    "\n  [{:?}] {} - Class: {:?}, CVSS: {:?}",
-                    f.severity, f.title, f.vulnerability_class, f.cvss_score
+                    "\n  [{:?}] {} - Class: {:?}, severity est: {:?}",
+                    f.severity, f.title, f.vulnerability_class, f.severity_score_estimate
                 ));
             }
         }

@@ -90,8 +90,8 @@ fn severity_score_estimate(severity: Severity) -> f64 {
 /// Heuristically enrich a finding with vulnerability class and a severity score estimate
 /// when the LLM hasn't provided them.
 ///
-/// The estimate is stored in `metadata["severity_score_estimate"]` and is **not** a CVSS
-/// score. `cvss_score` is left unchanged (typically `None` unless a real vector exists).
+/// The estimate is stored on `Finding.severity_score_estimate` and is **not** a CVSS
+/// vector. Existing estimates (e.g. from scanners) are left unchanged.
 pub fn enrich_finding_heuristic(finding: &mut Finding) {
     let title_lower = finding.title.to_lowercase();
 
@@ -138,22 +138,9 @@ pub fn enrich_finding_heuristic(finding: &mut Finding) {
         }
     }
 
-    // Store a naive severity estimate in metadata — not a CVSS score.
-    if finding
-        .metadata
-        .get("severity_score_estimate")
-        .and_then(|v| v.as_f64())
-        .is_none()
-    {
-        if !finding.metadata.is_object() {
-            finding.metadata = serde_json::json!({});
-        }
-        if let Some(obj) = finding.metadata.as_object_mut() {
-            obj.insert(
-                "severity_score_estimate".into(),
-                serde_json::json!(severity_score_estimate(finding.severity)),
-            );
-        }
+    // Naive severity estimate — not a CVSS score.
+    if finding.severity_score_estimate.is_none() {
+        finding.severity_score_estimate = Some(severity_score_estimate(finding.severity));
     }
 }
 
@@ -522,12 +509,7 @@ impl Validator {
                     enriched.status = FindingStatus::Confirmed;
                 }
                 // Refresh severity estimate after possible downgrade.
-                if let Some(obj) = enriched.metadata.as_object_mut() {
-                    obj.insert(
-                        "severity_score_estimate".into(),
-                        serde_json::json!(severity_score_estimate(severity)),
-                    );
-                }
+                enriched.severity_score_estimate = Some(severity_score_estimate(severity));
             }
             ValidationDecision::FalsePositive => {}
         }
@@ -589,7 +571,7 @@ mod tests {
             severity,
             confidence,
             status: FindingStatus::Open,
-            cvss_score: None,
+            severity_score_estimate: None,
             cve_id: None,
             cwe_id: None,
             evidence: serde_json::json!({"test": true}),
@@ -657,11 +639,7 @@ mod tests {
         finding.title = "Reflected XSS in query parameter".into();
         enrich_finding_heuristic(&mut finding);
         assert_eq!(finding.vulnerability_class, VulnerabilityClass::XSS);
-        assert!(finding.cvss_score.is_none());
-        assert_eq!(
-            finding.metadata["severity_score_estimate"].as_f64(),
-            Some(7.5)
-        );
+        assert_eq!(finding.severity_score_estimate, Some(7.5));
     }
 
     #[test]
@@ -670,11 +648,7 @@ mod tests {
         finding.title = "some generic observation".into();
         enrich_finding_heuristic(&mut finding);
         assert_eq!(finding.vulnerability_class, VulnerabilityClass::Unknown);
-        assert!(finding.cvss_score.is_none());
-        assert_eq!(
-            finding.metadata["severity_score_estimate"].as_f64(),
-            Some(3.0)
-        );
+        assert_eq!(finding.severity_score_estimate, Some(3.0));
     }
 
     #[test]

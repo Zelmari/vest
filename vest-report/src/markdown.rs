@@ -102,8 +102,8 @@ Use `--include-evidence` to include them (secrets are still redacted best-effort
                 md.push_str(&format!("**Source:** {}\n\n", source));
             }
 
-            if let Some(cvss) = f.cvss_score {
-                md.push_str(&format!("**CVSS Score:** {:.1}\n\n", cvss));
+            if let Some(estimate) = f.severity_score_estimate {
+                md.push_str(&format!("**Severity Score Estimate:** {:.1}\n\n", estimate));
             }
             if let Some(ref cwe) = f.cwe_id {
                 md.push_str(&format!("**CWE:** {}\n\n", cwe));
@@ -227,7 +227,7 @@ mod tests {
             severity,
             confidence: 0.88,
             status: vest_core::FindingStatus::Open,
-            cvss_score: Some(9.8),
+            severity_score_estimate: Some(9.8),
             cve_id: Some("CVE-2024-1234".into()),
             cwe_id: Some("CWE-89".into()),
             evidence: serde_json::json!({"payload": "1' OR 1=1"}),
@@ -262,6 +262,11 @@ mod tests {
         assert!(md.contains("SQL Injection"));
         assert!(md.contains("CWE-89"));
         assert!(md.contains("parameterized queries"));
+        assert!(md.contains("**Severity Score Estimate:** 9.8"));
+        assert!(
+            !md.to_uppercase().contains("CVSS"),
+            "heuristic scores must not be labelled CVSS: {md}"
+        );
         assert!(!md.contains("Proof of Concept"));
         assert!(!md.contains("<summary>Evidence</summary>"));
     }

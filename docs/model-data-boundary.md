@@ -69,7 +69,7 @@ See [security-model.md](security-model.md) for the full list. Primary remote egr
 - Allowing a scan of a directory does not allow shipping file contents to a provider.
 - Allowing process metadata does not allow memory egress.
 - Vest is not a DLP product.
-- Severity / `cvss_score` fields in findings may still carry heuristic numbers from scanners; that is not a CVSS vector.
+- `Finding.severity_score_estimate` may carry heuristic numbers from scanners; that is not a CVSS vector.
 
 ## Related
 

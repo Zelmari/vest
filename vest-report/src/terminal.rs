@@ -87,15 +87,15 @@ impl Reporter for TerminalReporter {
 
         for f in sorted.iter().take(10) {
             let severity_tag = format!("[{:^8}]", f.severity.to_string().to_uppercase());
-            let cvss = f
-                .cvss_score
-                .map(|c| format!("CVSS {:.1}", c))
+            let score_est = f
+                .severity_score_estimate
+                .map(|c| format!("est {:.1}", c))
                 .unwrap_or_default();
 
             output.push_str(&format!(
                 "\u{2502}  {} {} | {:<30} \u{2502}\n",
                 severity_tag,
-                cvss,
+                score_est,
                 truncate(&f.title, 30)
             ));
 
@@ -225,7 +225,7 @@ mod tests {
             severity,
             confidence: 0.9,
             status: vest_core::FindingStatus::Open,
-            cvss_score: Some(7.5),
+            severity_score_estimate: Some(7.5),
             cve_id: None,
             cwe_id: Some("CWE-120".into()),
             evidence: serde_json::json!({}),
@@ -259,6 +259,11 @@ mod tests {
         assert!(output.contains("Critical"));
         assert!(output.contains("Buffer Overflow"));
         assert!(output.contains("Auth bypass"));
+        assert!(output.contains("est 7.5"));
+        assert!(
+            !output.to_uppercase().contains("CVSS"),
+            "heuristic scores must not be labelled CVSS: {output}"
+        );
     }
 
     #[test]

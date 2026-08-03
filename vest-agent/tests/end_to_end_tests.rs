@@ -145,7 +145,7 @@ fn make_finding(
         severity,
         confidence,
         status: FindingStatus::Open,
-        cvss_score: Some(5.0),
+        severity_score_estimate: Some(5.0),
         cve_id: None,
         cwe_id: Some("CWE-79".into()),
         evidence: serde_json::json!({"e2e": true}),

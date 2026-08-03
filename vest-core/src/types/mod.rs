@@ -164,7 +164,9 @@ pub struct Finding {
     pub severity: Severity,
     pub confidence: f64,
     pub status: FindingStatus,
-    pub cvss_score: Option<f64>,
+    /// Heuristic 0–10 severity estimate from scanners/enrichment — not a CVSS vector.
+    #[serde(default, alias = "cvss_score")]
+    pub severity_score_estimate: Option<f64>,
     pub cve_id: Option<String>,
     pub cwe_id: Option<String>,
     pub evidence: serde_json::Value,
@@ -499,7 +501,7 @@ mod tests {
             severity: Severity::Critical,
             confidence: 0.95,
             status: FindingStatus::Open,
-            cvss_score: Some(9.8),
+            severity_score_estimate: Some(9.8),
             cve_id: Some("CVE-2024-0001".into()),
             cwe_id: Some("CWE-120".into()),
             evidence: serde_json::json!({"crash": true}),
@@ -518,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn test_finding_with_no_cvss() {
+    fn test_finding_with_no_severity_score_estimate() {
         let now = Utc::now();
         let finding = Finding {
             id: "test-id".into(),
@@ -530,7 +532,7 @@ mod tests {
             severity: Severity::Info,
             confidence: 0.3,
             status: FindingStatus::Open,
-            cvss_score: None,
+            severity_score_estimate: None,
             cve_id: None,
             cwe_id: None,
             evidence: serde_json::json!({}),
@@ -543,7 +545,7 @@ mod tests {
             discovered_at: now,
             updated_at: now,
         };
-        assert_eq!(finding.cvss_score, None);
+        assert_eq!(finding.severity_score_estimate, None);
         assert_eq!(finding.cve_id, None);
         assert_eq!(finding.cwe_id, None);
     }
@@ -561,7 +563,7 @@ mod tests {
             severity: Severity::High,
             confidence: 0.8,
             status: FindingStatus::Open,
-            cvss_score: Some(7.5),
+            severity_score_estimate: Some(7.5),
             cve_id: None,
             cwe_id: Some("CWE-79".into()),
             evidence: serde_json::json!({"url": "http://test.com"}),
@@ -924,7 +926,7 @@ mod tests {
                 severity: Severity::Medium,
                 confidence: rng.gen::<f64>() * 2.0 - 0.5,
                 status: FindingStatus::Open,
-                cvss_score: if rng.gen() {
+                severity_score_estimate: if rng.gen() {
                     Some(rng.gen_range(-5.0..15.0))
                 } else {
                     None
@@ -1029,7 +1031,7 @@ mod tests {
                 severity: Severity::Medium,
                 confidence,
                 status: FindingStatus::Open,
-                cvss_score: None,
+                severity_score_estimate: None,
                 cve_id: None,
                 cwe_id: None,
                 evidence: serde_json::json!({"factory": true}),

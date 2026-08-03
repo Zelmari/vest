@@ -55,7 +55,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K13 | **Fixed** (util) | byte-index risk | `truncate_chars` in vest-core | unit | `17d2232` |
 | K14 | **Fixed** | string match still as legacy fallback | Scan/completions typed; legacy fallback last-resort for other cmds | `exit_codes_strict.rs` | `f83e640` |
 | K15 | **Fixed** | all keys loaded | Allowlist Vest/provider keys | unit | `17d2232` |
-| K16 | **Open** | `Finding.cvss_score` + scanner heuristics | Rename to severity_estimate / metadata | types+report | pending |
+| K16 | **Fixed** | `Finding.cvss_score` + scanner heuristics labelled CVSS | Renamed to `severity_score_estimate`; reports never say CVSS for heuristics; SQLite column `cvss_score` dual-mapped | `severity_estimate_rename.rs` + report unit | pending |
 | K17 | **Open** | prior audit “addressed” while CLI bypasses remain | Keep docs/ledger honest; close wiring gaps | ledger | ongoing |
 | K18 | **Ongoing** | prior pass merged | Regression suite | workspace tests | ongoing |
 
@@ -99,7 +99,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 6 Filesystem tools | **done** (K8/K9) | bounded `read_file`; symlink follow contained under root |
 | 7 Egress | **done** (K4) | TargetContent/PSB gated; LocalContent/ProcessMemory unchanged |
 | 8 Config/.env | **done** | key allowlist + CFG-1 zero-budget reject |
-| 9–20 | partial | exits/doctor/offline/providers/NUC-1/STOR landed; K16/WEB/HTTP still open |
+| 9–20 | partial | exits/doctor/offline/providers/NUC-1/STOR/K16 landed; WEB/HTTP still open |
 
 ## Remaining limitations (standing)
 

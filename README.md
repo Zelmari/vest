@@ -101,7 +101,7 @@ Default: `agent.default_pattern` in `vest.toml`, overridable with `--mode`.
 | `network` | host:port | Ports / TLS / basic DNS signals |
 | `browser` | URL | CDP (Chrome) storage / WS / WASM / headers |
 
-Severity numbers in reports are **heuristic estimates**, not real CVSS vectors. Some scanners still fill the `cvss_score` field with those heuristics — the field name is misleading.
+Severity numbers in reports are **heuristic estimates** on `severity_score_estimate`, not real CVSS vectors.
 
 ### Web scan honesty
 

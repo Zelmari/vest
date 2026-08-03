@@ -1,11 +1,15 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use vest_core::error::VestError;
 use vest_core::ids::new_id;
 use vest_core::types::{Finding, FindingStatus, Severity, Target, VulnerabilityClass};
 use vest_core::Scanner;
 
+/// Default per-file cap for binary scans (256 MiB). Entire file is mapped for parsing.
+pub const DEFAULT_MAX_BINARY_SIZE_BYTES: u64 = 256 * 1024 * 1024;
+
+#[derive(Clone)]
 pub struct BinaryScanner {
     pub name: String,
     pub description: String,
@@ -13,6 +17,7 @@ pub struct BinaryScanner {
     pub sink_catalogs: Vec<String>,
     pub check_mitigations: bool,
     pub find_rop_gadgets: bool,
+    pub max_file_size_bytes: u64,
 }
 
 impl BinaryScanner {
@@ -26,6 +31,7 @@ impl BinaryScanner {
             sink_catalogs: vec![],
             check_mitigations: true,
             find_rop_gadgets: false,
+            max_file_size_bytes: DEFAULT_MAX_BINARY_SIZE_BYTES,
         }
     }
 
@@ -41,6 +47,16 @@ impl BinaryScanner {
 
     pub fn with_rop(mut self, find: bool) -> Self {
         self.find_rop_gadgets = find;
+        self
+    }
+
+    pub fn with_max_file_size_bytes(mut self, bytes: u64) -> Self {
+        self.max_file_size_bytes = bytes;
+        self
+    }
+
+    pub fn with_max_file_size_mb(mut self, mb: u32) -> Self {
+        self.max_file_size_bytes = (mb as u64) * 1024 * 1024;
         self
     }
 
@@ -60,17 +76,36 @@ impl BinaryScanner {
         Ok(sinks)
     }
 
-    fn parse_binary(&self, path: &Path) -> Result<BinaryInfo, VestError> {
-        let data = std::fs::read(path).map_err(VestError::Io)?;
+    fn ensure_within_size_cap(path: &Path, max_bytes: u64) -> Result<u64, VestError> {
+        let meta = std::fs::metadata(path).map_err(VestError::Io)?;
+        let len = meta.len();
+        if len > max_bytes {
+            return Err(VestError::InvalidInput(format!(
+                "Binary file exceeds max size ({} bytes > {} bytes): {}",
+                len,
+                max_bytes,
+                path.display()
+            )));
+        }
+        Ok(len)
+    }
+
+    fn read_binary_capped(path: &Path, max_bytes: u64) -> Result<Vec<u8>, VestError> {
+        Self::ensure_within_size_cap(path, max_bytes)?;
+        std::fs::read(path).map_err(VestError::Io)
+    }
+
+    fn parse_binary(&self, path: &Path) -> Result<(BinaryInfo, Vec<u8>), VestError> {
+        let data = Self::read_binary_capped(path, self.max_file_size_bytes)?;
 
         if let Ok(elf) = goblin::elf::Elf::parse(&data) {
-            return Ok(BinaryInfo::from_elf(&elf, &data, path));
+            return Ok((BinaryInfo::from_elf(&elf, &data, path), data));
         }
         if let Ok(pe) = goblin::pe::PE::parse(&data) {
-            return Ok(BinaryInfo::from_pe(&pe, &data, path));
+            return Ok((BinaryInfo::from_pe(&pe, &data, path), data));
         }
         if let Ok(macho) = goblin::mach::Mach::parse(&data) {
-            return Ok(BinaryInfo::from_mach(&macho, &data, path));
+            return Ok((BinaryInfo::from_mach(&macho, &data, path), data));
         }
 
         Err(VestError::UnsupportedFormat(format!(
@@ -136,7 +171,7 @@ impl BinaryScanner {
                 severity,
                 confidence: 0.7,
                 status: FindingStatus::Open,
-                cvss_score: None,
+                severity_score_estimate: None,
                 cve_id: None,
                 cwe_id: Some("CWE-120".into()),
                 evidence: serde_json::json!({
@@ -178,7 +213,7 @@ impl BinaryScanner {
                 severity: Severity::High,
                 confidence: 0.95,
                 status: FindingStatus::Open,
-                cvss_score: Some(7.8),
+                severity_score_estimate: Some(7.8),
                 cve_id: None,
                 cwe_id: Some("CWE-122".into()),
                 evidence: serde_json::json!({"format": binary.format, "nx": false}),
@@ -204,7 +239,7 @@ impl BinaryScanner {
                 severity: Severity::Medium,
                 confidence: 0.95,
                 status: FindingStatus::Open,
-                cvss_score: Some(6.2),
+                severity_score_estimate: Some(6.2),
                 cve_id: None,
                 cwe_id: Some("CWE-122".into()),
                 evidence: serde_json::json!({"format": binary.format, "aslr": false}),
@@ -230,7 +265,7 @@ impl BinaryScanner {
                 severity: Severity::Medium,
                 confidence: 0.9,
                 status: FindingStatus::Open,
-                cvss_score: Some(5.6),
+                severity_score_estimate: Some(5.6),
                 cve_id: None,
                 cwe_id: Some("CWE-121".into()),
                 evidence: serde_json::json!({"format": binary.format, "canaries": false}),
@@ -256,7 +291,7 @@ impl BinaryScanner {
                 severity: Severity::Medium,
                 confidence: 0.85,
                 status: FindingStatus::Open,
-                cvss_score: Some(5.5),
+                severity_score_estimate: Some(5.5),
                 cve_id: None,
                 cwe_id: Some("CWE-122".into()),
                 evidence: serde_json::json!({"format": "pe", "safeseh": false}),
@@ -274,9 +309,11 @@ impl BinaryScanner {
         findings
     }
 
-    fn find_rop_gadgets(&self, binary: &BinaryInfo) -> Result<Vec<Finding>, VestError> {
-        let data = std::fs::read(&binary.path).map_err(VestError::Io)?;
-
+    fn find_rop_gadgets(
+        &self,
+        binary: &BinaryInfo,
+        data: &[u8],
+    ) -> Result<Vec<Finding>, VestError> {
         let mut findings = Vec::new();
         let now = chrono::Utc::now();
 
@@ -349,7 +386,7 @@ impl BinaryScanner {
                     severity: Severity::Medium,
                     confidence: 0.8,
                     status: FindingStatus::Open,
-                    cvss_score: Some(5.0),
+                    severity_score_estimate: Some(5.0),
                     cve_id: None,
                     cwe_id: Some("CWE-122".into()),
                     evidence: serde_json::json!({
@@ -702,7 +739,7 @@ impl Scanner for BinaryScanner {
 
     async fn scan(&self, target: &Target) -> Result<Vec<Finding>, VestError> {
         let path = match &target.path {
-            Some(p) => Path::new(p),
+            Some(p) => PathBuf::from(p),
             None => return Err(VestError::Config("Binary target requires a path".into())),
         };
 
@@ -713,9 +750,23 @@ impl Scanner for BinaryScanner {
             )));
         }
 
+        // Reject oversized files before scheduling blocking work.
+        Self::ensure_within_size_cap(&path, self.max_file_size_bytes)?;
+
         tracing::info!("Starting binary scan of: {}", path.display());
 
-        let binary = self.parse_binary(path)?;
+        let scanner = self.clone();
+        let target_id = target.id.clone();
+        tokio::task::spawn_blocking(move || scanner.scan_path_sync(&path, &target_id))
+            .await
+            .map_err(|e| VestError::Internal(format!("binary scan task failed: {e}")))?
+    }
+}
+
+impl BinaryScanner {
+    /// Synchronous binary scan body — intended to run on a blocking thread pool.
+    fn scan_path_sync(&self, path: &Path, target_id: &str) -> Result<Vec<Finding>, VestError> {
+        let (binary, data) = self.parse_binary(path)?;
         tracing::info!(
             "Detected format: {}, arch: {}",
             binary.format,
@@ -744,22 +795,22 @@ impl Scanner for BinaryScanner {
                 "Found {} potential dangerous function references",
                 sink_findings.len()
             );
-            all_findings.extend(set_target(sink_findings, &target.id));
+            all_findings.extend(set_target(sink_findings, target_id));
         }
 
         if self.check_mitigations {
             tracing::info!("Checking security mitigations");
             let mit_findings = self.check_mitigations(&binary);
             tracing::info!("Found {} missing mitigations", mit_findings.len());
-            all_findings.extend(set_target(mit_findings, &target.id));
+            all_findings.extend(set_target(mit_findings, target_id));
         }
 
         if self.find_rop_gadgets {
             tracing::info!("Scanning for ROP gadgets (this may take a while)");
-            match self.find_rop_gadgets(&binary) {
+            match self.find_rop_gadgets(&binary, &data) {
                 Ok(rop_findings) => {
                     tracing::info!("Found {} ROP gadget sections", rop_findings.len());
-                    all_findings.extend(set_target(rop_findings, &target.id));
+                    all_findings.extend(set_target(rop_findings, target_id));
                 }
                 Err(e) => {
                     tracing::warn!("ROP gadget scanning failed: {}", e);
@@ -897,6 +948,41 @@ mod tests {
         assert_eq!(scanner.name, "binary-scanner");
         assert!(scanner.check_mitigations);
         assert!(!scanner.find_rop_gadgets);
+        assert_eq!(scanner.max_file_size_bytes, DEFAULT_MAX_BINARY_SIZE_BYTES);
+    }
+
+    #[test]
+    fn test_scanner_rejects_oversized_binary() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("vest_bin_oversized_{}.bin", std::process::id()));
+        let mut f = std::fs::File::create(&path).unwrap();
+        use std::io::Write;
+        f.write_all(&[0x7f, b'E', b'L', b'F']).unwrap();
+        f.set_len(1024).unwrap();
+        drop(f);
+
+        let scanner = BinaryScanner::new().with_max_file_size_bytes(8);
+        let target = Target {
+            id: "test".into(),
+            name: "oversized.bin".into(),
+            target_type: vest_core::types::TargetType::Binary,
+            path: Some(path.to_string_lossy().into_owned()),
+            url_str: None,
+            pid: None,
+            host: None,
+            metadata: serde_json::json!({}),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(scanner.scan(&target));
+        std::fs::remove_file(&path).ok();
+        let err = result.expect_err("oversized binary must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("exceeds max size") || msg.contains("Invalid input"),
+            "unexpected error: {msg}"
+        );
     }
 
     #[test]

@@ -1300,7 +1300,7 @@ impl WebScanner {
             severity,
             confidence,
             status: FindingStatus::Open,
-            cvss_score: None,
+            severity_score_estimate: None,
             cve_id: None,
             cwe_id: cwe,
             evidence,

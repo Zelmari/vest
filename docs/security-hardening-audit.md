@@ -3,7 +3,7 @@
 > **Historical snapshot.** This file records the first verified security-hardening
 > pass (branch `hardening/verified-security-pass`, 2026-08-02). Several rows marked
 > “Addressed” here are **not** fully closed on current `main` (notably CLI active
-> probes, agent `ureq` HTTP, interactive approval UX, heuristic `cvss_score`).
+> probes, agent `ureq` HTTP, interactive approval UX, heuristic severity estimates).
 >
 > For current status, use [product-hardening-ledger.md](product-hardening-ledger.md)
 > and [product-contract.md](product-contract.md). Do not cite this audit alone as
@@ -44,7 +44,7 @@ Date: 2026-08-02
 | P | Config fields parsed but not wired | robots, limits, sandbox | Unused fields | Confirmed | Wire or reject/deprecate | Config→behaviour tests | **Partially addressed** — robots + many scanner limits wired. Docker `sandbox_*` safety fields remain convenience/optional, not a verified agent sandbox | |
 | Q | Malformed config silent fallback | `vest-config` load paths | Silent defaults on error | Partially confirmed | Present+malformed → hard error | Malformed fails closed | **Addressed** — `load_config` / `load_config_or_default`; CLI providers refuse silent defaults for present files | |
 | R | Validator severity/confidence not applied | `validator.rs` | Downgrade not applied | Confirmed | Apply to returned finding | Downgrade/confidence E2E | **Addressed** | |
-| S | Fake CVSS | enrichment / scanners | Severity→number labelled CVSS | Confirmed | Rename to severity estimate; stop claiming CVSS | Naming/docs + tests | **Partially addressed** — validator uses `severity_score_estimate` and leaves `cvss_score` unset. Some scanners still populate `cvss_score` with heuristic numbers; docs no longer claim real CVSS | |
+| S | Fake CVSS | enrichment / scanners | Severity→number labelled CVSS | Confirmed | Rename to severity estimate; stop claiming CVSS | Naming/docs + tests | **Addressed** (K16) — field/`reports` use `severity_score_estimate`; SQLite column `cvss_score` mapped in storage | |
 | T | Validator failures abort batch | `validator.rs` | `?` on llm_validate | Confirmed | Preserve local findings | Failure preserves locals | **Addressed** | |
 | U | Malformed model responses logged in full | `validator.rs` | `tracing::warn!(..., response)` | Confirmed | Log metadata + sanitised error only | No raw response in logs | **Addressed** | |
 | V | Evidence sent without egress boundary | validator prompts | Full evidence JSON | Confirmed | Allowlist DTO + bounded redacted excerpt + consent | Sentinel absent from payload | **Addressed** — `FindingEgressDto`; evidence gated by `allow_evidence_egress` | |
@@ -64,7 +64,7 @@ Date: 2026-08-02
 - Secret redaction and regex-based detection are incomplete by nature.
 - SSRF / DNS-rebinding prevention is not claimed complete without connection-time IP binding.
 - Real process-memory acquisition is not implemented.
-- Some scanner-emitted `cvss_score` fields remain heuristic numbers.
+- Heuristic numbers live on `severity_score_estimate` (SQLite still stores column `cvss_score`).
 - Provider Debug hygiene is incomplete for all backends.
 - Exit-code consistency across every CLI subcommand is not fully proven.
 - Experimental project — no production-grade or “guaranteed secure” claim.

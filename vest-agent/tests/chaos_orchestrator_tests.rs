@@ -121,7 +121,7 @@ fn test_validator_heuristic_all_severities() {
             severity: *severity,
             confidence: *confidence,
             status: FindingStatus::Open,
-            cvss_score: None,
+            severity_score_estimate: None,
             cve_id: None,
             cwe_id: None,
             evidence: serde_json::json!({}),

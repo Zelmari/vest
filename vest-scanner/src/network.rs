@@ -158,7 +158,7 @@ impl NetworkScanner {
                             severity: *severity,
                             confidence: 0.9,
                             status: FindingStatus::Open,
-                            cvss_score: match severity {
+                            severity_score_estimate: match severity {
                                 Severity::Critical => Some(9.0),
                                 Severity::High => Some(7.5),
                                 Severity::Medium => Some(5.0),
@@ -217,7 +217,7 @@ impl NetworkScanner {
                                 severity: *severity,
                                 confidence: 0.9,
                                 status: FindingStatus::Open,
-                                cvss_score: match severity {
+                                severity_score_estimate: match severity {
                                     Severity::Critical => Some(9.0),
                                     Severity::High => Some(7.5),
                                     Severity::Medium => Some(5.0),
@@ -267,7 +267,7 @@ impl NetworkScanner {
                     severity: Severity::Info,
                     confidence: 0.3,
                     status: FindingStatus::Open,
-                    cvss_score: None,
+                    severity_score_estimate: None,
                     cve_id: None,
                     cwe_id: None,
                     evidence: serde_json::json!({ "host": host }),
@@ -308,7 +308,7 @@ impl NetworkScanner {
                         severity: Severity::High,
                         confidence: 0.95,
                         status: FindingStatus::Open,
-                        cvss_score: Some(7.4),
+                        severity_score_estimate: Some(7.4),
                         cve_id: None,
                         cwe_id: Some("CWE-326".into()),
                         evidence: serde_json::json!({
@@ -354,7 +354,7 @@ impl NetworkScanner {
                         severity: Severity::High,
                         confidence: 0.9,
                         status: FindingStatus::Open,
-                        cvss_score: Some(7.0),
+                        severity_score_estimate: Some(7.0),
                         cve_id: None,
                         cwe_id: Some("CWE-327".into()),
                         evidence: serde_json::json!({
@@ -384,7 +384,7 @@ impl NetworkScanner {
                         severity: Severity::High,
                         confidence: 0.95,
                         status: FindingStatus::Open,
-                        cvss_score: Some(7.4),
+                        severity_score_estimate: Some(7.4),
                         cve_id: None,
                         cwe_id: Some("CWE-295".into()),
                         evidence: serde_json::json!({
@@ -417,7 +417,7 @@ impl NetworkScanner {
                         severity: Severity::High,
                         confidence: 0.95,
                         status: FindingStatus::Open,
-                        cvss_score: Some(7.5),
+                        severity_score_estimate: Some(7.5),
                         cve_id: None,
                         cwe_id: Some("CWE-319".into()),
                         evidence: serde_json::json!({
@@ -457,7 +457,7 @@ impl NetworkScanner {
                         severity: Severity::Low,
                         confidence: 0.5,
                         status: FindingStatus::Open,
-                        cvss_score: Some(2.6),
+                        severity_score_estimate: Some(2.6),
                         cve_id: None,
                         cwe_id: None,
                         evidence: serde_json::json!({"dns_records": []}),
@@ -489,7 +489,7 @@ impl NetworkScanner {
                             severity: Severity::High,
                             confidence: 0.95,
                             status: FindingStatus::Open,
-                            cvss_score: Some(7.5),
+                            severity_score_estimate: Some(7.5),
                             cve_id: None,
                             cwe_id: Some("CWE-290".into()),
                             evidence: serde_json::json!({
@@ -521,7 +521,7 @@ impl NetworkScanner {
                         severity: Severity::Medium,
                         confidence: 0.85,
                         status: FindingStatus::Open,
-                        cvss_score: Some(5.9),
+                        severity_score_estimate: Some(5.9),
                         cve_id: None,
                         cwe_id: Some("CWE-350".into()),
                         evidence: serde_json::json!({
@@ -553,7 +553,7 @@ impl NetworkScanner {
                     severity: Severity::Medium,
                     confidence: 0.6,
                     status: FindingStatus::Open,
-                    cvss_score: Some(4.0),
+                    severity_score_estimate: Some(4.0),
                     cve_id: None,
                     cwe_id: Some("CWE-350".into()),
                     evidence: serde_json::json!({

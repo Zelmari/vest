@@ -86,7 +86,7 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 | 25 | **STOR-2** | Never fall back to `:memory:` on bad path encoding | **Done** — hard UTF-8 path error | db path test |
 | 26 | **STOR-3** | Transactional scan finalize; `rows_affected==0` → NotFound | **Done** — tx finalize + NotFound updates | storage + CLI |
 | 27 | **NUC-1** | Nuclei: no cwd binary hijack; check exit; timeout; template root | **Done** — absolute `~/.vest/tools` / PATH only; exit+timeout; `-t` under allowlisted root | vest-tools nuclei fake-binary tests |
-| 28 | **K16** | Rename heuristic score away from CVSS in types/reports/scanners | No “CVSS” for heuristics | severity rename + report |
+| 28 | **K16** | Rename heuristic score away from CVSS in types/reports/scanners | **Done** — `severity_score_estimate` + report labels; SQLite `cvss_score` mapped | severity rename + report |
 | 29 | **REP-2** | Markdown fence escape for untrusted PoC/evidence | Safe MD | report injection |
 | 30 | **CLI-SANDBOX** | Deny dangerous docker passthrough flags | Reject `--privileged` etc. | sandbox tests |
 
@@ -153,12 +153,12 @@ Keep documented forever unless architecture truly changes:
 ```
 N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓ → K5b ✓ → K8 ✓ → POL-1 ✓ → K11 ✓ → K9 ✓
 → BRW-1 ✓ → N1 ✓ → K14 ✓ → CLI-EXIT-7 ✓ → CLI-PARTIAL ✓ → N4 ✓ → N3 ✓ → CFG-1 ✓
-→ PROV-2 ✓ → PROV-3 ✓ → PROV-4 ✓ → STOR-1 ✓ → STOR-2 ✓ → STOR-3 ✓ → NUC-1 ✓ → K16 → REP-2 ✓
+→ PROV-2 ✓ → PROV-3 ✓ → PROV-4 ✓ → STOR-1 ✓ → STOR-2 ✓ → STOR-3 ✓ → NUC-1 ✓ → K16 ✓ → REP-2 ✓
 → CLI-SANDBOX ✓ → HTTP-1 → WEB-1 → WEB-2 → R3-lite → BIN-1 → POL-2
 → CLI-SOFT ✓ → CLI-DEAD ✓ → N2 ✓ → ACCEPT-12/13 ✓
 ```
 
-**Next open:** K16 (then HTTP-1…).
+**Next open:** HTTP-1 (then WEB-1…).
 
 **Progress tracking:** update the table in `docs/product-hardening-ledger.md` and the checkbox section below after each clear.
 
@@ -189,12 +189,12 @@ N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓
 - [x] PROV-4 google list_models
 - [x] STOR-1/2/3 persistence
 - [x] NUC-1 nuclei safety
-- [ ] K16 severity rename
+- [x] K16 severity rename
 - [x] REP-2 markdown escape
 - [x] CLI-SANDBOX docker deny
 - [ ] HTTP-1/WEB-1/WEB-2 client unify
 - [ ] R3-lite IP deny option
-- [ ] BIN-1 binary bounds
+- [x] BIN-1 binary bounds
 - [ ] POL-2 permissive API hygiene
 - [x] CLI-SOFT / CLI-DEAD
 - [x] N2 verified

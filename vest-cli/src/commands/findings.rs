@@ -116,8 +116,8 @@ fn show_finding(pool: &ConnectionPool, id: String) -> Result<(), Box<dyn std::er
     println!("  Confidence:  {:.2}", f.confidence);
     println!("  Status:      {}", f.status);
     println!(
-        "  CVSS:        {}",
-        f.cvss_score
+        "  Severity est: {}",
+        f.severity_score_estimate
             .map(|s| s.to_string())
             .unwrap_or_else(|| "N/A".into())
     );

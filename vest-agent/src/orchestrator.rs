@@ -154,7 +154,7 @@ impl Orchestrator {
              - Severity (critical/high/medium/low/info)\n\
              - Evidence (what you found)\n\
              - Location (where you found it)\n\
-             - CVSS score estimate\n\
+             - Severity score estimate (heuristic, not CVSS)\n\
              - Remediation recommendation\n\
              Be thorough and systematic.",
             Arc::clone(&self.safety),
