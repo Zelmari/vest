@@ -64,7 +64,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | ID | Issue | Status |
 |----|-------|--------|
 | N1 | Dry-run returns before config load / scope display | **Fixed** — load/validate config, detect target, resolve scopes, print plan (scanners/probes/provider/scopes); no DB/network/scanner side effects; invalid type/config → non-zero; `dry_run_contract.rs` | `02dc51e` |
-| N2 | `config validate` historically soft-failed (fixed on prior branch; re-verify) | verify |
+| N2 | `config validate` historically soft-failed | **Verified** — fail-closed: malformed / invalid safety → non-zero (exit 3); valid config → 0; `config show` refuses silent defaults on present bad file | `config_cli.rs` (`validate_rejects_malformed_config_with_nonzero_exit`, `validate_rejects_invalid_safety_bounds`, `show_fails_closed_on_present_malformed_file`) | re-verified after `1a03661` |
 | N3 | No `vest doctor` / `policy explain` | **Fixed** — `vest doctor` prints config/VEST_HOME/sqlite/provider-key presence/posture/policy; fail-closed on bad config; `policy explain` still optional | `doctor_cli.rs` | `f83e640` |
 | N4 | No explicit `--offline` / `--no-ai` flags (provider none only) | **Fixed** — `--offline` / `--no-ai` force provider `none`; safer default is `none` when no provider configured | `offline_cli.rs` | `f83e640` |
 | N5 | CLI web scan forces `with_allow_active_probes(true)` | **Fixed** — default off; config OR `--allow-active-probes`; `scan_web_cli` probe-hit tests |
