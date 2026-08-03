@@ -1241,11 +1241,11 @@ fn build_tool_registry(
     registry.register(
         vest_agent::ToolDefinition {
             name: "browser_inspect".into(),
-            description: "Inspect a web page using Chrome DevTools Protocol. Extracts localStorage, sessionStorage, WebSocket URLs, WASM modules, security headers, and inline scripts. Requires Chrome running with --remote-debugging-port=9222.".into(),
+            description: "Inspect a web page using Chrome DevTools Protocol (navigates the page; treated as an active network probe requiring approval). Extracts localStorage, sessionStorage, WebSocket URLs, WASM modules, security headers, and inline scripts. Requires Chrome on loopback with --remote-debugging-port=9222; non-loopback CDP websocket URLs are refused.".into(),
             parameters: serde_json::json!({"url": "string"}),
             requires_approval: false,
             risk_level: ro,
-            effect: ToolEffect::PassiveNetworkRequest,
+            effect: ToolEffect::ActiveNetworkProbe,
             egress_class: DataEgressClass::TargetContent,
         },
         move |args: serde_json::Value| -> Result<serde_json::Value, String> {

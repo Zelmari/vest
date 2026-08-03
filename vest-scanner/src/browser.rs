@@ -7,6 +7,8 @@
 //!   size / symlink policy).
 //! - CDP navigate allows only `http`/`https` (rejects `file://` and other schemes).
 //! - Chrome DevTools `json/version` HTTP body is capped ([`CDP_VERSION_BODY_MAX_BYTES`]).
+//! - `webSocketDebuggerUrl` from `/json/version` must be loopback (`127.0.0.1` /
+//!   `::1` / `localhost`); non-loopback hosts fail closed.
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -54,16 +56,51 @@ pub fn validate_navigate_url(url: &str) -> Result<(), String> {
     }
 }
 
+/// True when the CDP websocket host is loopback (`127.0.0.0/8`, `::1`, or `localhost`).
+pub fn is_loopback_ws_debugger_host(url: &str) -> Result<bool, String> {
+    let parsed = Url::parse(url).map_err(|e| format!("Invalid webSocketDebuggerUrl: {e}"))?;
+    match parsed.scheme() {
+        "ws" | "wss" => {}
+        scheme => {
+            return Err(format!(
+                "webSocketDebuggerUrl scheme '{scheme}' is not allowed (only ws/wss)"
+            ));
+        }
+    }
+    Ok(match parsed.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    })
+}
+
+/// Reject CDP websocket URLs that are not loopback (fail closed).
+pub fn validate_chrome_ws_debugger_url(url: &str) -> Result<(), String> {
+    if is_loopback_ws_debugger_host(url)? {
+        Ok(())
+    } else {
+        Err(format!(
+            "webSocketDebuggerUrl host is not loopback (refusing non-local CDP): {url}"
+        ))
+    }
+}
+
 /// Parse `webSocketDebuggerUrl` from a Chrome `/json/version` JSON body.
+///
+/// Only loopback websocket endpoints are accepted (`127.0.0.1` / `::1` / `localhost`).
 pub fn parse_chrome_ws_debugger_url(body: &str) -> Result<String, String> {
     let json: serde_json::Value =
         serde_json::from_str(body).map_err(|e| format!("Invalid JSON: {e}"))?;
-    json.get("webSocketDebuggerUrl")
+    let ws = json
+        .get("webSocketDebuggerUrl")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| {
-            "No webSocketDebuggerUrl in Chrome response. Is Chrome running with --remote-debugging-port=9222?".into()
-        })
+            "No webSocketDebuggerUrl in Chrome response. Is Chrome running with --remote-debugging-port=9222?".to_string()
+        })?;
+    validate_chrome_ws_debugger_url(&ws)?;
+    Ok(ws)
 }
 
 pub struct BrowserScanner {
@@ -1209,6 +1246,34 @@ mod tests {
         let body = r#"{"webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/abc"}"#;
         let ws = parse_chrome_ws_debugger_url(body).unwrap();
         assert!(ws.starts_with("ws://"));
+    }
+
+    #[test]
+    fn parse_chrome_ws_debugger_url_accepts_localhost_and_ipv6_loopback() {
+        let local = r#"{"webSocketDebuggerUrl":"ws://localhost:9222/devtools/browser/abc"}"#;
+        assert!(parse_chrome_ws_debugger_url(local).is_ok());
+        let v6 = r#"{"webSocketDebuggerUrl":"ws://[::1]:9222/devtools/browser/abc"}"#;
+        assert!(parse_chrome_ws_debugger_url(v6).is_ok());
+    }
+
+    #[test]
+    fn parse_chrome_ws_debugger_url_rejects_non_loopback() {
+        let remote = r#"{"webSocketDebuggerUrl":"ws://203.0.113.9:9222/devtools/browser/abc"}"#;
+        let err = parse_chrome_ws_debugger_url(remote).unwrap_err();
+        assert!(
+            err.to_lowercase().contains("loopback"),
+            "expected loopback rejection: {err}"
+        );
+        let lan = r#"{"webSocketDebuggerUrl":"ws://192.168.1.10:9222/devtools/browser/x"}"#;
+        assert!(parse_chrome_ws_debugger_url(lan).is_err());
+        let named = r#"{"webSocketDebuggerUrl":"ws://evil.example:9222/devtools/browser/x"}"#;
+        assert!(parse_chrome_ws_debugger_url(named).is_err());
+    }
+
+    #[test]
+    fn validate_chrome_ws_debugger_url_rejects_http_scheme() {
+        let err = validate_chrome_ws_debugger_url("http://127.0.0.1:9222/json").unwrap_err();
+        assert!(err.contains("scheme"), "{err}");
     }
 
     #[test]

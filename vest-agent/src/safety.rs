@@ -290,7 +290,7 @@ pub fn explicit_effect_for_tool(name: &str) -> Option<ToolEffect> {
         "http_get" => Some(ToolEffect::PassiveNetworkRequest),
         "http_post" => Some(ToolEffect::StateChangingNetworkRequest),
         "web_scan" => Some(ToolEffect::ActiveNetworkProbe),
-        "browser_inspect" => Some(ToolEffect::PassiveNetworkRequest),
+        "browser_inspect" => Some(ToolEffect::ActiveNetworkProbe),
         "memory_scan" => Some(ToolEffect::ProcessMemoryRead),
         "read_memory" => Some(ToolEffect::ProcessMemoryRead),
         "write_memory" | "write_process" | "inject" | "inject_dll" => Some(ToolEffect::LocalWrite),

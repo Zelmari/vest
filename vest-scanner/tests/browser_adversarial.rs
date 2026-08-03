@@ -7,7 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use vest_core::traits::Scanner;
 use vest_core::types::{Target, TargetType};
 use vest_scanner::browser::{
-    browser_default_limits, read_target_files_bounded, validate_navigate_url, BrowserScanner,
+    browser_default_limits, parse_chrome_ws_debugger_url, read_target_files_bounded,
+    validate_chrome_ws_debugger_url, validate_navigate_url, BrowserScanner,
     CDP_VERSION_BODY_MAX_BYTES,
 };
 use vest_scanner::files::FileTraversalLimits;
@@ -57,6 +58,22 @@ fn cdp_version_body_cap_is_bounded() {
     const {
         assert!(CDP_VERSION_BODY_MAX_BYTES <= 64 * 1024);
     }
+}
+
+#[test]
+fn cdp_ws_debugger_url_must_be_loopback() {
+    assert!(validate_chrome_ws_debugger_url("ws://127.0.0.1:9222/devtools/browser/abc").is_ok());
+    assert!(validate_chrome_ws_debugger_url("ws://[::1]:9222/devtools/browser/abc").is_ok());
+    assert!(validate_chrome_ws_debugger_url("ws://localhost:9222/devtools/browser/abc").is_ok());
+
+    let err = parse_chrome_ws_debugger_url(
+        r#"{"webSocketDebuggerUrl":"ws://203.0.113.50:9222/devtools/browser/hijack"}"#,
+    )
+    .unwrap_err();
+    assert!(
+        err.to_lowercase().contains("loopback"),
+        "non-loopback CDP must fail closed: {err}"
+    );
 }
 
 #[tokio::test]
