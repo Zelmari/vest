@@ -20,6 +20,9 @@ Network: loopback only. Filesystem: temp dirs. Providers: fakes / `none`.
 | 13 | Cancellation | covered (library) — `vest-providers` parallel fallback drop cancels in-flight provider |
 | 14 | Secret sentinels | egress + set-key tests |
 | 15 | Install smoke (`cargo install --path vest-cli`) | manual / CI |
+| 16 | Interrupted scan resume (`vest scan --resume <SCAN_ID>`) | covered — `resume_cli.rs` (continues remaining scanners from SQLite checkpoints; completed scans rejected; missing id → exit 2); flag visible in help (`cli_soft_dead.rs`) |
+| 17 | `vest policy explain` simulation (deny/allow) | covered — `policy_explain_cli.rs` (catalog/tools printed; simulated deny without grants and allow with `--approve-exploits`) |
+| 18 | Nuclei first-class scan consent gate | covered — `nuclei_scanner_cli.rs` (no two-key consent → non-zero; `nuclei` known scanner in dry-run) |
 
 Exact commands for scenario 1:
 
