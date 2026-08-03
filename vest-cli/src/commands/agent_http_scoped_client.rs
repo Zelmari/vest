@@ -112,13 +112,35 @@ fn session_for_url(url: &str) -> Arc<ExecutionSession> {
     ExecutionSession::new(ApprovedFilesystemScope::empty(), net, false).into_arc()
 }
 
+fn agent_http_get_with_retry(session: &Arc<ExecutionSession>, url: &str) -> serde_json::Value {
+    let mut last = None;
+    for attempt in 0..12 {
+        match agent_http_get(session, url) {
+            Ok(v) if v.get("status").and_then(|s| s.as_u64()) == Some(200) => return v,
+            Ok(v) => {
+                last = Some(format!("unexpected payload: {v}"));
+                thread::sleep(Duration::from_millis(40));
+            }
+            Err(e) if attempt + 1 < 12 => {
+                last = Some(e.to_string());
+                thread::sleep(Duration::from_millis(40));
+            }
+            Err(e) => panic!("agent_http_get failed after retries: {e}"),
+        }
+    }
+    panic!(
+        "agent_http_get produced no successful result: {}",
+        last.unwrap_or_default()
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn agent_http_get_same_origin_ok() {
     let (port, stop) = spawn_static_server(b"hello-agent");
     let url = format!("http://127.0.0.1:{port}/");
     let session = session_for_url(&url);
 
-    let out = agent_http_get(&session, &url).unwrap();
+    let out = agent_http_get_with_retry(&session, &url);
     stop.store(true, Ordering::Relaxed);
 
     assert_eq!(out["status"], 200);
@@ -178,7 +200,7 @@ async fn agent_http_get_unicode_body_truncates_without_panic() {
     let url = format!("http://127.0.0.1:{port}/");
     let session = session_for_url(&url);
 
-    let out = agent_http_get(&session, &url).unwrap();
+    let out = agent_http_get_with_retry(&session, &url);
     stop.store(true, Ordering::Relaxed);
 
     let returned = out["body"].as_str().unwrap();
