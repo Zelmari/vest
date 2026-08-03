@@ -24,7 +24,7 @@ User CLI intent
 ## Where data can leave the machine
 
 1. **Remote LLM providers** — only after egress filtering on the agent/validator paths that use it.
-2. **HTTP to scan target** — web scanner uses scoped client construction; **CLI agent HTTP tools (`http_get` / `http_post` / related helpers) still call `ureq` directly** in `vest-cli/src/commands/scan.rs`. Those are not “scoped client only.”
+2. **HTTP to scan target** — web scanner and CLI agent HTTP tools (`http_get` / `http_post` / `web_scan`) use `ScopedHttpClient` (redirect re-auth). `WebScanner` still builds its own client stack in places (**WEB-1** — not yet fully unified on `ScopedHttpClient`).
 3. **External tools** (e.g. nuclei) — subprocess against authorised targets.
 4. **User-selected report paths** — local disk.
 5. **SQLite under VEST_HOME** — local persistence.
@@ -47,6 +47,8 @@ Egress is a second gate (`DataEgressClass` + session flags / approvals).
 
 | Claim people might assume | Reality on `main` |
 |---------------------------|-------------------|
-| All HTTP goes through `ScopedHttpClient` | Scanner web client: yes foundations. Agent CLI tools: still `ureq`. |
-| Interactive approval step always exists | No prompt UI; `RequireInteractive` → deny. |
-| CLI web scan is passive | Default off; opt-in via config or `--allow-active-probes`. |
+| All HTTP goes through `ScopedHttpClient` | Agent CLI `http_get`/`http_post`/`web_scan`: yes. Scanner foundations: yes. `WebScanner` itself still has duplicate client construction (**WEB-1**). |
+| Interactive approval step always exists | No prompt UI; `RequireInteractive` → deny (**K2**). |
+| CLI web scan is passive | Default off; opt-in via config or `--allow-active-probes` (**N5** fixed). |
+
+Clearance order / remaining work: [clearance-plan.md](clearance-plan.md).

@@ -81,12 +81,13 @@ In the tool-use pattern, every parsed tool call is evaluated regardless of that 
 
 Unregistered tool names map to `ToolEffect::Unknown` / `DataEgressClass::Prohibited` and are denied. There is no permissive default for mystery tools.
 
-## Related HTTP gap
+## Related HTTP status
 
-Policy can authorise network effects, but some CLI-registered agent HTTP tools still perform requests via `ureq` rather than `ScopedHttpClient`. Scope checks in policy are necessary but the HTTP stack is not fully unified yet. See [data-flow.md](data-flow.md) and the product ledger.
+CLI-registered agent HTTP tools (`http_get` / `http_post` / `web_scan`) use `ScopedHttpClient` / `WebScanner::inspect_url` with redirect re-auth and the same active-probe gating as CLI web scans (**K3**/**K3b** cleared). Remaining unify work: `WebScanner` itself is not fully on `ScopedHttpClient` (**WEB-1**). See [data-flow.md](data-flow.md) and [clearance-plan.md](clearance-plan.md).
 
 ## Related
 
 - [security-model.md](security-model.md)
 - [model-data-boundary.md](model-data-boundary.md)
 - [product-hardening-ledger.md](product-hardening-ledger.md)
+- [clearance-plan.md](clearance-plan.md)

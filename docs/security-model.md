@@ -31,9 +31,9 @@ Agent tools and scanners that read local content operate only within an `Approve
 
 ### Network boundary
 
-Network tools and crawlers are intended to operate only within an `ApprovedNetworkScope` (scheme, host, effective port / origin, optional IP policy). Comparisons use parsed `url::Url` origins, not substring matching. Redirects and discovered links are re-authorised before request on the web scanner path.
+Network tools and crawlers are intended to operate only within an `ApprovedNetworkScope` (scheme, host, effective port / origin, optional IP policy). Comparisons use parsed `url::Url` origins, not substring matching. Redirects and discovered links are re-authorised before request on the web scanner path. CLI agent `http_get` / `http_post` / `web_scan` use `ScopedHttpClient` (**K3**/**K3b** fixed).
 
-**Gap:** some CLI agent HTTP tools still use `ureq` directly; they are not fully on `ScopedHttpClient`. See [data-flow.md](data-flow.md).
+**Remaining gap:** `WebScanner` is not yet fully on `ScopedHttpClient` (**WEB-1**). See [data-flow.md](data-flow.md) and [clearance-plan.md](clearance-plan.md).
 
 ### Process-memory boundary
 
@@ -71,7 +71,7 @@ User command
 ## Where data can leave the process
 
 1. **Remote LLM providers** (`vest-providers/*`): chat, stream, embed requests built from agent context / validator prompts.
-2. **HTTP clients in scanners and tools** (`vest-scanner` web/network/browser; CLI `http_get`/`http_post`/`web_scan`): outbound requests to user-authorised targets (and must not follow unauthorised redirects). CLI agent helpers may still use `ureq`.
+2. **HTTP clients in scanners and tools** (`vest-scanner` web/network/browser; CLI `http_get`/`http_post`/`web_scan`): outbound requests to user-authorised targets (and must not follow unauthorised redirects). Agent tools use `ScopedHttpClient`; `WebScanner` client unify remains (**WEB-1**).
 3. **External tools** (`vest-tools` nuclei): subprocess invocation against authorised targets.
 4. **Reports / files written by the CLI**: user-selected output paths.
 5. **SQLite storage** under the workspace directory: local persistence only.
@@ -90,8 +90,10 @@ Vest must **not** be described as:
 - Guaranteed secret detection via regex
 - Complete SSRF / DNS-rebinding prevention without connection-time IP binding
 - Real process-memory forensics unless a platform-specific real reader is enabled and tested
-- Passive-by-default CLI web scanning (CLI currently enables active probes)
-- A finished interactive-approval product
+- A finished interactive-approval product (**K2** still open)
+
+CLI web scanning **is** passive by default; active probes are opt-in (`scanner.web.allow_active_probes` or `--allow-active-probes`).
 
 Current known-issue status: [product-hardening-ledger.md](product-hardening-ledger.md).  
+Clearance order: [clearance-plan.md](clearance-plan.md).  
 Historical first-pass audit snapshot: [security-hardening-audit.md](security-hardening-audit.md).

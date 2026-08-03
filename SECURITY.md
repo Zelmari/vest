@@ -31,5 +31,6 @@ Vest is **experimental**. Do not treat it as:
 - An OS-level sandbox for agent tools (optional Docker helpers are convenience only)
 - A complete secret-detection or SSRF-prevention product
 - Real process-memory forensics unless a platform-specific real reader is implemented, enabled, and tested
-- Passive-by-default CLI web scanning (the CLI web path currently enables active probes)
-- A finished interactive approval product
+- A finished interactive approval product (policy currently denies when interactive approval would be required)
+
+CLI web scanning **is** passive by default; active probes require config or `--allow-active-probes`. Remaining gaps: [docs/clearance-plan.md](docs/clearance-plan.md).

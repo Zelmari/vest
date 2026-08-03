@@ -20,7 +20,7 @@ an AI provider.
 - Terminal and/or JSON report.
 - Unreadable files skip with warnings; do not erase other findings.
 
-### B — Passive authorised web scan — **partial / broken contract**
+### B — Passive authorised web scan — **works** (N5 cleared)
 
 **Intended:**
 
@@ -31,6 +31,7 @@ an AI provider.
 
 **Actual today:** CLI web scan is passive-by-default. Active probes require
 `scanner.web.allow_active_probes = true` and/or `--allow-active-probes`.
+Remaining related work: `WebScanner` not fully on `ScopedHttpClient` (**WEB-1**).
 
 ### C — Active authorised checks — **partial**
 
@@ -58,8 +59,9 @@ are opted in (config/flag), they still run without a separate approval step.
 - Every call: normalise → policy → mint opaque `ApprovedToolCall` → execute → egress filter.
 - Approvals bind exact session + tool + effect + canonical args (SHA-256 digest).
 - Tool-loop and size limits prevent runaway use.
-- **Gap:** no interactive prompt; interactive-required calls are denied.
-- **Gap:** some CLI-registered HTTP tools still use `ureq` rather than `ScopedHttpClient`.
+- Agent `http_get` / `http_post` use `ScopedHttpClient`; `web_scan` uses `WebScanner::inspect_url` with the same probe gating as CLI (**K3**/**K3b** cleared).
+- **Gap:** no interactive prompt; interactive-required calls are denied (**K2**).
+- **Gap:** `WebScanner` client stack not fully unified on `ScopedHttpClient` (**WEB-1**).
 
 ### F — CI / non-interactive — **mostly works**
 
@@ -85,7 +87,7 @@ are opted in (config/flag), they still run without a separate approval step.
 |----------|-------------------|
 | AI enabled? | Only if provider configured / selected |
 | Active web probes (library)? | Off unless enabled |
-| Active web probes (CLI `scan --scanner web`)? | **On today** (known gap) |
+| Active web probes (CLI `scan --scanner web`)? | Off unless config / `--allow-active-probes` |
 | Symlink follow? | Off |
 | Local content → model? | Denied |
 | Process memory → model? | Denied |
@@ -121,3 +123,4 @@ vest scan ./examples/demo-target/vulnerable-files --target-type file --scanner f
 - [agent-tool-policy.md](agent-tool-policy.md)
 - [model-data-boundary.md](model-data-boundary.md)
 - [product-hardening-ledger.md](product-hardening-ledger.md)
+- [clearance-plan.md](clearance-plan.md)

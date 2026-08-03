@@ -19,13 +19,19 @@ where practical for a pre-1.0 experimental toolkit.
 - `.env` loading allowlists Vest/provider keys.
 - Safe Unicode **`truncate_chars`** helper in `vest-core`.
 
+### Cleared recently (on `main`)
+
+- **N5:** CLI web scan is passive by default; active probes opt-in via config or `--allow-active-probes`.
+- **K3 / K3b:** Agent `http_get` / `http_post` use `ScopedHttpClient`; `web_scan` uses `WebScanner::inspect_url` with the same probe gating (no bare `ureq` for those tools).
+
 ### Still open (honest)
 
-- No interactive approval prompt (`RequireInteractive` → deny).
-- CLI agent HTTP tools still use `ureq` in places (not fully on `ScopedHttpClient`).
-- CLI `vest scan --scanner web` still enables active probes by default.
+- No interactive approval prompt (`RequireInteractive` → deny) — **K2**.
+- `WebScanner` not yet fully on `ScopedHttpClient` — **WEB-1**.
 - Some scanners still populate heuristic `cvss_score` values.
 - No `vest doctor` / `--offline` yet.
+
+See [docs/clearance-plan.md](docs/clearance-plan.md) for the ordered remaining list.
 
 ### Security (earlier verified hardening pass)
 

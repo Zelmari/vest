@@ -4,7 +4,7 @@
 
 > **Experimental.** Vest is not production-grade, not a full sandbox, and not “fully secure.” Model output is untrusted. Read [docs/security-model.md](docs/security-model.md), [docs/product-contract.md](docs/product-contract.md), and [SECURITY.md](SECURITY.md) before relying on it for anything serious.
 
-Honest progress ledger (what is fixed vs still open): [docs/product-hardening-ledger.md](docs/product-hardening-ledger.md).
+Honest progress ledger (what is fixed vs still open): [docs/product-hardening-ledger.md](docs/product-hardening-ledger.md). Clearance order: [docs/clearance-plan.md](docs/clearance-plan.md).
 
 ## How this repo was built
 
@@ -130,16 +130,19 @@ What is real today:
 - `requires_approval` on a tool definition is **not** a bypass.
 - Execution uses an opaque `ApprovedToolCall` minted by the policy engine (callers cannot forge `Allow`).
 - Local file content and process memory are **not** sent to remote models by default.
+- CLI web scans are passive by default; active probes are opt-in (**N5**).
+- Agent `http_get` / `http_post` use `ScopedHttpClient` (redirect re-auth). `web_scan` goes through `WebScanner::inspect_url` with the same active-probe gating as CLI web scans (**K3**/**K3b**).
 - `vest sandbox` Docker helpers are convenience only — not verified OS isolation.
 
 What is **not** finished:
 
-- There is **no interactive approval prompt**. When policy returns `RequireInteractive`, the tool is denied. `--no-approval` means the same: do not prompt; deny approval-required ops.
-- Agent `http_get` / `http_post` use `ScopedHttpClient` (redirect re-auth). `web_scan` goes through `WebScanner::inspect_url` with the same active-probe gating as CLI web scans.
+- There is **no interactive approval prompt**. When policy returns `RequireInteractive`, the tool is denied. `--no-approval` means the same: do not prompt; deny approval-required ops (**K2**).
+- `WebScanner` is not yet fully on `ScopedHttpClient` (**WEB-1**).
 - DNS rebinding / connection-time IP binding is incomplete.
 - No `vest doctor` / `--offline` flag yet (`--provider none` is the offline-ish path).
 
 Details: [docs/security-model.md](docs/security-model.md), [docs/agent-tool-policy.md](docs/agent-tool-policy.md), [docs/model-data-boundary.md](docs/model-data-boundary.md), [docs/data-flow.md](docs/data-flow.md).  
+Clearance order: [docs/clearance-plan.md](docs/clearance-plan.md).  
 Historical snapshot (do not treat as current status): [docs/security-hardening-audit.md](docs/security-hardening-audit.md).
 
 ## CLI
