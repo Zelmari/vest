@@ -39,7 +39,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | ID | Status | Evidence | Planned / done | Tests | Commit |
 |----|--------|----------|----------------|-------|--------|
 | K1 | **Fixed** | Was calling `SafetyChecker::permissive()` | `--no-approval` = non-interactive deny; no permissive path | CLI tests | `17d2232`+session |
-| K2 | **Fixed** | Was deny-only; `--approve-*` discarded | Effect+session grants + TTY one-shot prompt | `interactive_approval_tests` + `no_approval_cli` |  |
+| K2 | **Fixed** | Was deny-only; `--approve-*` discarded | Effect+session grants + TTY one-shot prompt | `interactive_approval_tests` + `no_approval_cli` | `78d4447` |
 | K3 | **Fixed** | Agent tools used `ureq` in `scan.rs` | `http_get`/`http_post` via `ScopedHttpClient`; redirect re-auth | `agent_http_scoped_client.rs` | `5a5fc2c` |
 | K3b | **Fixed** | `web_scan` reimplemented probes via `ureq` | `WebScanner::inspect_url`; probes gated like CLI | `agent_http_scoped_client.rs` | `5a5fc2c` |
 | K4 | **Fixed** | TargetContent/PotentiallySecretBearing were redact-only | Default stub/metadata; flags for opt-in egress | `target_content_egress_tests.rs` | `dbd5e0c` |
