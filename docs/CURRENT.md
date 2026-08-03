@@ -1,6 +1,6 @@
 # CURRENT — one-screen status
 
-**HEAD:** `9148199` — M3 `feat(scanner): wire nuclei as first-class --scanner nuclei` (main)
+**HEAD:** `936e564` — docs: acceptance rows for resume, policy explain, nuclei (M1–M3). Product tip: `9148199` (M3 `--scanner nuclei`).
 
 **Last shipped majors:**
 
