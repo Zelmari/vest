@@ -1,7 +1,8 @@
 # Vest Product Contract
 
-**Status:** Experimental. This contract describes intended behaviour after the
-product-hardening pass. Features not listed here are non-goals or unsupported.
+**Status:** Experimental. This contract describes intended behaviour and marks
+what is actually true on current `main`. Features not listed here are non-goals
+or unsupported.
 
 ## Who it is for
 
@@ -11,69 +12,85 @@ an AI provider.
 
 ## Supported scenarios
 
-### A — Local offline scan
+### A — Local offline scan — **works**
 
 - Scan a file or directory with `--provider none` (or no provider).
-- No network access for the scan itself.
+- No LLM network for the scan itself.
 - Bounded traversal (depth, files, bytes, no symlink follow by default).
 - Terminal and/or JSON report.
 - Unreadable files skip with warnings; do not erase other findings.
 
-### B — Passive authorised web scan
+### B — Passive authorised web scan — **partial / broken contract**
+
+**Intended:**
 
 - Explicit `http`/`https` URL.
 - Origin-scoped crawl; redirects re-authorised; no auto off-origin follow.
 - Active probes **off** unless explicitly enabled and authorised.
 - Useful without a model.
 
-### C — Active authorised checks
+**Actual today:** the scanner API supports probes-off, but the CLI web scan path
+currently calls `with_allow_active_probes(true)`. Treat a normal CLI web scan as
+**active-capable**, not passive-by-default, until that gate is fixed.
+
+### C — Active authorised checks — **partial**
+
+**Intended:**
 
 - Separately classified from passive crawl.
 - Require interactive approval or exact pre-authorisation.
 - Non-destructive, budgeted, same-origin only.
 - Audit what was attempted.
 
-### D — AI-assisted interpretation
+**Actual today:** active probes are a distinct `ToolEffect`, but there is **no
+interactive approval prompt**. Policy `RequireInteractive` → deny. CLI web scan
+enables probes without a separate approval step.
+
+### D — AI-assisted interpretation — **mostly works**
 
 - Explicit provider + model.
-- Structured allowlisted payloads only.
-- Local content / process memory / raw target bodies not sent by default.
+- Structured allowlisted payloads only (validator path).
+- Local content / process memory / raw evidence not sent by default.
 - Provider failure preserves local scanner findings.
 
-### E — Agent tool use
+### E — Agent tool use — **policy works; UX incomplete**
 
 - Model proposals carry **no** authority.
-- Every call: normalise → policy → (approve) → execute → egress filter.
-- Approvals bind exact session + tool + effect + canonical args.
+- Every call: normalise → policy → mint opaque `ApprovedToolCall` → execute → egress filter.
+- Approvals bind exact session + tool + effect + canonical args (SHA-256 digest).
 - Tool-loop and size limits prevent runaway use.
+- **Gap:** no interactive prompt; interactive-required calls are denied.
+- **Gap:** some CLI-registered HTTP tools still use `ureq` rather than `ScopedHttpClient`.
 
-### F — CI / non-interactive
+### F — CI / non-interactive — **mostly works**
 
-- No prompts.
-- Sensitive ops denied unless exact pre-auth.
-- Stable exit codes; JSON on stdout only; diagnostics on stderr.
+- No prompts (and no prompt implementation).
+- Sensitive / approval-required ops denied unless already authorised by policy grants.
+- Exit codes exist; prefer typed `VestError` mapping. Legacy string fallback remains.
+- JSON on stdout is the intended machine path; keep diagnostics on stderr.
 
-### G — Degraded operation
+### G — Degraded operation — **partial**
 
-- Provider / storage / single-file failures reported explicitly.
-- Partial results preserved where possible.
-- Exit status reflects severity of failure (not “success” when nothing ran).
+- Provider / storage / single-file failures reported explicitly in many paths.
+- Partial results preserved where possible (validator).
+- Exit status should reflect failure severity; not every subcommand path is proven.
 
-### H — Large targets
+### H — Large targets — **partial**
 
-- Enforced budgets; truncation / budget-exhaustion status.
-- No unbounded memory growth by design.
+- Enforced budgets on file/web scanners; truncation / budget-exhaustion status.
+- “No unbounded memory growth by design” is an intent, not a formal proof.
 
 ## Default safety posture
 
-| Question | Default |
-|----------|---------|
+| Question | Default / reality |
+|----------|-------------------|
 | AI enabled? | Only if provider configured / selected |
-| Active web probes? | Off (CLI web scan currently enables probes — hardening must align docs or gate) |
+| Active web probes (library)? | Off unless enabled |
+| Active web probes (CLI `scan --scanner web`)? | **On today** (known gap) |
 | Symlink follow? | Off |
 | Local content → model? | Denied |
 | Process memory → model? | Denied |
-| Missing approval (non-interactive)? | Deny |
+| Missing interactive approval? | **Deny** (no prompt UI) |
 | `--no-approval` meaning? | **Do not prompt; deny approval-required** (not “allow all”) |
 | Malformed present config? | Fail closed |
 

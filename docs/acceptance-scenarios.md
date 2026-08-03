@@ -6,9 +6,9 @@ Network: loopback only. Filesystem: temp dirs. Providers: fakes / `none`.
 | # | Scenario | Automation status |
 |---|----------|-------------------|
 | 1 | Local offline scan (`--provider none`) | `human_workflows` / `scan_cli` |
-| 2 | Passive local web scan | `scan_web_cli` |
-| 3 | Interactive file-content approval | pending (approval UI) |
-| 4 | Interactive active web deny/allow | pending |
+| 2 | Passive local web scan | **partial / mismatched** — tests exist, but CLI web scan enables active probes today |
+| 3 | Interactive file-content approval | pending (no approval UI; currently deny) |
+| 4 | Interactive active web deny/allow | pending (no approval UI; currently deny) |
 | 5 | Non-interactive CI JSON, deny sensitive | partial (`--no-approval` fail-closed) |
 | 6 | Provider unavailable preserves findings | library validator tests |
 | 7 | Malformed provider response | validator unit tests |
@@ -34,3 +34,5 @@ Scenario 5:
 vest scan ... --no-approval --provider none -f json
 # stdout: JSON only; approval-required agent tools denied if agent path used
 ```
+
+Do not mark scenarios 3–4 as passing until a real prompt (or exact pre-auth grant path) exists and is tested.

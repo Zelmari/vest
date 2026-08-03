@@ -1,12 +1,15 @@
 # Vest Security Model
 
-**Status:** Experimental. This document describes intended and implemented trust boundaries after the verified security-hardening pass. It does not claim production-grade security or a complete sandbox.
+**Status:** Experimental. This document describes trust boundaries as implemented
+on current `main`. It does not claim production-grade security or a complete sandbox.
 
 ## Central rule
 
 **Model output is untrusted data. It does not grant authority.**
 
-Authority comes only from explicit user intent for a command/session (target, config, CLI flags, interactive approval). An LLM may propose tool calls and arguments; those proposals must be normalised and evaluated by the policy engine before any side effect or data egress.
+Authority comes only from explicit user intent for a command/session (target, config, CLI flags, session scopes). An LLM may propose tool calls and arguments; those proposals must be normalised and evaluated by the policy engine before any side effect or data egress.
+
+Interactive approval is **intended** but **not implemented as a prompt**. When policy requires interactive approval, Vest currently **denies** the call.
 
 ## Trust principals
 
@@ -28,7 +31,9 @@ Agent tools and scanners that read local content operate only within an `Approve
 
 ### Network boundary
 
-Network tools and crawlers operate only within an `ApprovedNetworkScope` (scheme, host, effective port / origin, optional IP policy). Comparisons use parsed `url::Url` origins, not substring matching. Redirects and discovered links are re-authorised before request.
+Network tools and crawlers are intended to operate only within an `ApprovedNetworkScope` (scheme, host, effective port / origin, optional IP policy). Comparisons use parsed `url::Url` origins, not substring matching. Redirects and discovered links are re-authorised before request on the web scanner path.
+
+**Gap:** some CLI agent HTTP tools still use `ureq` directly; they are not fully on `ScopedHttpClient`. See [data-flow.md](data-flow.md).
 
 ### Process-memory boundary
 
@@ -36,7 +41,7 @@ Process-memory access is a distinct effect from process metadata. Raw memory is 
 
 ### Secret boundary
 
-API keys and credential material must not appear in stdout, stderr, Debug output, logs, reports, or provider payloads. Prefer environment variables or interactive prompts; command-line key arguments must not echo the secret.
+API keys and credential material must not appear in stdout, stderr, Debug output, logs, reports, or provider payloads. Prefer environment variables; command-line key arguments must not echo the secret. Redaction is best-effort.
 
 ### Model-egress boundary
 
@@ -51,12 +56,13 @@ SQLite and report writers receive local findings. Persistence failures must surf
 ```
 User command
   -> configuration (validated; fail closed if malformed safety section present)
-  -> scan target (defines authorised filesystem/network scope)
+  -> ExecutionSession (authorised filesystem/network scope)
   -> scanner (bounded traversal / network policy)
   -> finding (local)
   -> agent / provider (egress allowlist DTOs only)
   -> tool call (NormalisedToolCall)
   -> policy engine (effect + scope + args + egress)
+  -> ApprovedToolCall (opaque) / or deny
   -> tool result (bounded, classified)
   -> provider (redacted allowlist payload)
   -> report / storage (local)
@@ -65,7 +71,7 @@ User command
 ## Where data can leave the process
 
 1. **Remote LLM providers** (`vest-providers/*`): chat, stream, embed requests built from agent context / validator prompts.
-2. **HTTP clients in scanners and tools** (`vest-scanner` web/network/browser; CLI `http_get`/`http_post`/`web_scan`): outbound requests to user-authorised targets (and must not follow unauthorised redirects).
+2. **HTTP clients in scanners and tools** (`vest-scanner` web/network/browser; CLI `http_get`/`http_post`/`web_scan`): outbound requests to user-authorised targets (and must not follow unauthorised redirects). CLI agent helpers may still use `ureq`.
 3. **External tools** (`vest-tools` nuclei): subprocess invocation against authorised targets.
 4. **Reports / files written by the CLI**: user-selected output paths.
 5. **SQLite storage** under the workspace directory: local persistence only.
@@ -84,3 +90,8 @@ Vest must **not** be described as:
 - Guaranteed secret detection via regex
 - Complete SSRF / DNS-rebinding prevention without connection-time IP binding
 - Real process-memory forensics unless a platform-specific real reader is enabled and tested
+- Passive-by-default CLI web scanning (CLI currently enables active probes)
+- A finished interactive-approval product
+
+Current known-issue status: [product-hardening-ledger.md](product-hardening-ledger.md).  
+Historical first-pass audit snapshot: [security-hardening-audit.md](security-hardening-audit.md).

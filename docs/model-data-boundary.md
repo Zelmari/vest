@@ -17,7 +17,7 @@ Regex redaction is **best-effort** and will miss novel secret formats. Prefer al
 | `LocalMetadata` | Paths, sizes, file counts | Allowed (metadata only) |
 | `LocalContent` | File bytes / full file-scan content | **Denied** unless `allow_local_content_egress` |
 | `TargetMetadata` | Host/port/header names | Allowed (metadata) |
-| `TargetContent` | HTTP bodies / crawl content | Treated carefully; still redacted/bounded |
+| `TargetContent` | HTTP bodies / crawl content | Redacted/bounded; still treated carefully — not a free pass |
 | `PotentiallySecretBearing` | Writes / command output | Restricted / redacted |
 | `CredentialMaterial` | Keys, tokens | **Prohibited** |
 | `ProcessMemory` | Memory scan output | **Denied** unless `allow_process_memory_egress` |
@@ -55,7 +55,7 @@ This prevents dumping full evidence JSON into remote prompts by default.
 See [security-model.md](security-model.md) for the full list. Primary remote egress surfaces:
 
 1. LLM provider HTTP APIs (`vest-providers`)
-2. Scanner/tool HTTP to user-authorised targets
+2. Scanner/tool HTTP to user-authorised targets (including CLI `ureq` helpers that are not yet on `ScopedHttpClient`)
 3. External tools (e.g. nuclei subprocesses)
 4. User-selected report output paths
 5. Local SQLite under the workspace directory
@@ -67,6 +67,7 @@ See [security-model.md](security-model.md) for the full list. Primary remote egr
 - Allowing a scan of a directory does not allow shipping file contents to a provider.
 - Allowing process metadata does not allow memory egress.
 - Vest is not a DLP product.
+- Severity / `cvss_score` fields in findings may still carry heuristic numbers from scanners; that is not a CVSS vector.
 
 ## Related
 

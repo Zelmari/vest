@@ -1,6 +1,6 @@
 # Agent Tool Policy
 
-**Status:** Experimental. Describes the intended and implemented policy engine after the verified security-hardening pass.
+**Status:** Experimental. Describes the policy engine as implemented on current `main`.
 
 ## Central rule
 
@@ -36,7 +36,7 @@ Stronger effects are **not** implied by weaker approvals (e.g. GET ≠ POST; met
 model proposes tool call
   -> look up registered ToolDefinition (effect + egress_class)
      (missing tool → ToolEffect::Unknown → deny)
-  -> NormalisedToolCall::from_parts (path/url/method/pid + arg_digest)
+  -> NormalisedToolCall::from_parts (path/url/method/pid + SHA-256 arg_digest)
   -> PolicyEngine::evaluate(AuthorisationContext, call)
        - empty tool id → deny
        - unknown effect → deny
@@ -44,26 +44,33 @@ model proposes tool call
        - network scope check (parsed origin under ApprovedNetworkScope)
        - matching ApprovalToken (tool, effect, target, arg digest, session, TTL)
        - interactive / non-interactive rules for high-impact effects
-  -> on Allow: execute handler
+  -> on Allow: PolicyEngine mints opaque ApprovedToolCall
+  -> execute_authorised(handler, ApprovedToolCall)  // forgeable Allow is not accepted
   -> classify + filter result for model egress (see model-data-boundary.md)
 ```
+
+## Opaque approval capability
+
+`ToolRegistry::execute_authorised` takes an [`ApprovedToolCall`](../vest-agent/src/approved.rs), not a public `ApprovalDecision::Allow`. Fields are private; only the policy engine mints the capability after a successful evaluation. Argument digests are SHA-256 over canonical material args.
 
 ## `requires_approval` is not a bypass
 
 `ToolDefinition.requires_approval` is **UX / risk metadata** derived from effect strength. It must **never** skip the policy engine.
 
-In the tool-use pattern, every parsed tool call is evaluated regardless of that flag. `ToolRegistry::invoke` / `execute_authorised` likewise require an `Allow` decision.
+In the tool-use pattern, every parsed tool call is evaluated regardless of that flag.
 
-## Approvals
+## Interactive approval — current reality
 
-- Approvals are scoped `ApprovalToken`s: tool id, effect, normalised target, **arg digest**, session id, expiry (and optional one-shot).
+**There is no interactive approval prompt in the CLI today.**
+
+- When policy returns `ApprovalDecision::RequireInteractive { .. }`, the call is **denied**.
+- `--no-approval` means: treat the session as non-interactive; deny approval-required ops. It does **not** install a permissive checker.
 - Broad category grants (`grant_approval("write")`) are intentionally no-ops and do not bypass policy.
 - Argument mutation produces a different digest and invalidates a prior token.
-- Non-interactive sessions fail closed for effects that require interactive approval.
 
 ## Authorisation context
 
-`AuthorisationContext` is derived from user intent for the session:
+`AuthorisationContext` / `ExecutionSession` are derived from user intent for the session:
 
 - `ApprovedFilesystemScope` from the scan target (and any explicitly authorised roots)
 - `ApprovedNetworkScope` from the authorised URL/host origin
@@ -74,7 +81,12 @@ In the tool-use pattern, every parsed tool call is evaluated regardless of that 
 
 Unregistered tool names map to `ToolEffect::Unknown` / `DataEgressClass::Prohibited` and are denied. There is no permissive default for mystery tools.
 
+## Related HTTP gap
+
+Policy can authorise network effects, but some CLI-registered agent HTTP tools still perform requests via `ureq` rather than `ScopedHttpClient`. Scope checks in policy are necessary but the HTTP stack is not fully unified yet. See [data-flow.md](data-flow.md) and the product ledger.
+
 ## Related
 
 - [security-model.md](security-model.md)
 - [model-data-boundary.md](model-data-boundary.md)
+- [product-hardening-ledger.md](product-hardening-ledger.md)

@@ -1,20 +1,20 @@
 # Product Hardening Ledger
 
-**Branch:** `product/real-world-hardening`  
+**Branch / tip:** `main` @ current HEAD (product-hardening commits landed; do not treat old branch names as required)  
 **Baseline commit:** `37733b1` (main after merge of verified security pass + README)  
-**Toolchain:** rustc/cargo 1.96.1  
+**Toolchain:** rustc/cargo 1.96.1 (as recorded at start of this pass)  
 **Started:** 2026-08-03  
 
-This file is the authoritative progress ledger. Update continuously.
+This file is the authoritative progress ledger. Status below is honest against what shipped.
 
 ## Baseline commands
 
 | Command | Result |
 |---------|--------|
-| `cargo fmt --all -- --check` | Pass |
-| `cargo check --workspace --all-targets --all-features` | Pass |
-| `cargo test --workspace --all-features` | Pending re-run after phase commits |
-| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Pending |
+| `cargo fmt --all -- --check` | Pass (at hardening checkpoints) |
+| `cargo check --workspace --all-targets --all-features` | Pass (at hardening checkpoints) |
+| `cargo test --workspace --all-features` | Re-run after further edits before release claims |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Re-run after further edits |
 
 ## Workspace
 
@@ -23,14 +23,14 @@ Binary: `vest` (`vest-cli`). Feature: `browser` (default).
 
 ## Product use cases (summary)
 
-See [product-contract.md](product-contract.md): A offline local, B passive web, C active (approval), D AI egress, E tool-use, F CI, G degraded, H large target.
+See [product-contract.md](product-contract.md): A offline local, B passive web (**CLI gap**), C active (no prompt UI), D AI egress, E tool-use, F CI, G degraded, H large target.
 
 ## Threat boundaries
 
 - Model output is untrusted and grants no authority.
 - Authorised use only; tests use loopback / temp dirs / fake providers.
 - Action approval ≠ model egress approval.
-- Fail closed on unknown effects, bad config, missing approval.
+- Fail closed on unknown effects, bad config, missing approval / interactive requirement.
 
 ---
 
@@ -39,23 +39,23 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | ID | Status | Evidence | Planned / done | Tests | Commit |
 |----|--------|----------|----------------|-------|--------|
 | K1 | **Fixed** | Was calling `SafetyChecker::permissive()` | `--no-approval` = non-interactive deny; no permissive path | CLI tests | `17d2232`+session |
-| K2 | **Confirmed** | `RequireInteractive` → deny/false; no stdin prompt; `--approve-*` flips legacy booleans | Interactive prompt + opaque grant | acceptance 3–4 | pending |
-| K3 | **Confirmed** | Agent tools use `ureq` in `scan.rs` (~646+) | Migrate to ScopedHttpClient | web/agent tests | HTTP agent + follow-up |
-| K4 | **Partially confirmed** | LocalContent/ProcessMemory blocked; TargetContent may redact-only | Align filter_for_model with contract | egress tests | pending |
-| K5 | **Confirmed** | `execute_authorised` accepts public `ApprovalDecision::Allow` | Opaque `ApprovedToolCall` capability | policy tests | pending |
-| K6 | **Confirmed** | `DefaultHasher` + selected keys in `policy.rs` `material_args` | SHA-256 over canonical JSON of all args | property tests | pending |
-| K7 | **Fixed** | Was `TOOL_FS_SCOPE` OnceLock | `ExecutionSession` Arc captured by tools | session unit test | this commit |
-| K8 | **Confirmed** (hypothesis) | read_file likely full read | Bound + spawn_blocking | FS tests | pending |
+| K2 | **Open** | `RequireInteractive` → deny; no stdin prompt; `--approve-*` flips legacy booleans | Interactive prompt + opaque grant | acceptance 3–4 | pending |
+| K3 | **Open** | Agent tools use `ureq` in `scan.rs` | Migrate to ScopedHttpClient | web/agent tests | pending |
+| K4 | **Partial** | LocalContent/ProcessMemory blocked; TargetContent may redact-only | Align filter_for_model with contract | egress tests | pending |
+| K5 | **Fixed** | Was forgeable `ApprovalDecision::Allow` | Opaque `ApprovedToolCall` | policy/approved tests | `1951cd2` |
+| K6 | **Fixed** | Was `DefaultHasher` on selected keys | SHA-256 over material args | policy tests | `1951cd2` |
+| K7 | **Fixed** | Was `TOOL_FS_SCOPE` OnceLock | `ExecutionSession` Arc captured by tools | session unit test | `0f76c32` |
+| K8 | **Open** (hypothesis) | read_file likely full read | Bound + spawn_blocking | FS tests | pending |
 | K9 | **Partial** | follow_symlinks exists; need prove containment | Contain or disable | adversarial FS | pending |
-| K10 | **Fixed** (web) | `unwrap_or_default()` on Client | `expect` fail-closed + `ScopedHttpClient::try_new` Result | http_client tests | this commit |
+| K10 | **Fixed** (web client) | `unwrap_or_default()` on Client | fail-closed + `ScopedHttpClient::try_new` | http_client tests | `0f76c32` |
 | K11 | **Investigate** | form submit method | Honour GET/POST | web tests | pending |
 | K12 | **Fixed** | invalid `--target-type` guessed | Reject invalid explicit type | CLI | `17d2232` |
 | K13 | **Fixed** (util) | byte-index risk | `truncate_chars` in vest-core | unit | `17d2232` |
 | K14 | **Partial** | string match still as legacy fallback | Prefer `VestError::cli_exit_code()` | unit | `17d2232` |
 | K15 | **Fixed** | all keys loaded | Allowlist Vest/provider keys | unit | `17d2232` |
-| K16 | **Confirmed** | `Finding.cvss_score` + scanner `Some(7.8)` heuristics | Rename to severity_estimate / metadata | types+report | pending |
-| K17 | **Confirmed** | prior audit “addressed” while CLI bypasses remain | Re-evaluate after wiring | ledger | ongoing |
-| K18 | **Re-verify** | prior pass merged | Regression suite | workspace tests | ongoing |
+| K16 | **Open** | `Finding.cvss_score` + scanner heuristics | Rename to severity_estimate / metadata | types+report | pending |
+| K17 | **Open** | prior audit “addressed” while CLI bypasses remain | Keep docs/ledger honest; close wiring gaps | ledger | ongoing |
+| K18 | **Ongoing** | prior pass merged | Regression suite | workspace tests | ongoing |
 
 ## Newly discovered issues
 
@@ -65,21 +65,22 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | N2 | `config validate` historically soft-failed (fixed on prior branch; re-verify) | verify |
 | N3 | No `vest doctor` / `policy explain` | open |
 | N4 | No explicit `--offline` / `--no-ai` flags (provider none only) | open |
+| N5 | CLI web scan forces `with_allow_active_probes(true)` | open (breaks passive contract B) |
 
 ## Phase status
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| 0 Baseline | done | branch + ledger + baseline check/fmt |
-| 1 Product contract | in progress | docs/product-contract.md |
+| 0 Baseline | done | ledger + baseline check/fmt |
+| 1 Product contract | done | docs; honesty pass ongoing |
 | 2 ExecutionSession | done | session.rs + CLI wiring |
-| 3 Interactive approval | pending | RequireInteractive still no prompt |
-| 4 Opaque capabilities | pending | execute_authorised still forgeable |
-| 5 ScopedHttpClient | partial | module + tests; agent ureq not migrated |
+| 3 Interactive approval | **pending** | RequireInteractive still no prompt |
+| 4 Opaque capabilities | **done** | `ApprovedToolCall` + SHA-256 digests |
+| 5 ScopedHttpClient | **partial** | module + tests; agent ureq not migrated |
 | 6 Filesystem tools | pending | |
-| 7 Egress | pending | |
+| 7 Egress | pending | polish / TargetContent alignment |
 | 8 Config/.env | done | allowlist |
-| 9–20 | pending | |
+| 9–20 | pending / partial | docs + acceptance updated; many code phases open |
 
 ## Remaining limitations (standing)
 
@@ -88,3 +89,4 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 - Process memory: simulation/unsupported only.
 - Regex redaction is best-effort.
 - No independent external audit.
+- CLI web active probes and agent `ureq` paths are the loudest remaining honesty gaps for operators.

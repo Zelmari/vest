@@ -1,6 +1,15 @@
 # Security Hardening Audit
 
-Branch: `hardening/verified-security-pass`  
+> **Historical snapshot.** This file records the first verified security-hardening
+> pass (branch `hardening/verified-security-pass`, 2026-08-02). Several rows marked
+> “Addressed” here are **not** fully closed on current `main` (notably CLI active
+> probes, agent `ureq` HTTP, interactive approval UX, heuristic `cvss_score`).
+>
+> For current status, use [product-hardening-ledger.md](product-hardening-ledger.md)
+> and [product-contract.md](product-contract.md). Do not cite this audit alone as
+> proof that every issue remains fixed.
+
+Branch: `hardening/verified-security-pass` (historical)  
 Baseline commit: `593ecce904cb4616fcea0619121a53bb124934df` (`main`)  
 Date: 2026-08-02
 

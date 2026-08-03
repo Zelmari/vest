@@ -4,7 +4,7 @@
 
 > **Experimental.** Vest is not production-grade, not a full sandbox, and not “fully secure.” Model output is untrusted. Read [docs/security-model.md](docs/security-model.md), [docs/product-contract.md](docs/product-contract.md), and [SECURITY.md](SECURITY.md) before relying on it for anything serious.
 
-Product-hardening progress (living ledger): [docs/product-hardening-ledger.md](docs/product-hardening-ledger.md).
+Honest progress ledger (what is fixed vs still open): [docs/product-hardening-ledger.md](docs/product-hardening-ledger.md).
 
 ## How this repo was built
 
@@ -101,7 +101,11 @@ Default: `agent.default_pattern` in `vest.toml`, overridable with `--mode`.
 | `network` | host:port | Ports / TLS / basic DNS signals |
 | `browser` | URL | CDP (Chrome) storage / WS / WASM / headers |
 
-Severity numbers in reports are **heuristic estimates**, not real CVSS vectors.
+Severity numbers in reports are **heuristic estimates**, not real CVSS vectors. Some scanners still fill the `cvss_score` field with those heuristics — the field name is misleading.
+
+### Web scan honesty
+
+The web scanner *can* run with active probes off. The CLI `vest scan … --scanner web` path currently forces `with_allow_active_probes(true)`, so a normal CLI web scan is **not** passive-by-default. That is a known gap (see the product ledger).
 
 ## Providers & keys
 
@@ -115,17 +119,28 @@ Severity numbers in reports are **heuristic estimates**, not real CVSS vectors.
 | Groq | `GROQ_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 
-Keys come from the environment (or a local `.env` loaded into the process). Vest does not store keys in SQLite and must not print them (`providers set-key` only prints setup instructions). Prefer `export …=…` over `--key` on the command line.
+Keys come from the environment (or a local `.env` loaded into the process; Vest allowlists Vest/provider keys). Vest does not store keys in SQLite and must not print them (`providers set-key` only prints setup instructions). Prefer `export …=…` over `--key` on the command line.
 
 ## Safety (short version)
 
-- Policy engine: explicit `ToolEffect`, FS/net scope, arg digest, egress class.
+What is real today:
+
+- Policy engine: explicit `ToolEffect`, FS/net scope, SHA-256 arg digest, egress class.
 - Unknown tools / unknown effects → **deny**.
 - `requires_approval` on a tool definition is **not** a bypass.
+- Execution uses an opaque `ApprovedToolCall` minted by the policy engine (callers cannot forge `Allow`).
 - Local file content and process memory are **not** sent to remote models by default.
 - `vest sandbox` Docker helpers are convenience only — not verified OS isolation.
 
-Details: [docs/security-model.md](docs/security-model.md), [docs/agent-tool-policy.md](docs/agent-tool-policy.md), [docs/model-data-boundary.md](docs/model-data-boundary.md), [docs/security-hardening-audit.md](docs/security-hardening-audit.md).
+What is **not** finished:
+
+- There is **no interactive approval prompt**. When policy returns `RequireInteractive`, the tool is denied. `--no-approval` means the same: do not prompt; deny approval-required ops.
+- Agent HTTP helpers in the CLI tool registry still use `ureq` directly in places; they are not fully migrated to `ScopedHttpClient`.
+- DNS rebinding / connection-time IP binding is incomplete.
+- No `vest doctor` / `--offline` flag yet (`--provider none` is the offline-ish path).
+
+Details: [docs/security-model.md](docs/security-model.md), [docs/agent-tool-policy.md](docs/agent-tool-policy.md), [docs/model-data-boundary.md](docs/model-data-boundary.md), [docs/data-flow.md](docs/data-flow.md).  
+Historical snapshot (do not treat as current status): [docs/security-hardening-audit.md](docs/security-hardening-audit.md).
 
 ## CLI
 
@@ -135,11 +150,11 @@ vest config | providers | targets | scans | findings | report | tools | sandbox
 vest completions <bash|zsh|fish>
 ```
 
-Useful flags: `--scanner`, `--target-type`, `--provider`, `--mode`, `--format`, `--output`, `--allow-memory-simulation`, `-c` / `--config`.
+Useful flags: `--scanner`, `--target-type`, `--provider`, `--mode`, `--format`, `--output`, `--allow-memory-simulation`, `-c` / `--config`, `--no-approval`.
 
 `--no-approval` means **do not prompt; deny approval-required operations**. It is not “allow everything.”
 
-Exit codes (approximate): `0` ok · `2` bad input · `3` config · `4` authorisation · `5` scanner · `6` persistence · `7` soft provider failure. Prefer typed `VestError` mapping when available.
+Exit codes (approximate): `0` ok · `2` bad input · `3` config · `4` authorisation · `5` scanner · `6` persistence · `7` soft provider failure. Typed `VestError::cli_exit_code()` is preferred; some paths still fall back to legacy string matching.
 
 ## Testing
 
@@ -158,6 +173,8 @@ Suites include unit tests, concurrency stress, scanner edge cases, CLI workflows
 3. Non-`http`/`https` web targets (e.g. `file://`) → rejected.
 4. Missing scan id on `report generate` → non-zero exit.
 5. Agent/tool path: model suggestions never equal authorisation.
+6. Invalid `--target-type` → rejected (not guessed).
+7. Approval-required tool with no real prompt path → denied (fail closed).
 
 ## Docs & license
 
@@ -165,6 +182,7 @@ Suites include unit tests, concurrency stress, scanner edge cases, CLI workflows
 |--|--|
 | [SECURITY.md](SECURITY.md) | How to report vulnerabilities |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes |
+| [docs/product-contract.md](docs/product-contract.md) | Intended product scenarios + gaps |
 | [LICENSE](LICENSE) | MIT |
 
 Repo: [github.com/Zelmari/vest](https://github.com/Zelmari/vest)
