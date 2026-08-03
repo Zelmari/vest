@@ -95,7 +95,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 2 ExecutionSession | done | session.rs + CLI wiring |
 | 3 Interactive approval | **done** (pragmatic) | Exact CLI pre-grants + TTY one-shot; non-TTY/`--no-approval` deny |
 | 4 Opaque capabilities | **done** | `ApprovedToolCall` + SHA-256 digests; K5b hot path unified |
-| 5 ScopedHttpClient | **done** (agent tools) | agent `http_get`/`http_post` on ScopedHttpClient; WebScanner still has its own client (WEB-1) |
+| 5 ScopedHttpClient | **done** | agent tools + WebScanner crawl/fetch on ScopedHttpClient (WEB-1); stream-cap bodies (HTTP-1); 302/303→GET + robots on hops (WEB-2 practical) |
 | 6 Filesystem tools | **done** (K8/K9) | bounded `read_file`; symlink follow contained under root |
 | 7 Egress | **done** (K4) | TargetContent/PSB gated; LocalContent/ProcessMemory unchanged |
 | 8 Config/.env | **done** | key allowlist + CFG-1 zero-budget reject |

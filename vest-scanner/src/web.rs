@@ -2,16 +2,15 @@
 //!
 //! Network safety invariants:
 //! - Only `http`/`https` URLs; structural origin matching via [`NetworkScope`]
-//! - No automatic redirects; each hop is re-validated against scope
+//! - All crawl/fetch HTTP goes through [`crate::http_client::ScopedHttpClient`]
+//! - No automatic redirects; each hop is re-validated against scope (robots on hops when enabled)
 //! - Response bodies are capped; crawl concurrency and request budgets are enforced
 //! - Active vulnerability probes are gated by [`WebScanner::allow_active_probes`]
 
+use crate::http_client::{BodyLimitPolicy, ExchangeOptions, HttpClientBudgets, ScopedHttpClient};
 use async_trait::async_trait;
-use futures_util::StreamExt;
-use reqwest::header::LOCATION;
-use reqwest::Client;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -163,23 +162,10 @@ pub struct WebScanner {
     pub max_redirects: u32,
     pub allow_active_probes: bool,
     pub max_concurrent_requests: usize,
-    client: Client,
     semaphore: Arc<Semaphore>,
 }
 
 impl WebScanner {
-    fn build_client(timeout_seconds: u64, connect_timeout_ms: u64) -> Client {
-        // Fail closed: never silently fall back to Client::default() (loses
-        // redirect/timeout policy). Construction failure is a hard error.
-        Client::builder()
-            .timeout(Duration::from_secs(timeout_seconds))
-            .connect_timeout(Duration::from_millis(connect_timeout_ms))
-            .redirect(reqwest::redirect::Policy::none())
-            .danger_accept_invalid_certs(false)
-            .build()
-            .expect("VEST web HTTP client construction failed; refusing weaker defaults")
-    }
-
     pub fn new() -> Self {
         let timeout_seconds = 30;
         let connect_timeout_ms = 10_000;
@@ -198,9 +184,22 @@ impl WebScanner {
             max_redirects: 5,
             allow_active_probes: false,
             max_concurrent_requests,
-            client: Self::build_client(timeout_seconds, connect_timeout_ms),
             semaphore: Arc::new(Semaphore::new(max_concurrent_requests)),
         }
+    }
+
+    /// Build the shared scoped HTTP policy client for this scanner's budgets.
+    fn scoped_client(&self, scope: NetworkScope) -> Result<ScopedHttpClient, VestError> {
+        ScopedHttpClient::try_new(
+            scope,
+            HttpClientBudgets {
+                connect_timeout: Duration::from_millis(self.connect_timeout_ms),
+                request_timeout: Duration::from_secs(self.timeout_seconds),
+                max_redirects: self.max_redirects,
+                max_body_bytes: self.max_response_bytes,
+                body_limit_policy: BodyLimitPolicy::Reject,
+            },
+        )
     }
 
     pub fn with_crawl_depth(mut self, depth: u32) -> Self {
@@ -240,13 +239,11 @@ impl WebScanner {
 
     pub fn with_connect_timeout_ms(mut self, ms: u64) -> Self {
         self.connect_timeout_ms = ms;
-        self.client = Self::build_client(self.timeout_seconds, self.connect_timeout_ms);
         self
     }
 
     pub fn with_timeout_seconds(mut self, secs: u64) -> Self {
         self.timeout_seconds = secs;
-        self.client = Self::build_client(self.timeout_seconds, self.connect_timeout_ms);
         self
     }
 
@@ -311,7 +308,15 @@ impl WebScanner {
             }
             visited.insert(url_key);
 
-            match self.fetch_page_scoped(&url, &scope, &request_count).await {
+            let robots_gate = if self.respect_robots_txt {
+                Some(&robots)
+            } else {
+                None
+            };
+            match self
+                .fetch_page_scoped(&url, &scope, &request_count, robots_gate)
+                .await
+            {
                 Ok(page) => {
                     if depth < self.crawl_depth {
                         for link in &page.links {
@@ -346,7 +351,10 @@ impl WebScanner {
             Err(_) => return RobotsRules::default(),
         };
         let counter = AtomicUsize::new(0);
-        match self.fetch_page_scoped(&robots_url, scope, &counter).await {
+        match self
+            .fetch_page_scoped(&robots_url, scope, &counter, None)
+            .await
+        {
             Ok(page) => RobotsRules::parse(page.body.as_deref().unwrap_or("")),
             Err(e) => {
                 tracing::debug!("robots.txt fetch failed: {e}");
@@ -360,9 +368,10 @@ impl WebScanner {
         start: &Url,
         scope: &NetworkScope,
         request_count: &AtomicUsize,
+        robots: Option<&RobotsRules>,
     ) -> Result<CrawledPage, VestError> {
         let (final_url, status, headers, body) = self
-            .request_with_redirects("GET", start, scope, request_count, None)
+            .request_with_redirects("GET", start, scope, request_count, None, robots)
             .await?;
 
         let body_str = body.and_then(|b| String::from_utf8(b).ok());
@@ -385,6 +394,7 @@ impl WebScanner {
         })
     }
 
+    /// Crawl/probe HTTP via [`ScopedHttpClient`] (authorise + redirects + body budget).
     async fn request_with_redirects(
         &self,
         method: &str,
@@ -392,130 +402,37 @@ impl WebScanner {
         scope: &NetworkScope,
         request_count: &AtomicUsize,
         form: Option<&[(String, String)]>,
+        robots: Option<&RobotsRules>,
     ) -> Result<(Url, u16, Vec<(String, String)>, Option<Vec<u8>>), VestError> {
-        let mut current = start.clone();
-        let mut hops = 0u32;
+        let method = match method {
+            "POST" => reqwest::Method::POST,
+            _ => reqwest::Method::GET,
+        };
+        let client = self.scoped_client(scope.clone())?;
+        let redirect_disallow_prefixes = robots.map(|r| r.disallows.as_slice());
 
-        loop {
-            if !scope.allows(&current) {
-                return Err(VestError::Scan(format!(
-                    "URL escapes network scope: {}",
-                    current
-                )));
-            }
-            if request_count.fetch_add(1, Ordering::Relaxed) >= self.crawl_max_urls {
-                return Err(VestError::Scan("request budget exhausted".into()));
-            }
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|e| VestError::Internal(format!("semaphore closed: {e}")))?;
 
-            let _permit = self
-                .semaphore
-                .acquire()
-                .await
-                .map_err(|e| VestError::Internal(format!("semaphore closed: {e}")))?;
+        let resp = client
+            .exchange(
+                method,
+                start,
+                ExchangeOptions {
+                    user_agent: Some(&self.user_agent),
+                    form,
+                    hop_counter: Some(request_count),
+                    hop_budget: Some(self.crawl_max_urls),
+                    redirect_disallow_prefixes,
+                    ..ExchangeOptions::default()
+                },
+            )
+            .await?;
 
-            let builder = match method {
-                "POST" => {
-                    let mut b = self
-                        .client
-                        .post(current.clone())
-                        .header("User-Agent", &self.user_agent);
-                    if let Some(fields) = form {
-                        let owned: Vec<(String, String)> = fields.to_vec();
-                        b = b.form(&owned);
-                    }
-                    b
-                }
-                _ => {
-                    // GET (and any non-POST caller): fields go in the query string,
-                    // never in a request body.
-                    let request_url = if let Some(fields) = form {
-                        let mut u = current.clone();
-                        {
-                            let mut pairs = u.query_pairs_mut();
-                            for (k, v) in fields {
-                                pairs.append_pair(k, v);
-                            }
-                        }
-                        u
-                    } else {
-                        current.clone()
-                    };
-                    self.client
-                        .get(request_url)
-                        .header("User-Agent", &self.user_agent)
-                }
-            };
-
-            let resp = builder.send().await.map_err(|e| {
-                if e.is_timeout() || e.is_connect() {
-                    VestError::Timeout(format!("HTTP {method} {} failed: {e}", current))
-                } else {
-                    VestError::Provider(format!("HTTP {method} {} failed: {e}", current))
-                }
-            })?;
-
-            let status = resp.status();
-            if status.is_redirection() {
-                hops += 1;
-                if hops > self.max_redirects {
-                    return Err(VestError::Scan(format!(
-                        "too many redirects (>{}) from {}",
-                        self.max_redirects, start
-                    )));
-                }
-                let loc = resp
-                    .headers()
-                    .get(LOCATION)
-                    .and_then(|v| v.to_str().ok())
-                    .ok_or_else(|| {
-                        VestError::Scan(format!("redirect without Location from {current}"))
-                    })?;
-                let next = current.join(loc).map_err(|e| {
-                    VestError::Scan(format!("invalid redirect Location '{loc}': {e}"))
-                })?;
-                // Drop body of redirect response.
-                drop(resp);
-                current = next;
-                continue;
-            }
-
-            let headers: Vec<(String, String)> = resp
-                .headers()
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-                .collect();
-            let status_code = status.as_u16();
-            let body = self.read_body_limited(resp).await?;
-            return Ok((current, status_code, headers, body));
-        }
-    }
-
-    async fn read_body_limited(
-        &self,
-        resp: reqwest::Response,
-    ) -> Result<Option<Vec<u8>>, VestError> {
-        if let Some(cl) = resp.content_length() {
-            if cl > self.max_response_bytes as u64 {
-                return Err(VestError::Scan(format!(
-                    "response Content-Length {cl} exceeds limit {}",
-                    self.max_response_bytes
-                )));
-            }
-        }
-
-        let mut stream = resp.bytes_stream();
-        let mut buf = Vec::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| VestError::Provider(format!("body read failed: {e}")))?;
-            if buf.len().saturating_add(chunk.len()) > self.max_response_bytes {
-                return Err(VestError::Scan(format!(
-                    "response body exceeds limit {}",
-                    self.max_response_bytes
-                )));
-            }
-            buf.extend_from_slice(&chunk);
-        }
-        Ok(Some(buf))
+        Ok((resp.final_url, resp.status, resp.headers, Some(resp.body)))
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -987,7 +904,7 @@ impl WebScanner {
                                 continue;
                             }
                             if let Ok((_, _, _, Some(body))) = self
-                                .request_with_redirects("GET", &url, scope, &counter, None)
+                                .request_with_redirects("GET", &url, scope, &counter, None, None)
                                 .await
                             {
                                 let body = String::from_utf8_lossy(&body);
@@ -1109,7 +1026,14 @@ impl WebScanner {
         let start = Url::parse(url).map_err(|e| VestError::Config(format!("invalid URL: {e}")))?;
         let scope = NetworkScope::from_url(&start)?;
         let counter = AtomicUsize::new(0);
-        let page = self.fetch_page_scoped(&start, &scope, &counter).await?;
+        let robots = if self.respect_robots_txt {
+            Some(self.fetch_robots(&scope).await)
+        } else {
+            None
+        };
+        let page = self
+            .fetch_page_scoped(&start, &scope, &counter, robots.as_ref())
+            .await?;
         let findings = self.scan_misconfigurations_inner(&page, Some(&scope)).await;
         Ok((page, findings))
     }
@@ -1195,7 +1119,9 @@ impl WebScanner {
                                 continue;
                             }
                             if let Ok((_, status, _, _)) = self
-                                .request_with_redirects("GET", &probe_url, scope, &counter, None)
+                                .request_with_redirects(
+                                    "GET", &probe_url, scope, &counter, None, None,
+                                )
                                 .await
                             {
                                 if (200..300).contains(&status) {
@@ -1246,7 +1172,7 @@ impl WebScanner {
         }
         let fields = vec![(param.to_string(), value.to_string())];
         let (_final, status, _headers, body) = self
-            .request_with_redirects(method, &url, scope, request_count, Some(&fields))
+            .request_with_redirects(method, &url, scope, request_count, Some(&fields), None)
             .await?;
         let body = body
             .map(|b| String::from_utf8_lossy(&b).into_owned())
@@ -1268,7 +1194,7 @@ impl WebScanner {
             return Err(VestError::Scan(format!("XSS probe escapes scope: {url}")));
         }
         let (_final, status, _headers, body) = self
-            .request_with_redirects("GET", &parsed, scope, request_count, None)
+            .request_with_redirects("GET", &parsed, scope, request_count, None, None)
             .await?;
         let body = body
             .map(|b| String::from_utf8_lossy(&b).into_owned())
@@ -1392,6 +1318,7 @@ impl Scanner for WebScanner {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -1687,7 +1614,7 @@ Disallow: /\n";
         let scope = NetworkScope::from_url(&Url::parse(&base).unwrap()).unwrap();
         let counter = AtomicUsize::new(0);
         let result = scanner
-            .fetch_page_scoped(&Url::parse(&base).unwrap(), &scope, &counter)
+            .fetch_page_scoped(&Url::parse(&base).unwrap(), &scope, &counter, None)
             .await;
         assert!(result.is_err());
         stop.store(true, Ordering::Relaxed);
@@ -1704,7 +1631,7 @@ Disallow: /\n";
         let scope = NetworkScope::from_url(&Url::parse(&base).unwrap()).unwrap();
         let counter = AtomicUsize::new(0);
         let result = scanner
-            .fetch_page_scoped(&Url::parse(&base).unwrap(), &scope, &counter)
+            .fetch_page_scoped(&Url::parse(&base).unwrap(), &scope, &counter, None)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("exceeds limit"));
@@ -1725,7 +1652,7 @@ Disallow: /\n";
         let scope = NetworkScope::from_url(&Url::parse(&base).unwrap()).unwrap();
         let counter = AtomicUsize::new(0);
         let result = scanner
-            .fetch_page_scoped(&Url::parse(&base).unwrap(), &scope, &counter)
+            .fetch_page_scoped(&Url::parse(&base).unwrap(), &scope, &counter, None)
             .await;
         assert!(result.is_err());
         assert!(result
@@ -1833,6 +1760,40 @@ Disallow: /\n";
     }
 
     #[tokio::test]
+    async fn test_robots_checked_on_redirect_hop() {
+        let handler: TestHandler = Arc::new(|req: String| {
+            if req.contains("GET /robots.txt") {
+                (
+                    200u16,
+                    hdr(&[]),
+                    b"User-agent: *\nDisallow: /hidden\n".to_vec(),
+                )
+            } else if req.contains("GET /start") {
+                (302u16, hdr(&[("Location", "/hidden")]), vec![])
+            } else if req.contains("GET /hidden") {
+                (200u16, hdr(&[]), b"secret".to_vec())
+            } else {
+                (200u16, hdr(&[]), b"ok".to_vec())
+            }
+        });
+        let (port, stop) = spawn_http_server(handler).await;
+        let base = format!("http://127.0.0.1:{port}/start");
+        let scanner = WebScanner::new().with_respect_robots_txt(true);
+        let scope = NetworkScope::from_url(&Url::parse(&base).unwrap()).unwrap();
+        let robots = scanner.fetch_robots(&scope).await;
+        let counter = AtomicUsize::new(0);
+        let result = scanner
+            .fetch_page_scoped(&Url::parse(&base).unwrap(), &scope, &counter, Some(&robots))
+            .await;
+        assert!(result.is_err(), "redirect into robots-disallow must fail");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("robots.txt disallows"));
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    #[tokio::test]
     async fn test_connect_timeout() {
         // Port with nothing listening — connect should time out / fail quickly.
         let scanner = WebScanner::new()
@@ -1842,7 +1803,9 @@ Disallow: /\n";
         let url = Url::parse("http://127.0.0.1:1/").unwrap();
         let scope = NetworkScope::from_url(&url).unwrap();
         let counter = AtomicUsize::new(0);
-        let result = scanner.fetch_page_scoped(&url, &scope, &counter).await;
+        let result = scanner
+            .fetch_page_scoped(&url, &scope, &counter, None)
+            .await;
         assert!(result.is_err());
     }
 

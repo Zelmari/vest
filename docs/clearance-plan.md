@@ -96,9 +96,9 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 
 | Order | ID | Item | Done when | Primary tests |
 |------:|----|------|-----------|---------------|
-| 31 | **HTTP-1** | Stream-cap bodies in ScopedHttpClient (don’t buffer full then truncate) | Memory bounded | http_client |
-| 32 | **WEB-1** | Align WebScanner on ScopedHttpClient (delete duplicate client drift) | One HTTP path | web redirect/robots |
-| 33 | **WEB-2** | Redirect method/body semantics (303→GET); robots on hops | Spec + tests | web |
+| 31 | **HTTP-1** | Stream-cap bodies in ScopedHttpClient (don’t buffer full then truncate) | **Done** — stream + take/cap; optional Reject policy | http_client |
+| 32 | **WEB-1** | Align WebScanner on ScopedHttpClient (delete duplicate client drift) | **Done** — WebScanner builds/uses ScopedHttpClient only | web redirect/robots |
+| 33 | **WEB-2** | Redirect method/body semantics (303→GET); robots on hops | **Done** (practical) — 301/302/303→GET drop body; robots on redirect hops; 307/308 preserve | web + http_client |
 | 34 | **R3-lite** | Optional deny of link-local/metadata IPs for scan targets | Config + docs | network scope |
 | 35 | **BIN-1** | Binary scanner size cap + spawn_blocking | Bounded | binary |
 | 36 | **POL-2** | Shrink public permissive APIs to test-only | `#[cfg(test)]` / test-utils | compile/lint |
@@ -154,11 +154,11 @@ Keep documented forever unless architecture truly changes:
 N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓ → K5b ✓ → K8 ✓ → POL-1 ✓ → K11 ✓ → K9 ✓
 → BRW-1 ✓ → N1 ✓ → K14 ✓ → CLI-EXIT-7 ✓ → CLI-PARTIAL ✓ → N4 ✓ → N3 ✓ → CFG-1 ✓
 → PROV-2 ✓ → PROV-3 ✓ → PROV-4 ✓ → STOR-1 ✓ → STOR-2 ✓ → STOR-3 ✓ → NUC-1 ✓ → K16 ✓ → REP-2 ✓
-→ CLI-SANDBOX ✓ → HTTP-1 → WEB-1 → WEB-2 → R3-lite → BIN-1 → POL-2
+→ CLI-SANDBOX ✓ → HTTP-1 ✓ → WEB-1 ✓ → WEB-2 ✓ → R3-lite ✓ → BIN-1 ✓ → POL-2 ✓
 → CLI-SOFT ✓ → CLI-DEAD ✓ → N2 ✓ → ACCEPT-12/13 ✓
 ```
 
-**Next open:** HTTP-1 (then WEB-1…).
+**Next open:** Wave 4 queue cleared for HTTP/WEB (resume-ready minimum).
 
 **Progress tracking:** update the table in `docs/product-hardening-ledger.md` and the checkbox section below after each clear.
 
@@ -192,7 +192,9 @@ N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓
 - [x] K16 severity rename
 - [x] REP-2 markdown escape
 - [x] CLI-SANDBOX docker deny
-- [ ] HTTP-1/WEB-1/WEB-2 client unify
+- [x] HTTP-1 stream-cap bodies in ScopedHttpClient
+- [x] WEB-1 WebScanner on ScopedHttpClient
+- [x] WEB-2 302/303→GET + robots on redirect hops (307/308 preserve method; not a full RFC matrix)
 - [x] R3-lite IP deny option
 - [x] BIN-1 binary bounds
 - [x] POL-2 permissive API hygiene

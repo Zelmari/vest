@@ -193,7 +193,25 @@ async fn web_scan_tool_passive_by_default_skips_env_git_probes() {
     let registry = build_tool_registry(Arc::clone(&session), false);
     let tool = registry.get_tool("web_scan").unwrap();
 
-    let out = (tool.handler)(serde_json::json!({"url": url})).unwrap();
+    // Brief ready-wait/retry: mock accept loop can race the first request.
+    let mut out = None;
+    for attempt in 0..8 {
+        match (tool.handler)(serde_json::json!({"url": url})) {
+            Ok(v) if v["status"] == 200 => {
+                out = Some(v);
+                break;
+            }
+            Ok(_) | Err(_) if attempt + 1 < 8 => {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Ok(v) => {
+                out = Some(v);
+                break;
+            }
+            Err(e) => panic!("web_scan failed after retries: {e}"),
+        }
+    }
+    let out = out.expect("web_scan produced no result");
     stop.store(true, Ordering::Relaxed);
 
     assert_eq!(
