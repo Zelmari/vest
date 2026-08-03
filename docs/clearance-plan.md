@@ -2,7 +2,7 @@
 
 **Branch:** `main` only (no feature branches)  
 **Baseline tip when plan written:** `fe1d041`  
-**Last cleared tip:** PROV-2 (SecretString providers; after PROV-3/PROV-4 @ `a05b291`)
+**Last cleared tip:** NUC-1 (PROV-2 SecretString; PROV-3/4 @ `a05b291`)
 **Method:** Clear items one-by-one; each item gets code + regression tests + ledger update; keep CI green.  
 **Living suite:** extend tests as behaviour changes (see Wave T).  
 **Loop:** agent clearance loop continues until the open queue is empty and CI is green.
@@ -150,12 +150,12 @@ Keep documented forever unless architecture truly changes:
 ```
 N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓ → K5b ✓ → K8 ✓ → POL-1 ✓ → K11 ✓ → K9 ✓
 → BRW-1 ✓ → N1 ✓ → K14 ✓ → CLI-EXIT-7 ✓ → CLI-PARTIAL ✓ → N4 ✓ → N3 ✓ → CFG-1 ✓
-→ PROV-2 → PROV-3 ✓ → PROV-4 ✓ → STOR-1 → STOR-2 → STOR-3 → NUC-1 ✓ → K16 → REP-2
+→ PROV-2 ✓ → PROV-3 ✓ → PROV-4 ✓ → STOR-1 → STOR-2 → STOR-3 → NUC-1 ✓ → K16 → REP-2
 → CLI-SANDBOX → HTTP-1 → WEB-1 → WEB-2 → R3-lite → BIN-1 → POL-2
 → CLI-SOFT → CLI-DEAD → N2 → ACCEPT-12/13
 ```
 
-**Next open:** PROV-2 (then STOR-1…).
+**Next open:** STOR-1 (then STOR-2/3…).
 
 **Progress tracking:** update the table in `docs/product-hardening-ledger.md` and the checkbox section below after each clear.
 

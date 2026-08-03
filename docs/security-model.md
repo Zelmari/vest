@@ -72,7 +72,7 @@ User command
 
 1. **Remote LLM providers** (`vest-providers/*`): chat, stream, embed requests built from agent context / validator prompts.
 2. **HTTP clients in scanners and tools** (`vest-scanner` web/network/browser; CLI `http_get`/`http_post`/`web_scan`): outbound requests to user-authorised targets (and must not follow unauthorised redirects). Agent tools use `ScopedHttpClient`; `WebScanner` client unify remains (**WEB-1**).
-3. **External tools** (`vest-tools` nuclei): subprocess invocation against authorised targets.
+3. **External tools** (`vest-tools` nuclei): subprocess invocation against authorised targets. Binary resolution prefers `~/.vest/tools/nuclei`, else an absolute `PATH` entry from `which` (never cwd-relative `./nuclei-templates/nuclei`). Non-zero exit and wall-clock timeout fail closed; `-t` template paths must resolve under `~/.vest/tools/nuclei-templates`.
 4. **Reports / files written by the CLI**: user-selected output paths.
 5. **SQLite storage** under the workspace directory: local persistence only.
 6. **Logs / tracing**: must carry metadata only, never raw secrets or full provider payloads containing evidence.
