@@ -30,7 +30,7 @@
 |---|----|------|--------|
 | 11 | C1 | CI baseline / fail-on-new (compare + exit) | pending |
 | 12 | C2 | Finish or hide `--resume` | done |
-| 13 | C3 | SARIF export | pending |
+| 13 | C3 | SARIF export | done |
 | 14 | C4 | Profile discovery (`--list-profiles` / dry-run clarity) | pending |
 
 ### Wave D — Codebase health (as time allows)
@@ -54,7 +54,7 @@
 - [x] B5 Active probe consent
 - [ ] C1 Fail-on-new baseline
 - [x] C2 Resume (hidden from help; fail-closed unimplemented — no SQLite checkpoint)
-- [ ] C3 SARIF
+- [x] C3 SARIF
 - [ ] C4 Profile discovery
 - [ ] D1 Tool extraction
 - [ ] D2 Typed tool errors

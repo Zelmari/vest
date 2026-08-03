@@ -17,6 +17,7 @@ pub enum ReportFormat {
     Json,
     Terminal,
     Markdown,
+    Sarif,
 }
 
 /// Core scanner trait. Each scanner implementation scans a target and

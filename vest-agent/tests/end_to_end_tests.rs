@@ -764,6 +764,9 @@ async fn test_end_to_end_report_format_types() {
     let json = vest_report::JsonReporter::new();
     assert_eq!(json.format_type(), vest_core::traits::ReportFormat::Json);
 
+    let sarif = vest_report::SarifReporter::new();
+    assert_eq!(sarif.format_type(), vest_core::traits::ReportFormat::Sarif);
+
     eprintln!("TEST 11: Report format types verified");
 }
 

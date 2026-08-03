@@ -19,7 +19,10 @@ const AGENT_READ_FILE_MAX_BYTES: u64 = 10_240;
 
 /// Formats that must keep stdout free of banners/progress (product contract F).
 fn is_machine_format(format: &str) -> bool {
-    matches!(format.trim().to_ascii_lowercase().as_str(), "json")
+    matches!(
+        format.trim().to_ascii_lowercase().as_str(),
+        "json" | "sarif"
+    )
 }
 
 /// Human chatter: stderr for machine formats so stdout stays parseable.
@@ -916,6 +919,11 @@ async fn render_report(
                 .generate_report(scan, findings)
                 .await
         }
+        "sarif" => {
+            vest_report::SarifReporter::new()
+                .generate_report(scan, findings)
+                .await
+        }
         "markdown" | "md" => {
             vest_report::MarkdownReporter::new()
                 .include_evidence(include_evidence)
@@ -928,7 +936,7 @@ async fn render_report(
                 .await
         }
         other => Err(VestError::Config(format!(
-            "Unknown report format '{}'. Use json, markdown, or terminal.",
+            "Unknown report format '{}'. Use json, sarif, markdown, or terminal.",
             other
         ))),
     }

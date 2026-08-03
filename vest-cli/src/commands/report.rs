@@ -36,6 +36,11 @@ async fn generate_report(
                         .generate_report(&scan, &finding_list)
                         .await?
                 }
+                "sarif" => {
+                    vest_report::SarifReporter::new()
+                        .generate_report(&scan, &finding_list)
+                        .await?
+                }
                 "markdown" | "md" => {
                     vest_report::MarkdownReporter::new()
                         .include_evidence(include_evidence)
@@ -49,7 +54,7 @@ async fn generate_report(
                 }
                 other => {
                     return Err(format!(
-                        "Unknown report format '{}'. Use terminal, json, or markdown.",
+                        "Unknown report format '{}'. Use terminal, json, sarif, or markdown.",
                         other
                     )
                     .into())
@@ -60,6 +65,7 @@ async fn generate_report(
             let report_path = output.map(std::path::PathBuf::from).unwrap_or_else(|| {
                 let ext = match format.as_str() {
                     "json" => "json",
+                    "sarif" => "sarif",
                     "markdown" | "md" => "md",
                     _ => "txt",
                 };

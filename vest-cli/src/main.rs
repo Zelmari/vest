@@ -84,7 +84,7 @@ pub struct ScanArgs {
     #[arg(short = 'o', long)]
     pub output: Option<String>,
 
-    /// Output format (json, terminal, markdown)
+    /// Output format (json, sarif, terminal, markdown)
     #[arg(short = 'f', long, default_value = "terminal")]
     pub format: String,
 
@@ -300,7 +300,7 @@ pub enum ReportArgs {
     Generate {
         #[arg(value_name = "SCAN_ID")]
         scan_id: String,
-        /// Output format (terminal, json, markdown)
+        /// Output format (terminal, json, sarif, markdown)
         #[arg(short = 'f', long, default_value = "terminal")]
         format: String,
         /// Output report path
