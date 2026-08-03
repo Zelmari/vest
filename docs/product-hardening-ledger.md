@@ -80,7 +80,8 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | STOR-3 | Non-atomic scan persist; updates ignore missing rows | **Fixed** — transactional finalize; `rows_affected==0` → NotFound | scan + storage |
 | NUC-1 | Nuclei cwd binary hijack; ignored exit; no timeout; open `-t` | **Fixed** — absolute `~/.vest/tools/nuclei` or `which`; exit+timeout kill; templates under `~/.vest/tools/nuclei-templates` | vest-tools nuclei fake-binary tests | `bfb3bbf` |
 | REP-1 | JSON/MD reports embed raw evidence/PoC (incl. `match_preview` secrets) by default | **Fixed** — omit evidence/PoC by default; `--include-evidence` / `general.include_report_evidence` opt-in with best-effort redaction; `vest-report/tests/secret_redaction.rs` |
-| REP-2 | Untrusted PoC/evidence can break markdown code fences via ` ``` ` | **Fixed** — escape triple backticks in evidence/PoC when rendering Markdown; `vest-report/tests/markdown_fence_escape.rs` |
+| REP-2 | Untrusted PoC/evidence can break markdown code fences via ` ``` ` | **Fixed** — escape triple backticks in evidence/PoC when rendering Markdown; `vest-report/tests/markdown_fence_escape.rs` | `5f397eb` |
+| CLI-SANDBOX | `vest sandbox start` passes through dangerous docker flags | **Fixed** — reject `--privileged`, host namespaces, root/sensitive binds; keep experimental warning | sandbox unit tests |
 | POL-1 | Missing/non-string path/url skipped FS/net scope checks for scoped effects | **Fixed** — deny before handler when material target absent or wrong type; `adversarial_policy_tests.rs` + policy unit tests | `f918a47` |
 
 | BRW-1 | Browser path walk unbounded; CDP navigate/`json/version` loosely bounded; handler dropped | **Fixed** — `collect_files_bounded` + symlink-off defaults; reject `file://` navigate; cap CDP version body; keep handler task alive; `browser_adversarial.rs` | `04c161e` |

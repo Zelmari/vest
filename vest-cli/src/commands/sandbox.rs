@@ -5,6 +5,8 @@ use std::process::Command;
 const DOCKER_NOT_INSTALLED_MSG: &str =
     "Docker is not installed. Install from https://docs.docker.com/get-docker/";
 const IMAGE_NAME: &str = "vest-sandbox";
+const EXPERIMENTAL_WARNING: &str =
+    "Note: `vest sandbox` is an experimental Docker helper, not a verified OS sandbox for agent tools.";
 const NO_DOCKERFILE_MSG: &str = "No Dockerfile found in the current directory or ~/.vest/.\n\
      Create a Dockerfile in the current directory or place one in ~/.vest/Dockerfile.\n\
      Note: `vest sandbox` is an experimental Docker helper, not a verified OS sandbox for agent tools.";
@@ -35,7 +37,242 @@ fn find_dockerfile() -> Result<PathBuf, String> {
     Err(NO_DOCKERFILE_MSG.to_string())
 }
 
+/// Reject docker run passthrough flags that weaken isolation (CLI-SANDBOX).
+fn validate_extra_args(extra_args: &[String]) -> Result<(), String> {
+    let mut i = 0;
+    while i < extra_args.len() {
+        let arg = &extra_args[i];
+
+        if is_privileged_flag(arg) {
+            return Err(format!(
+                "Refusing dangerous docker sandbox flag `{arg}` (grants full host capabilities). {EXPERIMENTAL_WARNING}"
+            ));
+        }
+
+        if let Some(value) = option_value(arg, &["-v", "--volume"]) {
+            deny_dangerous_volume(arg, value)?;
+            i += 1;
+            continue;
+        }
+        if arg == "-v" || arg == "--volume" {
+            let value = expect_value(extra_args, i, arg)?;
+            deny_dangerous_volume(arg, value)?;
+            i += 2;
+            continue;
+        }
+
+        if let Some(value) = option_value(arg, &["--mount"]) {
+            deny_dangerous_mount(arg, value)?;
+            i += 1;
+            continue;
+        }
+        if arg == "--mount" {
+            let value = expect_value(extra_args, i, arg)?;
+            deny_dangerous_mount(arg, value)?;
+            i += 2;
+            continue;
+        }
+
+        const HOST_NS: &[&str] = &[
+            "--pid",
+            "--network",
+            "--net",
+            "--ipc",
+            "--uts",
+            "--userns",
+            "--cgroupns",
+        ];
+        if let Some(value) = option_value(arg, HOST_NS) {
+            deny_host_namespace(arg, value)?;
+            i += 1;
+            continue;
+        }
+        if HOST_NS.contains(&arg.as_str()) {
+            let value = expect_value(extra_args, i, arg)?;
+            deny_host_namespace(arg, value)?;
+            i += 2;
+            continue;
+        }
+
+        if let Some(value) = option_value(arg, &["--cap-add"]) {
+            deny_dangerous_cap(arg, value)?;
+            i += 1;
+            continue;
+        }
+        if arg == "--cap-add" {
+            let value = expect_value(extra_args, i, arg)?;
+            deny_dangerous_cap(arg, value)?;
+            i += 2;
+            continue;
+        }
+
+        if let Some(value) = option_value(arg, &["--security-opt"]) {
+            deny_dangerous_security_opt(arg, value)?;
+            i += 1;
+            continue;
+        }
+        if arg == "--security-opt" {
+            let value = expect_value(extra_args, i, arg)?;
+            deny_dangerous_security_opt(arg, value)?;
+            i += 2;
+            continue;
+        }
+
+        if let Some(value) = option_value(arg, &["--device"]) {
+            deny_dangerous_device(arg, value)?;
+            i += 1;
+            continue;
+        }
+        if arg == "--device" {
+            let value = expect_value(extra_args, i, arg)?;
+            deny_dangerous_device(arg, value)?;
+            i += 2;
+            continue;
+        }
+
+        i += 1;
+    }
+    Ok(())
+}
+
+fn expect_value<'a>(args: &'a [String], i: usize, flag: &str) -> Result<&'a str, String> {
+    args.get(i + 1)
+        .map(|s| s.as_str())
+        .ok_or_else(|| format!("Missing value for docker flag `{flag}`. {EXPERIMENTAL_WARNING}"))
+}
+
+fn option_value<'a>(arg: &'a str, flags: &[&str]) -> Option<&'a str> {
+    for flag in flags {
+        let prefix = format!("{flag}=");
+        if let Some(value) = arg.strip_prefix(&prefix) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn is_privileged_flag(arg: &str) -> bool {
+    let lower = arg.to_ascii_lowercase();
+    lower == "--privileged" || lower.starts_with("--privileged=")
+}
+
+fn deny_host_namespace(flag: &str, value: &str) -> Result<(), String> {
+    if value.eq_ignore_ascii_case("host") {
+        return Err(format!(
+            "Refusing dangerous docker sandbox flag `{flag}={value}` (host namespace). {EXPERIMENTAL_WARNING}"
+        ));
+    }
+    Ok(())
+}
+
+fn deny_dangerous_cap(flag: &str, value: &str) -> Result<(), String> {
+    let lower = value.to_ascii_lowercase();
+    if lower == "all" || lower.contains("sys_admin") || lower.contains("sys_ptrace") {
+        return Err(format!(
+            "Refusing dangerous docker sandbox flag `{flag}={value}` (capability escalation). {EXPERIMENTAL_WARNING}"
+        ));
+    }
+    Ok(())
+}
+
+fn deny_dangerous_security_opt(flag: &str, value: &str) -> Result<(), String> {
+    let lower = value.to_ascii_lowercase();
+    if lower.contains("seccomp=unconfined")
+        || lower.contains("apparmor=unconfined")
+        || lower.contains("label=disable")
+    {
+        return Err(format!(
+            "Refusing dangerous docker sandbox flag `{flag}={value}` (disables confinement). {EXPERIMENTAL_WARNING}"
+        ));
+    }
+    Ok(())
+}
+
+fn deny_dangerous_device(flag: &str, value: &str) -> Result<(), String> {
+    let lower = value.to_ascii_lowercase();
+    if lower == "/" || lower == "all" || lower.starts_with("/dev/") {
+        return Err(format!(
+            "Refusing dangerous docker sandbox flag `{flag}={value}` (host device access). {EXPERIMENTAL_WARNING}"
+        ));
+    }
+    Ok(())
+}
+
+fn deny_dangerous_volume(flag: &str, value: &str) -> Result<(), String> {
+    if is_dangerous_volume_spec(value) {
+        return Err(format!(
+            "Refusing dangerous docker volume mount `{flag} {value}` (host root / sensitive path). {EXPERIMENTAL_WARNING}"
+        ));
+    }
+    Ok(())
+}
+
+fn deny_dangerous_mount(flag: &str, value: &str) -> Result<(), String> {
+    if is_dangerous_mount_spec(value) {
+        return Err(format!(
+            "Refusing dangerous docker mount `{flag} {value}` (host root / sensitive path). {EXPERIMENTAL_WARNING}"
+        ));
+    }
+    Ok(())
+}
+
+fn is_dangerous_volume_spec(spec: &str) -> bool {
+    // docker -v/--volume: HOST:CONTAINER[:OPTS]
+    // Use `:/` so host path `/` in `/:/host` is not lost to naive split(':').
+    let host = if let Some(idx) = spec.find(":/") {
+        &spec[..idx]
+    } else if let Some((host, _)) = spec.split_once(':') {
+        host
+    } else {
+        spec
+    };
+    is_sensitive_host_path(host.trim())
+}
+
+fn is_dangerous_mount_spec(spec: &str) -> bool {
+    for part in spec.split(',') {
+        let part = part.trim();
+        if let Some(src) = part
+            .strip_prefix("source=")
+            .or_else(|| part.strip_prefix("src="))
+        {
+            return is_sensitive_host_path(src);
+        }
+    }
+    false
+}
+
+fn is_sensitive_host_path(path: &str) -> bool {
+    let path = path.trim();
+    if path.is_empty() {
+        return false;
+    }
+    let normalized = path.trim_end_matches('/');
+    let normalized = if normalized.is_empty() {
+        "/"
+    } else {
+        normalized
+    };
+    matches!(
+        normalized,
+        "/" | "/etc"
+            | "/proc"
+            | "/sys"
+            | "/dev"
+            | "/var/run/docker.sock"
+            | "/run/docker.sock"
+            | "/root"
+            | "/home"
+    ) || normalized.starts_with("/etc/")
+        || normalized.starts_with("/proc/")
+        || normalized.starts_with("/sys/")
+        || normalized.starts_with("/dev/")
+        || normalized.ends_with("docker.sock")
+}
+
 pub async fn run(args: SandboxArgs) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!("{EXPERIMENTAL_WARNING}");
+
     if !binary_installed("docker") {
         eprintln!("{}", DOCKER_NOT_INSTALLED_MSG);
         return Err("Docker is not installed".into());
@@ -51,6 +288,7 @@ pub async fn run(args: SandboxArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         SandboxArgs::Start { extra_args } => {
+            validate_extra_args(&extra_args)?;
             let status = start_command(&extra_args).status()?;
             if !status.success() {
                 return Err("docker run failed".into());
@@ -164,8 +402,9 @@ mod tests {
             "-p".to_string(),
             "8080:80".to_string(),
             "-v".to_string(),
-            "/host:/container".to_string(),
+            "/tmp/work:/container".to_string(),
         ];
+        assert!(validate_extra_args(&extra).is_ok());
         let cmd = start_command(&extra);
 
         assert_eq!(cmd.get_program(), OsStr::new("docker"));
@@ -176,7 +415,7 @@ mod tests {
         assert_eq!(args[3], "-p");
         assert_eq!(args[4], "8080:80");
         assert_eq!(args[5], "-v");
-        assert_eq!(args[6], "/host:/container");
+        assert_eq!(args[6], "/tmp/work:/container");
         assert_eq!(args[7], IMAGE_NAME);
         assert_eq!(args.len(), 8);
     }
@@ -200,6 +439,85 @@ mod tests {
         let result = find_dockerfile();
         if let Err(msg) = result {
             assert!(msg.contains("No Dockerfile found"));
+            assert!(msg.contains("experimental"));
         }
+    }
+
+    #[test]
+    fn rejects_privileged() {
+        let err = validate_extra_args(&["--privileged".into()]).unwrap_err();
+        assert!(err.contains("--privileged"));
+        assert!(err.contains("experimental"));
+    }
+
+    #[test]
+    fn rejects_pid_host_forms() {
+        for args in [
+            vec!["--pid=host".into()],
+            vec!["--pid".into(), "host".into()],
+            vec!["--network=host".into()],
+            vec!["--userns".into(), "host".into()],
+            vec!["--ipc=host".into()],
+        ] {
+            let err = validate_extra_args(&args).unwrap_err();
+            assert!(
+                err.contains("host"),
+                "expected host-namespace rejection for {args:?}: {err}"
+            );
+            assert!(err.contains("experimental"));
+        }
+    }
+
+    #[test]
+    fn rejects_host_root_volume_mounts() {
+        for args in [
+            vec!["-v".into(), "/:/host".into()],
+            vec!["--volume=/:/host".into()],
+            vec!["-v".into(), "/etc:/etc".into()],
+            vec![
+                "-v".into(),
+                "/var/run/docker.sock:/var/run/docker.sock".into(),
+            ],
+            vec!["--mount".into(), "type=bind,source=/,target=/host".into()],
+        ] {
+            let err = validate_extra_args(&args).unwrap_err();
+            assert!(
+                err.contains("volume") || err.contains("mount"),
+                "expected volume/mount rejection for {args:?}: {err}"
+            );
+            assert!(err.contains("experimental"));
+        }
+    }
+
+    #[test]
+    fn allows_benign_passthrough() {
+        let args = vec![
+            "-e".into(),
+            "FOO=bar".into(),
+            "-p".into(),
+            "8080:8080".into(),
+            "-v".into(),
+            "/tmp/vest-work:/work".into(),
+            "--name".into(),
+            "vest-helper".into(),
+        ];
+        assert!(validate_extra_args(&args).is_ok());
+    }
+
+    #[test]
+    fn rejects_cap_add_all_and_unconfined_seccomp() {
+        let err = validate_extra_args(&["--cap-add=ALL".into()]).unwrap_err();
+        assert!(err.contains("--cap-add"));
+        let err = validate_extra_args(&["--security-opt".into(), "seccomp=unconfined".into()])
+            .unwrap_err();
+        assert!(err.contains("security-opt") || err.contains("seccomp"));
+    }
+
+    #[test]
+    fn root_volume_host_path_parsed() {
+        assert!(is_dangerous_volume_spec("/:/host"));
+        assert!(is_dangerous_volume_spec("/:/host:ro"));
+        assert!(!is_dangerous_volume_spec("/tmp/work:/work"));
+        assert!(!is_dangerous_volume_spec("/host:/container"));
     }
 }
