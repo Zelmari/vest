@@ -48,7 +48,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K6 | **Fixed** | Was `DefaultHasher` on selected keys | SHA-256 over material args | policy tests | `1951cd2` |
 | K7 | **Fixed** | Was `TOOL_FS_SCOPE` OnceLock | `ExecutionSession` Arc captured by tools | session unit test | `0f76c32` |
 | K8 | **Fixed** | Was `std::fs::read` entire file then truncate | Cap via `Read::take` + `spawn_blocking` | `agent_read_file_bounded.rs` | `b7a0744` |
-| K9 | **Partial** | follow_symlinks exists; need prove containment | Contain or disable | adversarial FS | pending |
+| K9 | **Fixed** | follow=true had no root containment | Resolved paths must stay under canonical root else skip OutsideRoot | `files_adversarial` follow=true + unit | (this commit) |
 | K10 | **Fixed** (web client) | `unwrap_or_default()` on Client | fail-closed + `ScopedHttpClient::try_new` | http_client tests | `0f76c32` |
 | K11 | **Fixed** | form submit always POSTed | Honour GET/POST (allowlist); GET→query; missing method→GET | web form method tests | (this commit) |
 | K12 | **Fixed** | invalid `--target-type` guessed | Reject invalid explicit type | CLI | `17d2232` |
@@ -63,7 +63,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 
 | ID | Issue | Status |
 |----|-------|--------|
-| N1 | Dry-run returns before config load / scope display | open |
+| N1 | Dry-run returns before config load / scope display | **Fixed** — load/validate config, detect target, resolve scopes, print plan (scanners/probes/provider/scopes); no DB/network/scanner side effects; invalid type/config → non-zero; `dry_run_contract.rs` |
 | N2 | `config validate` historically soft-failed (fixed on prior branch; re-verify) | verify |
 | N3 | No `vest doctor` / `policy explain` | open |
 | N4 | No explicit `--offline` / `--no-ai` flags (provider none only) | open |

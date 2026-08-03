@@ -151,20 +151,8 @@ pub async fn run(
     );
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
-    if args.dry_run {
-        println!("\u{2502} {:^48} \u{2502}", "DRY RUN - no actions taken");
-        println!(
-            "\u{2502} {:^48} \u{2502}",
-            format!(
-                "Would scan {} in {} mode",
-                &args.target[..args.target.len().min(25)],
-                args.mode.as_deref().unwrap_or("pipeline")
-            )
-        );
-        println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
-        return Ok(());
-    }
-
+    // Dry-run and live scan share validation: load config, detect target, resolve
+    // scopes, then either print the plan (no side effects) or execute.
     let config_path = config_path.as_ref();
     let config = if config_path.exists() {
         vest_config::load_config(config_path).map_err(|e| {
@@ -230,9 +218,45 @@ pub async fn run(
         "\u{2502} Scanners:    {:<35} \u{2502}",
         truncate_for_box(&scanner_names.join(", "), 35)
     );
-    println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+
+    let allow_active_probes = args.allow_active_probes || config.scanner.web.allow_active_probes;
+    let probes_label = if allow_active_probes { "on" } else { "off" };
+    println!("\u{2502} Active probes: {:<32} \u{2502}", probes_label);
 
     let (fs_scope, net_scope) = scopes_from_target(&target);
+    let fs_scope_display = format_fs_scope(&fs_scope);
+    let net_scope_display = format_net_scope(&net_scope);
+    println!(
+        "\u{2502} FS scope:    {:<35} \u{2502}",
+        truncate_for_box(&fs_scope_display, 35)
+    );
+    println!(
+        "\u{2502} Net scope:   {:<35} \u{2502}",
+        truncate_for_box(&net_scope_display, 35)
+    );
+    println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
+
+    if args.dry_run {
+        println!(
+            "\u{2502} {:^48} \u{2502}",
+            "DRY RUN - plan only, no actions"
+        );
+        println!(
+            "\u{2502} {:^48} \u{2502}",
+            truncate_for_box(
+                &format!(
+                    "Would scan {} via [{}]",
+                    &args.target[..args.target.len().min(20)],
+                    scanner_names.join(", ")
+                ),
+                48
+            )
+        );
+        println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+        // No DB writes, no network/scanner execution, no agent tools.
+        return Ok(());
+    }
+
     let interactive = !args.no_approval && std::io::IsTerminal::is_terminal(&std::io::stdin());
     let session = ExecutionSession::new(fs_scope.clone(), net_scope.clone(), interactive)
         .with_memory_simulation(args.allow_memory_simulation)
@@ -246,7 +270,6 @@ pub async fn run(
             config.safety.allow_model_egress_potentially_secret_bearing,
         )
         .into_arc();
-    let allow_active_probes = args.allow_active_probes || config.scanner.web.allow_active_probes;
     args.include_evidence = args.include_evidence || config.general.include_report_evidence;
     let registry = build_tool_registry(Arc::clone(&session), allow_active_probes);
     let safety = build_safety(&args, &config, Arc::clone(&session)).await;
@@ -1103,6 +1126,32 @@ fn build_tool_registry(
     );
 
     registry
+}
+
+fn format_fs_scope(scope: &ApprovedFilesystemScope) -> String {
+    let roots = scope.roots();
+    if roots.is_empty() {
+        "(none)".to_string()
+    } else {
+        roots
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn format_net_scope(scope: &ApprovedNetworkScope) -> String {
+    let origins = scope.origins();
+    if origins.is_empty() {
+        "(none)".to_string()
+    } else {
+        origins
+            .iter()
+            .map(|o| format!("{}://{}:{}", o.scheme, o.host, o.port))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 fn scopes_from_target(target: &Target) -> (ApprovedFilesystemScope, ApprovedNetworkScope) {
