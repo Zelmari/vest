@@ -50,10 +50,10 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K8 | **Fixed** | Was `std::fs::read` entire file then truncate | Cap via `Read::take` + `spawn_blocking` | `agent_read_file_bounded.rs` | `b7a0744` |
 | K9 | **Fixed** | follow=true had no root containment | Resolved paths must stay under canonical root else skip OutsideRoot | `files_adversarial` follow=true + unit | `5975b22` |
 | K10 | **Fixed** (web client) | `unwrap_or_default()` on Client | fail-closed + `ScopedHttpClient::try_new` | http_client tests | `0f76c32` |
-| K11 | **Fixed** | form submit always POSTed | Honour GET/POST (allowlist); GET→query; missing method→GET | web form method tests | (this commit) |
+| K11 | **Fixed** | form submit always POSTed | Honour GET/POST (allowlist); GET→query; missing method→GET | web form method tests | `f83e640` |
 | K12 | **Fixed** | invalid `--target-type` guessed | Reject invalid explicit type | CLI | `17d2232` |
 | K13 | **Fixed** (util) | byte-index risk | `truncate_chars` in vest-core | unit | `17d2232` |
-| K14 | **Fixed** | string match still as legacy fallback | Scan/completions typed; legacy fallback last-resort for other cmds | `exit_codes_strict.rs` | (this commit) |
+| K14 | **Fixed** | string match still as legacy fallback | Scan/completions typed; legacy fallback last-resort for other cmds | `exit_codes_strict.rs` | `f83e640` |
 | K15 | **Fixed** | all keys loaded | Allowlist Vest/provider keys | unit | `17d2232` |
 | K16 | **Open** | `Finding.cvss_score` + scanner heuristics | Rename to severity_estimate / metadata | types+report | pending |
 | K17 | **Open** | prior audit “addressed” while CLI bypasses remain | Keep docs/ledger honest; close wiring gaps | ledger | ongoing |
@@ -68,8 +68,8 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | N3 | No `vest doctor` / `policy explain` | **Fixed** — `vest doctor` prints config/VEST_HOME/sqlite/provider-key presence/posture/policy; fail-closed on bad config; `policy explain` still optional | `doctor_cli.rs` |
 | N4 | No explicit `--offline` / `--no-ai` flags (provider none only) | **Fixed** — `--offline` / `--no-ai` force provider `none`; safer default is `none` when no provider configured | `offline_cli.rs` |
 | N5 | CLI web scan forces `with_allow_active_probes(true)` | **Fixed** — default off; config OR `--allow-active-probes`; `scan_web_cli` probe-hit tests |
-| CLI-EXIT-7 | Provider/agent soft fail exited 0 | **Fixed** — preserve findings/report then exit 7 (`VestError::Provider`/`Agent`) | `exit_codes_strict.rs` | (this commit) |
-| CLI-PARTIAL | Partial scanner fatals exited 0 | **Fixed** — preserve successful scanner findings then exit 5; total fail stays hard error | `exit_codes_strict.rs` | (this commit) |
+| CLI-EXIT-7 | Provider/agent soft fail exited 0 | **Fixed** — preserve findings/report then exit 7 (`VestError::Provider`/`Agent`) | `exit_codes_strict.rs` | `f83e640` |
+| CLI-PARTIAL | Partial scanner fatals exited 0 | **Fixed** — preserve successful scanner findings then exit 5; total fail stays hard error | `exit_codes_strict.rs` | `f83e640` |
 | PROV-1 | Google API key in URL query (`?key=`) | **Fixed** — `x-goog-api-key` header for generateContent/list_models; transport/HTTP errors scrub key; sentinel tests in `vest-providers/src/google.rs` |
 | REP-1 | JSON/MD reports embed raw evidence/PoC (incl. `match_preview` secrets) by default | **Fixed** — omit evidence/PoC by default; `--include-evidence` / `general.include_report_evidence` opt-in with best-effort redaction; `vest-report/tests/secret_redaction.rs` |
 | POL-1 | Missing/non-string path/url skipped FS/net scope checks for scoped effects | **Fixed** — deny before handler when material target absent or wrong type; `adversarial_policy_tests.rs` + policy unit tests | `f918a47` |

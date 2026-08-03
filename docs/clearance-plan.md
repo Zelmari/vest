@@ -2,7 +2,7 @@
 
 **Branch:** `main` only (no feature branches)  
 **Baseline tip when plan written:** `fe1d041`  
-**Last cleared:** K14 / CLI-EXIT-7 / CLI-PARTIAL (+ N3/N4) — tip hash after commit
+**Last cleared:** K14 / CLI-EXIT-7 / CLI-PARTIAL (+ N3/N4) @ `f83e640`
 **Method:** Clear items one-by-one; each item gets code + regression tests + ledger update; keep CI green.  
 **Living suite:** extend tests as behaviour changes (see Wave T).  
 **Loop:** agent clearance loop continues until the open queue is empty and CI is green.
