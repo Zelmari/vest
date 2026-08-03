@@ -345,6 +345,9 @@ pub async fn run(
     );
     ui_line!(machine, "\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
+    // Validate CI gate flags early (including dry-run) so bad input fails closed.
+    let fail_on_severity = parse_fail_on_severity(args.fail_on_severity.as_deref())?;
+
     if args.dry_run {
         let profile_name = args.profile.as_deref().unwrap_or("default");
         let profile_note = match profile {
@@ -500,7 +503,7 @@ pub async fn run(
         ScanStatus::Completed
     };
 
-    match finalize_scan(FinalizeScanInput {
+    let finalize_result = match finalize_scan(FinalizeScanInput {
         args: &args,
         target: &target,
         scan_mode,
@@ -508,26 +511,47 @@ pub async fn run(
         provider_name: &provider_name,
         model: &model,
         scanner_names: &scanner_names,
-        findings,
+        findings: findings.clone(),
         start,
     })
     .await
     {
-        Ok(stored) => {
-            ui_line!(machine, "\u{2502} Stored:      {:<35} \u{2502}", stored);
+        Ok(result) => {
+            ui_line!(
+                machine,
+                "\u{2502} Stored:      {:<35} \u{2502}",
+                result.stored
+            );
+            result
         }
         Err(e) => {
             ui_line!(machine, "\u{2502} Error: {:<41} \u{2502}", format!("{}", e));
             ui_line!(machine, "\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
             return Err(e.into());
         }
-    }
+    };
 
     if let Some(err) = degraded {
         ui_line!(
             machine,
             "\u{2502} {:^48} \u{2502}",
             "Degraded: findings preserved; non-zero exit"
+        );
+        ui_line!(machine, "\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
+        return Err(err.into());
+    }
+
+    if let Some(err) = evaluate_ci_gates(
+        fail_on_severity,
+        args.fail_on_new,
+        &target,
+        &finalize_result.scan_id,
+        &findings,
+    )? {
+        ui_line!(
+            machine,
+            "\u{2502} CI gate:    {:<35} \u{2502}",
+            "findings policy failed"
         );
         ui_line!(machine, "\u{2514}{}\u{2518}", "\u{2500}".repeat(50));
         return Err(err.into());
@@ -571,7 +595,143 @@ struct FinalizeScanInput<'a> {
     start: std::time::Instant,
 }
 
-async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, VestError> {
+fn parse_fail_on_severity(raw: Option<&str>) -> Result<Option<Severity>, VestError> {
+    let Some(level) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let normalised = level.to_ascii_lowercase();
+    normalised.parse::<Severity>().map(Some).map_err(|_| {
+        VestError::InvalidInput(format!(
+            "Invalid --fail-on-severity '{level}'. Expected one of: critical, high, medium, low, info"
+        ))
+    })
+}
+
+fn severity_rank_ci(severity: Severity) -> u8 {
+    match severity {
+        Severity::Critical => 5,
+        Severity::High => 4,
+        Severity::Medium => 3,
+        Severity::Low => 2,
+        Severity::Info => 1,
+    }
+}
+
+fn severity_meets_threshold(severity: Severity, threshold: Severity) -> bool {
+    severity_rank_ci(severity) >= severity_rank_ci(threshold)
+}
+
+fn finding_baseline_key(finding: &Finding) -> String {
+    finding.title.trim().to_string()
+}
+
+fn new_finding_titles(current: &[Finding], previous: &[Finding]) -> Vec<String> {
+    let previous_keys: BTreeSet<String> = previous.iter().map(finding_baseline_key).collect();
+    let mut new_titles = BTreeSet::new();
+    for finding in current {
+        let key = finding_baseline_key(finding);
+        if !key.is_empty() && !previous_keys.contains(&key) {
+            new_titles.insert(key);
+        }
+    }
+    new_titles.into_iter().collect()
+}
+
+fn same_logical_target(a: &Target, b: &Target) -> bool {
+    if a.target_type != b.target_type {
+        return false;
+    }
+    match a.target_type {
+        TargetType::File | TargetType::Binary => {
+            a.path.as_deref().unwrap_or(a.name.as_str())
+                == b.path.as_deref().unwrap_or(b.name.as_str())
+        }
+        TargetType::Web | TargetType::Browser => {
+            a.url_str.as_deref().unwrap_or(a.name.as_str())
+                == b.url_str.as_deref().unwrap_or(b.name.as_str())
+        }
+        TargetType::Network => {
+            a.host.as_deref().unwrap_or(a.name.as_str())
+                == b.host.as_deref().unwrap_or(b.name.as_str())
+        }
+        TargetType::Process => a.pid == b.pid && a.pid.is_some(),
+    }
+}
+
+fn load_previous_findings_for_target(
+    target: &Target,
+    current_scan_id: &str,
+) -> Result<Option<Vec<Finding>>, VestError> {
+    let db_path = get_db_path();
+    let pool = vest_storage::ConnectionPool::new(&db_path)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    vest_storage::schema::run_migrations(pool.conn())
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    let conn = pool.conn();
+    let targets =
+        vest_storage::targets::list_targets(conn).map_err(|e| VestError::Storage(e.to_string()))?;
+    let mut previous_scans = Vec::new();
+    for prior_target in targets.iter().filter(|t| same_logical_target(t, target)) {
+        let scans = vest_storage::scans::list_scans_by_target(conn, &prior_target.id)
+            .map_err(|e| VestError::Storage(e.to_string()))?;
+        for scan in scans {
+            if scan.id != current_scan_id {
+                previous_scans.push(scan);
+            }
+        }
+    }
+    previous_scans.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    let Some(prev) = previous_scans.into_iter().next() else {
+        return Ok(None);
+    };
+    let findings = vest_storage::findings::list_findings_by_scan(conn, &prev.id)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    Ok(Some(findings))
+}
+
+fn evaluate_ci_gates(
+    fail_on_severity: Option<Severity>,
+    fail_on_new: bool,
+    target: &Target,
+    current_scan_id: &str,
+    findings: &[Finding],
+) -> Result<Option<VestError>, VestError> {
+    if let Some(threshold) = fail_on_severity {
+        let hits: Vec<&Finding> = findings
+            .iter()
+            .filter(|f| severity_meets_threshold(f.severity, threshold))
+            .collect();
+        if !hits.is_empty() {
+            let titles: Vec<&str> = hits.iter().take(5).map(|f| f.title.as_str()).collect();
+            return Ok(Some(VestError::FindingsGate(format!(
+                "{} finding(s) at or above severity '{threshold}' (e.g. {})",
+                hits.len(),
+                titles.join("; ")
+            ))));
+        }
+    }
+    if fail_on_new {
+        if let Some(previous) = load_previous_findings_for_target(target, current_scan_id)? {
+            let new_titles = new_finding_titles(findings, &previous);
+            if !new_titles.is_empty() {
+                let sample = new_titles.iter().take(5).cloned().collect::<Vec<_>>();
+                return Ok(Some(VestError::FindingsGate(format!(
+                    "{} new finding title(s) vs previous scan (e.g. {})",
+                    new_titles.len(),
+                    sample.join("; ")
+                ))));
+            }
+        }
+    }
+    Ok(None)
+}
+
+struct FinalizeScanResult {
+    stored: usize,
+    scan_id: String,
+}
+
+async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<FinalizeScanResult, VestError> {
     let FinalizeScanInput {
         args,
         target,
@@ -683,7 +843,10 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, VestError>
     }
     tx.commit().map_err(|e| VestError::Storage(e.to_string()))?;
 
-    Ok(findings.len())
+    Ok(FinalizeScanResult {
+        stored: findings.len(),
+        scan_id: scan_session.id,
+    })
 }
 
 /// Run selected scanners. Returns findings from scanners that succeeded, plus any
@@ -1765,6 +1928,73 @@ mod profile_safety_tests {
         assert_eq!(
             merge_profile_safety_approvals(true, true, Some(&exploit_only)),
             (true, false)
+        );
+    }
+}
+
+#[cfg(test)]
+mod ci_gate_tests {
+    use super::*;
+    use chrono::Utc;
+    use vest_core::types::{FindingStatus, VulnerabilityClass};
+
+    fn finding(title: &str, severity: Severity) -> Finding {
+        let now = Utc::now();
+        Finding {
+            id: vest_core::ids::new_id(),
+            scan_id: "s".into(),
+            target_id: "t".into(),
+            title: title.into(),
+            description: String::new(),
+            vulnerability_class: VulnerabilityClass::HardcodedCredentials,
+            severity,
+            confidence: 0.9,
+            status: FindingStatus::Open,
+            severity_score_estimate: None,
+            cve_id: None,
+            cwe_id: None,
+            evidence: serde_json::json!({}),
+            poc: None,
+            remediation: None,
+            location: serde_json::json!({}),
+            false_positive_history: None,
+            tags: vec![],
+            metadata: serde_json::json!({}),
+            discovered_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn parse_fail_on_severity_accepts_levels() {
+        assert_eq!(
+            parse_fail_on_severity(Some("high")).unwrap(),
+            Some(Severity::High)
+        );
+        assert_eq!(
+            parse_fail_on_severity(Some("CRITICAL")).unwrap(),
+            Some(Severity::Critical)
+        );
+        assert!(parse_fail_on_severity(Some("extreme")).is_err());
+    }
+
+    #[test]
+    fn severity_threshold_includes_equal_and_above() {
+        assert!(severity_meets_threshold(Severity::High, Severity::High));
+        assert!(severity_meets_threshold(Severity::Critical, Severity::High));
+        assert!(!severity_meets_threshold(Severity::Medium, Severity::High));
+    }
+
+    #[test]
+    fn new_finding_titles_detects_additions_only() {
+        let previous = vec![finding("Hardcoded password", Severity::Critical)];
+        let current = vec![
+            finding("Hardcoded password", Severity::Critical),
+            finding("AWS access key", Severity::Critical),
+        ];
+        assert_eq!(
+            new_finding_titles(&current, &previous),
+            vec!["AWS access key".to_string()]
         );
     }
 }

@@ -71,6 +71,7 @@ use the same two-key consent (allow + confirm/approve-exploits) (**B5**).
 - Sensitive / approval-required ops denied unless already authorised by effect/session grants.
 - Exit codes: typed `VestError::cli_exit_code()` on scan/completions; legacy string fallback is last-resort for remaining untyped subcommands.
 - JSON on stdout is the intended machine path; keep diagnostics on stderr.
+- CI gates: `--fail-on-severity <level>` and `--fail-on-new` (compare titles to previous scan for same logical target); exit **8** on gate hit (`fail_on_cli.rs`).
 
 ### G — Degraded operation — **mostly works** (scan path)
 

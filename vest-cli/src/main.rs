@@ -168,6 +168,17 @@ pub struct ScanArgs {
     /// Alias for `--offline`: disable LLM providers for this scan.
     #[arg(long = "no-ai")]
     pub no_ai: bool,
+
+    /// Exit non-zero (code 8) if any finding severity is at or above LEVEL
+    /// (`critical`, `high`, `medium`, `low`, or `info`). Useful for CI gates.
+    #[arg(long = "fail-on-severity", value_name = "LEVEL")]
+    pub fail_on_severity: Option<String>,
+
+    /// Exit non-zero (code 8) when this scan introduces finding titles not seen
+    /// in the previous scan for the same logical target (path/URL/host/name).
+    /// First scan for a target establishes the baseline (exit 0).
+    #[arg(long = "fail-on-new")]
+    pub fail_on_new: bool,
 }
 
 #[derive(Subcommand)]
@@ -421,6 +432,7 @@ fn load_dotenv() {
 /// | 5 | Scanner failure |
 /// | 6 | Persistence failure |
 /// | 7 | Provider-only failure with preserved local result (soft failure) |
+/// | 8 | Findings gate (`--fail-on-severity` / `--fail-on-new`) |
 pub mod exit_code {
     pub const SUCCESS: i32 = 0;
     pub const INTERNAL: i32 = 1;
@@ -430,6 +442,7 @@ pub mod exit_code {
     pub const SCANNER: i32 = 5;
     pub const PERSISTENCE: i32 = 6;
     pub const PROVIDER_SOFT: i32 = 7;
+    pub const FINDINGS_GATE: i32 = 8;
 }
 
 fn exit_code_for_error(err: &(dyn std::error::Error + 'static)) -> i32 {

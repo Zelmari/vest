@@ -66,6 +66,10 @@ pub enum VestError {
 
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+
+    /// CI / policy gate after a scan completed (severity threshold or new findings).
+    #[error("Findings gate: {0}")]
+    FindingsGate(String),
 }
 
 impl VestError {
@@ -81,6 +85,7 @@ impl VestError {
             VestError::Scan(_) | VestError::Unsupported(_) | VestError::UnsupportedPlatform(_) => 5,
             VestError::Storage(_) => 6,
             VestError::Provider(_) => 7,
+            VestError::FindingsGate(_) => 8,
             VestError::InvalidInput(_)
             | VestError::UnsupportedFormat(_)
             | VestError::TargetNotFound(_)
@@ -107,6 +112,7 @@ mod exit_code_unit_tests {
         assert_eq!(VestError::Storage("x".into()).cli_exit_code(), 6);
         assert_eq!(VestError::Provider("x".into()).cli_exit_code(), 7);
         assert_eq!(VestError::InvalidInput("x".into()).cli_exit_code(), 2);
+        assert_eq!(VestError::FindingsGate("high".into()).cli_exit_code(), 8);
     }
 }
 

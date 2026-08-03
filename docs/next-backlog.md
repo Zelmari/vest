@@ -28,7 +28,7 @@
 ### Wave C — Product unlocks
 | # | ID | Item | Status |
 |---|----|------|--------|
-| 11 | C1 | CI baseline / fail-on-new (compare + exit) | pending |
+| 11 | C1 | CI baseline / fail-on-new (compare + exit) | done |
 | 12 | C2 | Finish or hide `--resume` | done |
 | 13 | C3 | SARIF export | done |
 | 14 | C4 | Profile discovery (`--list-profiles` / dry-run clarity) | done |
@@ -52,7 +52,7 @@
 - [x] B3 CDP loopback pin
 - [x] B4 Nuclei template constraint
 - [x] B5 Active probe consent
-- [ ] C1 Fail-on-new baseline
+- [x] C1 Fail-on-new baseline (`--fail-on-severity` / `--fail-on-new`, exit 8)
 - [x] C2 Resume (hidden from help; fail-closed unimplemented — no SQLite checkpoint)
 - [x] C3 SARIF
 - [x] C4 Profile discovery (`vest scan --list-profiles`; dry-run names selected profile)

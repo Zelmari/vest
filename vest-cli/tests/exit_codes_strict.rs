@@ -17,6 +17,7 @@ fn typed_matrix_unit_codes() {
     assert_eq!(VestError::Storage("x".into()).cli_exit_code(), 6);
     assert_eq!(VestError::Provider("x".into()).cli_exit_code(), 7);
     assert_eq!(VestError::Agent("x".into()).cli_exit_code(), 7);
+    assert_eq!(VestError::FindingsGate("x".into()).cli_exit_code(), 8);
 }
 
 #[test]
