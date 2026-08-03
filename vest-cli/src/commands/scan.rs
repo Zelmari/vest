@@ -1,44 +1,23 @@
 use crate::ScanArgs;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::Arc;
 use vest_agent::{
-    resolve_read_path, ApprovedFilesystemScope, ApprovedNetworkScope, AuthorisationContext,
+    resolve_read_path, ApprovedFilesystemScope, ApprovedNetworkScope, ExecutionSession,
 };
 use vest_core::error::VestError;
 use vest_core::traits::{Reporter, Scanner};
 use vest_core::types::{Finding, ScanMode, ScanStatus, Severity, Target, TargetType};
 use vest_core::{DataEgressClass, ToolEffect};
 
-/// Process-wide authorised filesystem roots for agent tools (set per scan).
-static TOOL_FS_SCOPE: OnceLock<RwLock<ApprovedFilesystemScope>> = OnceLock::new();
-/// Process-wide authorised network origins for agent HTTP tools (set per scan).
-static TOOL_NET_SCOPE: OnceLock<RwLock<ApprovedNetworkScope>> = OnceLock::new();
-/// Set from `--allow-memory-simulation` before the agent runs (not model-controlled).
-static ALLOW_MEMORY_SIMULATION: AtomicBool = AtomicBool::new(false);
-
-fn tool_fs_scope() -> &'static RwLock<ApprovedFilesystemScope> {
-    TOOL_FS_SCOPE.get_or_init(|| RwLock::new(ApprovedFilesystemScope::empty()))
+fn resolve_tool_path(session: &ExecutionSession, path: &str) -> Result<PathBuf, String> {
+    resolve_read_path(&session.filesystem, Path::new(path))
+        .map_err(|e| format!("filesystem scope: {e}"))
 }
 
-fn tool_net_scope() -> &'static RwLock<ApprovedNetworkScope> {
-    TOOL_NET_SCOPE.get_or_init(|| RwLock::new(ApprovedNetworkScope::empty()))
-}
-
-fn set_tool_scopes(fs: ApprovedFilesystemScope, net: ApprovedNetworkScope) {
-    *tool_fs_scope().write().expect("fs scope lock") = fs;
-    *tool_net_scope().write().expect("net scope lock") = net;
-}
-
-fn resolve_tool_path(path: &str) -> Result<PathBuf, String> {
-    let scope = tool_fs_scope().read().expect("fs scope lock");
-    resolve_read_path(&scope, Path::new(path)).map_err(|e| format!("filesystem scope: {e}"))
-}
-
-fn authorise_tool_url(url: &str) -> Result<(), String> {
-    let scope = tool_net_scope().read().expect("net scope lock");
-    scope
+fn authorise_tool_url(session: &ExecutionSession, url: &str) -> Result<(), String> {
+    session
+        .network
         .authorise_url(url)
         .map(|_| ())
         .map_err(|e| format!("network scope: {e}"))
@@ -155,10 +134,17 @@ pub async fn run(
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
 
     let (fs_scope, net_scope) = scopes_from_target(&target);
-    ALLOW_MEMORY_SIMULATION.store(args.allow_memory_simulation, Ordering::SeqCst);
-    set_tool_scopes(fs_scope.clone(), net_scope.clone());
-    let registry = build_tool_registry();
-    let safety = build_safety(&args, &config, fs_scope, net_scope).await;
+    let interactive = !args.no_approval && std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let session = ExecutionSession::new(fs_scope.clone(), net_scope.clone(), interactive)
+        .with_memory_simulation(args.allow_memory_simulation)
+        .with_egress(
+            config.safety.allow_model_egress_local_content,
+            config.safety.allow_model_egress_process_memory,
+            config.safety.allow_model_egress_evidence,
+        )
+        .into_arc();
+    let registry = build_tool_registry(Arc::clone(&session));
+    let safety = build_safety(&args, &config, Arc::clone(&session)).await;
 
     println!("\u{2502} {:^48} \u{2502}", "Running scan...");
     println!("\u{251c}{}\u{2524}", "\u{2500}".repeat(50));
@@ -616,10 +602,20 @@ fn truncate_for_box(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
 }
 
-fn build_tool_registry() -> vest_agent::ToolRegistry {
+fn build_tool_registry(session: Arc<ExecutionSession>) -> vest_agent::ToolRegistry {
     let mut registry = vest_agent::ToolRegistry::new();
     let ro = vest_agent::context::RiskLevel::ReadOnly;
 
+    let session_file = Arc::clone(&session);
+    let session_mem = Arc::clone(&session);
+    let session_http_get = Arc::clone(&session);
+    let session_http_post = Arc::clone(&session);
+    let session_read = Arc::clone(&session);
+    let session_list = Arc::clone(&session);
+    let session_browser = Arc::clone(&session);
+    let _session_analyze = Arc::clone(&session);
+
+    let session_web = Arc::clone(&session);
     registry.register(
         vest_agent::ToolDefinition {
             name: "web_scan".into(),
@@ -630,11 +626,11 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             effect: ToolEffect::ActiveNetworkProbe,
             egress_class: DataEgressClass::TargetContent,
         },
-        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let url = args.get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
-            authorise_tool_url(url)?;
+            authorise_tool_url(&session_web, url)?;
 
             // Tool-use path: passive by default (no active vulnerability probes).
             let scanner = vest_scanner::web::WebScanner::new()
@@ -710,11 +706,11 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             effect: ToolEffect::LocalFileContentRead,
             egress_class: DataEgressClass::LocalContent,
         },
-        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let path_str = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or("path parameter required")?;
-            let path = resolve_tool_path(path_str)?;
+            let path = resolve_tool_path(&session_file, path_str)?;
             if !path.exists() {
                 return Err(format!("Path not found: {}", path.display()));
             }
@@ -783,9 +779,9 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             effect: ToolEffect::ProcessMemoryRead,
             egress_class: DataEgressClass::ProcessMemory,
         },
-        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let pid: u32 = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-            if !ALLOW_MEMORY_SIMULATION.load(Ordering::SeqCst) {
+            if !session_mem.allow_memory_simulation {
                 return Ok(serde_json::json!({
                     "mode": "unsupported",
                     "error": "Real process-memory acquisition is not implemented. Pass --allow-memory-simulation to run the explicit simulation harness (fabricated regions/bytes; not live PID memory).",
@@ -847,11 +843,11 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             effect: ToolEffect::PassiveNetworkRequest,
             egress_class: DataEgressClass::TargetContent,
         },
-        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let url = args.get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
-            authorise_tool_url(url)?;
+            authorise_tool_url(&session_http_get, url)?;
             let resp = ureq::get(url)
                 .header("User-Agent", "VEST/0.1")
                 .call()
@@ -879,12 +875,12 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             effect: ToolEffect::StateChangingNetworkRequest,
             egress_class: DataEgressClass::TargetContent,
         },
-        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let url = args
                 .get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
-            authorise_tool_url(url)?;
+            authorise_tool_url(&session_http_post, url)?;
             let data = args.get("data").cloned().unwrap_or(serde_json::json!({}));
             let body_str =
                 serde_json::to_string(&data).map_err(|e| format!("Failed to serialize: {}", e))?;
@@ -918,12 +914,12 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             effect: ToolEffect::LocalFileContentRead,
             egress_class: DataEgressClass::LocalContent,
         },
-        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let path = args
                 .get("path")
                 .and_then(|v| v.as_str())
                 .ok_or("path parameter required")?;
-            let resolved = resolve_tool_path(path)?;
+            let resolved = resolve_tool_path(&session_read, path)?;
             let data = std::fs::read(&resolved).map_err(|e| format!("Cannot read file: {}", e))?;
             let text = String::from_utf8_lossy(&data[..data.len().min(10240)]);
             Ok(serde_json::json!({
@@ -944,9 +940,9 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             effect: ToolEffect::LocalMetadataRead,
             egress_class: DataEgressClass::LocalMetadata,
         },
-        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let resolved = resolve_tool_path(path)?;
+            let resolved = resolve_tool_path(&session_list, path)?;
             let entries: Vec<String> = std::fs::read_dir(&resolved)
                 .map_err(|e| format!("Cannot read directory: {}", e))?
                 .filter_map(|e| e.ok())
@@ -979,11 +975,11 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             effect: ToolEffect::PassiveNetworkRequest,
             egress_class: DataEgressClass::TargetContent,
         },
-        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let url = args.get("url")
                 .and_then(|v| v.as_str())
                 .ok_or("url parameter required")?;
-            authorise_tool_url(url)?;
+            authorise_tool_url(&session_browser, url)?;
             let handle = tokio::runtime::Handle::current();
             tokio::task::block_in_place(|| {
                 handle.block_on(vest_scanner::browser::BrowserScanner::inspect_page(url))
@@ -1001,7 +997,7 @@ fn build_tool_registry() -> vest_agent::ToolRegistry {
             effect: ToolEffect::LocalFileContentRead,
             egress_class: DataEgressClass::PotentiallySecretBearing,
         },
-        |args: serde_json::Value| -> Result<serde_json::Value, String> {
+        move |args: serde_json::Value| -> Result<serde_json::Value, String> {
             let content = args.get("content")
                 .and_then(|v| v.as_str())
                 .ok_or("content parameter required")?;
@@ -1071,16 +1067,15 @@ fn scopes_from_target(target: &Target) -> (ApprovedFilesystemScope, ApprovedNetw
 async fn build_safety(
     args: &ScanArgs,
     config: &vest_config::VestConfig,
-    fs_scope: ApprovedFilesystemScope,
-    net_scope: ApprovedNetworkScope,
+    session: Arc<ExecutionSession>,
 ) -> Arc<vest_agent::SafetyChecker> {
     use vest_agent::safety::SafetyConfig;
 
     // `--no-approval` means: never prompt; deny approval-required ops.
     // It must NOT install an unrestricted / test-only permissive context (K1).
-    let mut safety_config = SafetyConfig {
-        write_approval: !args.approve_writes && config.safety.write_approval,
-        exploit_approval: !args.approve_exploits && config.safety.exploit_approval,
+    let safety_config = SafetyConfig {
+        write_approval: config.safety.write_approval,
+        exploit_approval: config.safety.exploit_approval,
         network_write_approval: config.safety.network_write_approval,
         rate_limit_enabled: !args.no_rate_limit && config.safety.rate_limit_enabled,
         rate_limit_requests_per_second: args
@@ -1098,29 +1093,11 @@ async fn build_safety(
         allowed_networks: config.safety.allowed_networks.clone(),
     };
 
-    if args.approve_writes {
-        safety_config.write_approval = false;
-    }
-    if args.approve_exploits {
-        safety_config.exploit_approval = false;
-    }
-
-    let checker = Arc::new(vest_agent::SafetyChecker::new(safety_config));
-
-    let interactive = !args.no_approval && std::io::IsTerminal::is_terminal(&std::io::stdin());
-    let mut auth = AuthorisationContext::new(format!("scan-{}", args.target));
-    auth = auth
-        .with_filesystem(fs_scope)
-        .with_network(net_scope)
-        .with_interactive(interactive);
-    auth.allow_local_content_egress = config.safety.allow_model_egress_local_content;
-    auth.allow_process_memory_egress = config.safety.allow_model_egress_process_memory;
-    auth.allow_evidence_egress = config.safety.allow_model_egress_evidence;
-    // Broad legacy flags are UX hints only — they must not widen filesystem/network
-    // scope or install permissive_effects. Exact call binding remains in PolicyEngine.
     let _ = (args.approve_writes, args.approve_exploits);
-    checker.set_authorisation_context(auth).await;
-
+    let checker = Arc::new(vest_agent::SafetyChecker::new(safety_config));
+    checker
+        .set_authorisation_context(session.authorisation_context())
+        .await;
     checker
 }
 

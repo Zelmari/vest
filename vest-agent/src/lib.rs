@@ -9,6 +9,7 @@ pub mod patterns;
 pub mod planner;
 pub mod policy;
 pub mod safety;
+pub mod session;
 pub mod tool_registry;
 pub mod validator;
 
@@ -25,5 +26,6 @@ pub use orchestrator::Orchestrator;
 pub use planner::Planner;
 pub use policy::{ApprovalToken, AuthorisationContext, NormalisedToolCall, PolicyEngine};
 pub use safety::{explicit_effect_for_tool, SafetyChecker, SafetyConfig};
+pub use session::ExecutionSession;
 pub use tool_registry::ToolRegistry;
 pub use validator::{enrich_finding_heuristic, ValidationDecision, Validator};

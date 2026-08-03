@@ -169,13 +169,15 @@ pub struct WebScanner {
 
 impl WebScanner {
     fn build_client(timeout_seconds: u64, connect_timeout_ms: u64) -> Client {
+        // Fail closed: never silently fall back to Client::default() (loses
+        // redirect/timeout policy). Construction failure is a hard error.
         Client::builder()
             .timeout(Duration::from_secs(timeout_seconds))
             .connect_timeout(Duration::from_millis(connect_timeout_ms))
             .redirect(reqwest::redirect::Policy::none())
             .danger_accept_invalid_certs(false)
             .build()
-            .unwrap_or_default()
+            .expect("VEST web HTTP client construction failed; refusing weaker defaults")
     }
 
     pub fn new() -> Self {

@@ -38,21 +38,21 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 
 | ID | Status | Evidence | Planned / done | Tests | Commit |
 |----|--------|----------|----------------|-------|--------|
-| K1 | **Confirmed** | `scan.rs` `if args.no_approval { SafetyChecker::permissive() }` | Redefine `--no-approval` = no prompt + deny; ban permissive from CLI | CLI + unit | in progress (session agent) |
+| K1 | **Fixed** | Was calling `SafetyChecker::permissive()` | `--no-approval` = non-interactive deny; no permissive path | CLI tests | `17d2232`+session |
 | K2 | **Confirmed** | `RequireInteractive` → deny/false; no stdin prompt; `--approve-*` flips legacy booleans | Interactive prompt + opaque grant | acceptance 3–4 | pending |
 | K3 | **Confirmed** | Agent tools use `ureq` in `scan.rs` (~646+) | Migrate to ScopedHttpClient | web/agent tests | HTTP agent + follow-up |
 | K4 | **Partially confirmed** | LocalContent/ProcessMemory blocked; TargetContent may redact-only | Align filter_for_model with contract | egress tests | pending |
 | K5 | **Confirmed** | `execute_authorised` accepts public `ApprovalDecision::Allow` | Opaque `ApprovedToolCall` capability | policy tests | pending |
 | K6 | **Confirmed** | `DefaultHasher` + selected keys in `policy.rs` `material_args` | SHA-256 over canonical JSON of all args | property tests | pending |
-| K7 | **Confirmed** | `TOOL_FS_SCOPE` / `TOOL_NET_SCOPE` OnceLock RwLock | ExecutionSession Arc | concurrent session tests | in progress |
+| K7 | **Fixed** | Was `TOOL_FS_SCOPE` OnceLock | `ExecutionSession` Arc captured by tools | session unit test | this commit |
 | K8 | **Confirmed** (hypothesis) | read_file likely full read | Bound + spawn_blocking | FS tests | pending |
 | K9 | **Partial** | follow_symlinks exists; need prove containment | Contain or disable | adversarial FS | pending |
-| K10 | **Investigate** | web Client builder paths | Fail closed in ScopedHttpClient | unit | in progress |
+| K10 | **Fixed** (web) | `unwrap_or_default()` on Client | `expect` fail-closed + `ScopedHttpClient::try_new` Result | http_client tests | this commit |
 | K11 | **Investigate** | form submit method | Honour GET/POST | web tests | pending |
-| K12 | **Confirmed** | invalid `--target-type` falls through to `guess_type` | Reject invalid explicit type | CLI | in progress |
-| K13 | **Investigate** | truncation helpers | `safe_truncate` util | unicode tests | pending |
-| K14 | **Confirmed** | `exit_code_for_message` string match | `VestError::cli_exit_code()` | unit | in progress |
-| K15 | **Confirmed** | `load_dotenv` imports any KEY= | Allowlist Vest/provider keys | unit | in progress |
+| K12 | **Fixed** | invalid `--target-type` guessed | Reject invalid explicit type | CLI | `17d2232` |
+| K13 | **Fixed** (util) | byte-index risk | `truncate_chars` in vest-core | unit | `17d2232` |
+| K14 | **Partial** | string match still as legacy fallback | Prefer `VestError::cli_exit_code()` | unit | `17d2232` |
+| K15 | **Fixed** | all keys loaded | Allowlist Vest/provider keys | unit | `17d2232` |
 | K16 | **Confirmed** | `Finding.cvss_score` + scanner `Some(7.8)` heuristics | Rename to severity_estimate / metadata | types+report | pending |
 | K17 | **Confirmed** | prior audit “addressed” while CLI bypasses remain | Re-evaluate after wiring | ledger | ongoing |
 | K18 | **Re-verify** | prior pass merged | Regression suite | workspace tests | ongoing |
@@ -72,13 +72,13 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 |-------|--------|-------|
 | 0 Baseline | done | branch + ledger + baseline check/fmt |
 | 1 Product contract | in progress | docs/product-contract.md |
-| 2 ExecutionSession | in progress | subagent |
-| 3 Interactive approval | pending | |
-| 4 Opaque capabilities | pending | |
-| 5 ScopedHttpClient | in progress | subagent |
+| 2 ExecutionSession | done | session.rs + CLI wiring |
+| 3 Interactive approval | pending | RequireInteractive still no prompt |
+| 4 Opaque capabilities | pending | execute_authorised still forgeable |
+| 5 ScopedHttpClient | partial | module + tests; agent ureq not migrated |
 | 6 Filesystem tools | pending | |
 | 7 Egress | pending | |
-| 8 Config/.env | in progress | allowlist |
+| 8 Config/.env | done | allowlist |
 | 9–20 | pending | |
 
 ## Remaining limitations (standing)
