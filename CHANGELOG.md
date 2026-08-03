@@ -27,6 +27,8 @@ where practical for a pre-1.0 experimental toolkit.
 - **N4:** `--offline` / `--no-ai` force `--provider none`; when no provider is configured the safer default is `none` (not ollama).
 - **N3:** `vest doctor` prints config path/validity, `VEST_HOME`, sqlite path, provider env key presence (not values), online/offline posture, and a policy summary; fail-closed on bad config.
 - **K14 / CLI-EXIT-7 / CLI-PARTIAL:** typed scan/completions exits; provider soft-fail → exit 7 with findings preserved; any scanner fatal → exit 5 after preserving successful scanner findings (`exit_codes_strict.rs`).
+- **CFG-1:** agent/provider/network zero budgets rejected at config load; deny_unknown on those sections.
+- **PROV-3 / PROV-4:** provider `timeout_seconds` wired into clients + sequential fallback; Google `list_models` fail-closed on HTTP errors.
 
 ### Still open (honest)
 

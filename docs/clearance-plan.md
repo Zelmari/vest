@@ -2,7 +2,7 @@
 
 **Branch:** `main` only (no feature branches)  
 **Baseline tip when plan written:** `fe1d041`  
-**Last cleared:** K14 / CLI-EXIT-7 / CLI-PARTIAL (+ N3/N4) @ `f83e640`
+**Last cleared tip:** `a05b291` (PROV-3 / PROV-4; CFG-1 @ `c426801`; queue through Wave 2 except PROV-2)
 **Method:** Clear items one-by-one; each item gets code + regression tests + ledger update; keep CI green.  
 **Living suite:** extend tests as behaviour changes (see Wave T).  
 **Loop:** agent clearance loop continues until the open queue is empty and CI is green.
@@ -38,12 +38,12 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 
 | Order | ID | Item | Done when | Primary tests |
 |------:|----|------|-----------|---------------|
-| 1 | **N5** | CLI web scan must not force active probes; honour config / explicit flag | CLI default probes off; opt-in enables | `passive_web_cli.rs` / extend `scan_web_cli.rs` |
-| 2 | **K3** | Migrate CLI agent HTTP (`http_get`/`http_post`/`web_scan`) off `ureq` onto `ScopedHttpClient` | No bare ureq for those tools; redirect re-auth | `agent_http_scoped_client.rs` |
-| 3 | **K3b** | `web_scan` tool must not reimplement active probes via ureq | Single WebScanner path; probes gated | agent/web tool tests |
-| 4 | **REP-1** | Reports must not dump raw secret evidence by default | JSON/MD redact or omit; opt-in flag | report secret sentinel tests |
-| 5 | **PROV-1** | Google API key must not live in URL query string | Header auth; scrub errors | provider sentinel tests |
-| 6 | **K4** | Gate `TargetContent` / `PotentiallySecretBearing` in `filter_for_model` | Default deny/stub or metadata-only | `target_content_egress_tests.rs` |
+| 1 | **N5** | CLI web scan must not force active probes; honour config / explicit flag | **Done** — CLI default probes off; opt-in enables | `passive_web_cli.rs` / extend `scan_web_cli.rs` |
+| 2 | **K3** | Migrate CLI agent HTTP (`http_get`/`http_post`/`web_scan`) off `ureq` onto `ScopedHttpClient` | **Done** — no bare ureq for those tools; redirect re-auth | `agent_http_scoped_client.rs` |
+| 3 | **K3b** | `web_scan` tool must not reimplement active probes via ureq | **Done** — single WebScanner path; probes gated | agent/web tool tests |
+| 4 | **REP-1** | Reports must not dump raw secret evidence by default | **Done** — JSON/MD omit by default; opt-in + redaction | report secret sentinel tests |
+| 5 | **PROV-1** | Google API key must not live in URL query string | **Done** — header auth; scrub errors | provider sentinel tests |
+| 6 | **K4** | Gate `TargetContent` / `PotentiallySecretBearing` in `filter_for_model` | **Done** — default deny/stub or metadata-only | `target_content_egress_tests.rs` |
 
 ---
 
@@ -51,14 +51,14 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 
 | Order | ID | Item | Done when | Primary tests |
 |------:|----|------|-----------|---------------|
-| 7 | **K2** | Interactive approval prompt OR exact CLI pre-grants; wire `--approve-*` | TTY can grant one-shot; non-TTY/`--no-approval` deny | interactive + `no_approval_cli.rs` |
-| 8 | **K5b** | Unify hot path: `authorise` → `execute_authorised` → `filter_for_model` | `invoke` not the only live path; egress always applied | `authorise_execute_hot_path_tests.rs` |
-| 9 | **K8** | Bound `read_file` + `spawn_blocking` | Cap bytes; no full-file absorb | FS size/DoS tests |
-| 10 | **POL-1** | Fail closed when path/url missing or non-string for scoped effects | Deny before handler | adversarial policy |
-| 11 | **K11** | Honour form GET/POST in web probes | Correct method + query/body | web form method tests |
-| 12 | **K9** | Symlink follow containment (or disable follow) | Escape impossible when follow=true | files_adversarial follow=true |
-| 13 | **BRW-1** | Browser path walk: bounds, symlink policy, scoped navigate | No unbounded read/escape | browser adversarial |
-| 14 | **N1** | Dry-run validates config/target/scopes; no side effects | Invalid dry-run non-zero; plan printed | `dry_run_contract.rs` |
+| 7 | **K2** | Interactive approval prompt OR exact CLI pre-grants; wire `--approve-*` | **Done** — TTY one-shot; non-TTY/`--no-approval` deny; CLI effect grants | interactive + `no_approval_cli.rs` |
+| 8 | **K5b** | Unify hot path: `authorise` → `execute_authorised` → `filter_for_model` | **Done** — live path unified; `invoke` thin wrapper | `authorise_execute_hot_path_tests.rs` |
+| 9 | **K8** | Bound `read_file` + `spawn_blocking` | **Done** — cap bytes; no full-file absorb | FS size/DoS tests |
+| 10 | **POL-1** | Fail closed when path/url missing or non-string for scoped effects | **Done** — deny before handler | adversarial policy |
+| 11 | **K11** | Honour form GET/POST in web probes | **Done** — correct method + query/body | web form method tests |
+| 12 | **K9** | Symlink follow containment (or disable follow) | **Done** — escape impossible when follow=true | files_adversarial follow=true |
+| 13 | **BRW-1** | Browser path walk: bounds, symlink policy, scoped navigate | **Done** — bounded walk + CDP basics | browser adversarial |
+| 14 | **N1** | Dry-run validates config/target/scopes; no side effects | **Done** — invalid dry-run non-zero; plan printed | `dry_run_contract.rs` |
 
 ---
 
@@ -71,10 +71,10 @@ This plan merges: product ledger (K*/N*), docs honesty gaps (R*/D*), and full-re
 | 17 | **CLI-PARTIAL** | Partial scanner failure policy (non-zero or explicit degraded) | **Done** — any scanner fatal → exit 5 after preserve | `exit_codes_strict.rs` |
 | 18 | **N4** | `--offline` / `--no-ai` (and/or safer default than ollama) | **Done** — flags force `none`; no-provider default is `none` | `offline_cli.rs` |
 | 19 | **N3** | `vest doctor` (+ optional `policy explain`) | **Done** — diagnostics + fail-closed bad config (`policy explain` still optional) | `doctor_cli.rs` |
-| 20 | **CFG-1** | Validate agent/provider/network zeros; tighten unknown fields | `load_config` rejects zeros | config torture |
+| 20 | **CFG-1** | Validate agent/provider/network zeros; tighten unknown fields | **Done** — `load_config` rejects zeros; deny_unknown on sections | config torture |
 | 21 | **PROV-2** | `SecretString` for provider keys; redacted Debug all backends | No sentinel in Debug/errors | provider secret tests |
-| 22 | **PROV-3** | Apply `timeout_seconds` to clients + sequential fallback | Hang → Timeout | fallback timeout tests |
-| 23 | **PROV-4** | Google `list_models` fail-closed on HTTP errors | Err not Ok(default) | google provider tests |
+| 22 | **PROV-3** | Apply `timeout_seconds` to clients + sequential fallback | **Done** — Hang → Timeout; fallback wraps per-provider timeout | fallback timeout tests |
+| 23 | **PROV-4** | Google `list_models` fail-closed on HTTP errors | **Done** — Err not Ok(default) | google provider tests |
 
 ---
 
@@ -148,15 +148,14 @@ Keep documented forever unless architecture truly changes:
 ## Clearance queue (open at plan start)
 
 ```
-N5 → K3 → K3b → REP-1 → PROV-1 → K4 → K2 → K5b → K8 → POL-1 → K11 → K9
-→ BRW-1 → N1 → K14 ✓ → CLI-EXIT-7 ✓ → CLI-PARTIAL ✓ → N4 ✓ → N3 ✓ → CFG-1 → PROV-2
-→ PROV-3 → PROV-4 → STOR-1 → STOR-2 → STOR-3 → NUC-1 → K16 → REP-2
+N5 ✓ → K3 ✓ → K3b ✓ → REP-1 ✓ → PROV-1 ✓ → K4 ✓ → K2 ✓ → K5b ✓ → K8 ✓ → POL-1 ✓ → K11 ✓ → K9 ✓
+→ BRW-1 ✓ → N1 ✓ → K14 ✓ → CLI-EXIT-7 ✓ → CLI-PARTIAL ✓ → N4 ✓ → N3 ✓ → CFG-1 ✓
+→ PROV-2 → PROV-3 ✓ → PROV-4 ✓ → STOR-1 → STOR-2 → STOR-3 → NUC-1 → K16 → REP-2
 → CLI-SANDBOX → HTTP-1 → WEB-1 → WEB-2 → R3-lite → BIN-1 → POL-2
 → CLI-SOFT → CLI-DEAD → N2 → ACCEPT-12/13
 ```
 
-**Next open:** CFG-1 (then PROV-2…).
-
+**Next open:** PROV-2 (then STOR-1…).
 
 **Progress tracking:** update the table in `docs/product-hardening-ledger.md` and the checkbox section below after each clear.
 

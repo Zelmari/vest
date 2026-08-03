@@ -23,7 +23,7 @@ Binary: `vest` (`vest-cli`). Feature: `browser` (default).
 
 ## Product use cases (summary)
 
-See [product-contract.md](product-contract.md): A offline local, B passive web, C active (no prompt UI), D AI egress, E tool-use, F CI, G degraded, H large target.
+See [product-contract.md](product-contract.md): A offline local, B passive web, C active (TTY one-shot / CLI pre-grants), D AI egress, E tool-use, F CI, G degraded, H large target.
 
 ## Threat boundaries
 
@@ -63,7 +63,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 
 | ID | Issue | Status |
 |----|-------|--------|
-| N1 | Dry-run returns before config load / scope display | **Fixed** — load/validate config, detect target, resolve scopes, print plan (scanners/probes/provider/scopes); no DB/network/scanner side effects; invalid type/config → non-zero; `dry_run_contract.rs` |
+| N1 | Dry-run returns before config load / scope display | **Fixed** — load/validate config, detect target, resolve scopes, print plan (scanners/probes/provider/scopes); no DB/network/scanner side effects; invalid type/config → non-zero; `dry_run_contract.rs` | `02dc51e` |
 | N2 | `config validate` historically soft-failed (fixed on prior branch; re-verify) | verify |
 | N3 | No `vest doctor` / `policy explain` | **Fixed** — `vest doctor` prints config/VEST_HOME/sqlite/provider-key presence/posture/policy; fail-closed on bad config; `policy explain` still optional | `doctor_cli.rs` | `f83e640` |
 | N4 | No explicit `--offline` / `--no-ai` flags (provider none only) | **Fixed** — `--offline` / `--no-ai` force provider `none`; safer default is `none` when no provider configured | `offline_cli.rs` | `f83e640` |
@@ -71,9 +71,9 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | CLI-EXIT-7 | Provider/agent soft fail exited 0 | **Fixed** — preserve findings/report then exit 7 (`VestError::Provider`/`Agent`) | `exit_codes_strict.rs` | `f83e640` |
 | CLI-PARTIAL | Partial scanner fatals exited 0 | **Fixed** — preserve successful scanner findings then exit 5; total fail stays hard error | `exit_codes_strict.rs` | `f83e640` |
 | PROV-1 | Google API key in URL query (`?key=`) | **Fixed** — `x-goog-api-key` header for generateContent/list_models; transport/HTTP errors scrub key; sentinel tests in `vest-providers/src/google.rs` |
-| CFG-1 | Agent/provider/network zero budgets accepted | **Fixed** — `load_config`/`validate_config` reject zeros; deny_unknown on agent/provider/network |
-| PROV-3 | Provider timeout_seconds unused; sequential fallback unbounded | **Fixed** — reqwest clients use timeout; NextOnFailure/NextOnRateLimit wrap per-provider timeout |
-| PROV-4 | Google list_models returns Ok(default) on HTTP errors | **Fixed** — fail-closed Err on non-2xx; sentinel scrub test |
+| CFG-1 | Agent/provider/network zero budgets accepted | **Fixed** — `load_config`/`validate_config` reject zeros; deny_unknown on agent/provider/network | `c426801` |
+| PROV-3 | Provider timeout_seconds unused; sequential fallback unbounded | **Fixed** — reqwest clients use timeout; NextOnFailure/NextOnRateLimit wrap per-provider timeout | `a05b291` |
+| PROV-4 | Google list_models returns Ok(default) on HTTP errors | **Fixed** — fail-closed Err on non-2xx; sentinel scrub test | `a05b291` |
 | REP-1 | JSON/MD reports embed raw evidence/PoC (incl. `match_preview` secrets) by default | **Fixed** — omit evidence/PoC by default; `--include-evidence` / `general.include_report_evidence` opt-in with best-effort redaction; `vest-report/tests/secret_redaction.rs` |
 | POL-1 | Missing/non-string path/url skipped FS/net scope checks for scoped effects | **Fixed** — deny before handler when material target absent or wrong type; `adversarial_policy_tests.rs` + policy unit tests | `f918a47` |
 
@@ -89,10 +89,10 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 3 Interactive approval | **done** (pragmatic) | Exact CLI pre-grants + TTY one-shot; non-TTY/`--no-approval` deny |
 | 4 Opaque capabilities | **done** | `ApprovedToolCall` + SHA-256 digests; K5b hot path unified |
 | 5 ScopedHttpClient | **done** (agent tools) | agent `http_get`/`http_post` on ScopedHttpClient; WebScanner still has its own client (WEB-1) |
-| 6 Filesystem tools | pending | |
+| 6 Filesystem tools | **done** (K8/K9) | bounded `read_file`; symlink follow contained under root |
 | 7 Egress | **done** (K4) | TargetContent/PSB gated; LocalContent/ProcessMemory unchanged |
-| 8 Config/.env | done | allowlist |
-| 9–20 | pending / partial | docs + acceptance updated; many code phases open |
+| 8 Config/.env | **done** | key allowlist + CFG-1 zero-budget reject |
+| 9–20 | partial | exits/doctor/offline/providers timeouts landed; STOR/NUC/K16/WEB/HTTP still open |
 
 ## Remaining limitations (standing)
 

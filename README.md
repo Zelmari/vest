@@ -133,11 +133,13 @@ What is real today:
 - CLI web scans are passive by default; active probes are opt-in (**N5**).
 - Agent `http_get` / `http_post` use `ScopedHttpClient` (redirect re-auth). `web_scan` goes through `WebScanner::inspect_url` with the same active-probe gating as CLI web scans (**K3**/**K3b**).
 - JSON/Markdown reports omit evidence and PoC by default; opt in with `--include-evidence` (still redacted best-effort) (**REP-1**).
+- Approval-required tools: exact CLI pre-grant (`--approve-writes` / `--approve-exploits` / `--approve-effect`) or TTY one-shot Allow; non-TTY without grants and `--no-approval` deny (**K2**).
+- Agent/provider/network zero budgets are rejected at config load (**CFG-1**).
 - `vest sandbox` Docker helpers are convenience only — not verified OS isolation.
 
 What is **not** finished:
 
-- Approval-required tools need an exact CLI pre-grant (`--approve-writes` / `--approve-exploits` / `--approve-effect`) or a TTY one-shot Allow. Non-TTY without grants and `--no-approval` deny (**K2**).
+- Full multi-step interactive approval UX (K2 is CLI grants + TTY one-shot only).
 - `WebScanner` is not yet fully on `ScopedHttpClient` (**WEB-1**).
 - DNS rebinding / connection-time IP binding is incomplete.
 
@@ -180,7 +182,7 @@ Suites include unit tests, concurrency stress, scanner edge cases, CLI workflows
 4. Missing scan id on `report generate` → non-zero exit.
 5. Agent/tool path: model suggestions never equal authorisation.
 6. Invalid `--target-type` → rejected (not guessed).
-7. Approval-required tool with no real prompt path → denied (fail closed).
+7. Approval-required tool without CLI pre-grant or TTY Allow → denied (fail closed).
 
 ## Docs & license
 
