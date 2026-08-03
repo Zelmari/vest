@@ -551,17 +551,24 @@ async fn finalize_scan(input: FinalizeScanInput<'_>) -> Result<usize, VestError>
         .map_err(|e| VestError::Storage(e.to_string()))?;
     vest_storage::schema::run_migrations(pool.conn())
         .map_err(|e| VestError::Storage(e.to_string()))?;
-    vest_storage::targets::insert_target(pool.conn(), target)
+
+    // Atomic persist: target + scan + findings commit together or not at all (STOR-3).
+    let tx = pool
+        .conn()
+        .unchecked_transaction()
         .map_err(|e| VestError::Storage(e.to_string()))?;
-    vest_storage::scans::insert_scan(pool.conn(), &scan_session)
+    vest_storage::targets::insert_target(&tx, target)
+        .map_err(|e| VestError::Storage(e.to_string()))?;
+    vest_storage::scans::insert_scan(&tx, &scan_session)
         .map_err(|e| VestError::Storage(e.to_string()))?;
     for finding in &findings {
         let mut f = finding.clone();
         f.scan_id = scan_session.id.clone();
         f.target_id = target.id.clone();
-        vest_storage::findings::insert_finding(pool.conn(), &f)
+        vest_storage::findings::insert_finding(&tx, &f)
             .map_err(|e| VestError::Storage(e.to_string()))?;
     }
+    tx.commit().map_err(|e| VestError::Storage(e.to_string()))?;
 
     Ok(findings.len())
 }

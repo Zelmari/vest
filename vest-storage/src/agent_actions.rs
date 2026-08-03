@@ -2,6 +2,7 @@ use rusqlite::Connection;
 use vest_core::types::AgentAction;
 
 use crate::error::StorageError;
+use crate::row::{parse_datetime, parse_json};
 
 pub fn insert_agent_action(conn: &Connection, action: &AgentAction) -> Result<(), StorageError> {
     conn.execute(
@@ -20,28 +21,28 @@ pub fn insert_agent_action(conn: &Connection, action: &AgentAction) -> Result<()
     Ok(())
 }
 
+fn row_to_agent_action(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentAction> {
+    let action_data_str: String = row.get(5)?;
+    Ok(AgentAction {
+        id: row.get(0)?,
+        scan_id: row.get(1)?,
+        sequence: row.get(2)?,
+        agent_role: row.get(3)?,
+        action_type: row
+            .get::<_, String>(4)?
+            .parse()
+            .map_err(|_| rusqlite::Error::InvalidColumnName("action_type".into()))?,
+        action_data: parse_json(&action_data_str, 5)?,
+        timestamp: parse_datetime(&row.get::<_, String>(6)?, 6)?,
+    })
+}
+
 pub fn get_agent_action(conn: &Connection, id: &str) -> Result<AgentAction, StorageError> {
     conn.query_row(
         "SELECT id, scan_id, sequence, agent_role, action_type, action_data, timestamp
          FROM agent_actions WHERE id = ?1",
         rusqlite::params![id],
-        |row| {
-            let action_data_str: String = row.get(5)?;
-            Ok(AgentAction {
-                id: row.get(0)?,
-                scan_id: row.get(1)?,
-                sequence: row.get(2)?,
-                agent_role: row.get(3)?,
-                action_type: row
-                    .get::<_, String>(4)?
-                    .parse()
-                    .map_err(|_| rusqlite::Error::InvalidColumnName("action_type".into()))?,
-                action_data: serde_json::from_str(&action_data_str).unwrap_or_default(),
-                timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            })
-        },
+        row_to_agent_action,
     )
     .map_err(|e| match e {
         rusqlite::Error::QueryReturnedNoRows => {
@@ -60,23 +61,7 @@ pub fn list_agent_actions_by_scan(
          FROM agent_actions WHERE scan_id = ?1 ORDER BY sequence",
     )?;
     let actions = stmt
-        .query_map(rusqlite::params![scan_id], |row| {
-            let action_data_str: String = row.get(5)?;
-            Ok(AgentAction {
-                id: row.get(0)?,
-                scan_id: row.get(1)?,
-                sequence: row.get(2)?,
-                agent_role: row.get(3)?,
-                action_type: row
-                    .get::<_, String>(4)?
-                    .parse()
-                    .map_err(|_| rusqlite::Error::InvalidColumnName("action_type".into()))?,
-                action_data: serde_json::from_str(&action_data_str).unwrap_or_default(),
-                timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            })
-        })?
+        .query_map(rusqlite::params![scan_id], row_to_agent_action)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(actions)
 }

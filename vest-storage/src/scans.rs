@@ -2,6 +2,7 @@ use rusqlite::Connection;
 use vest_core::types::{ScanSession, ScanStatus};
 
 use crate::error::StorageError;
+use crate::row::{parse_datetime, parse_json, parse_optional_datetime, require_rows_affected};
 
 pub fn insert_scan(conn: &Connection, scan: &ScanSession) -> Result<(), StorageError> {
     conn.execute(
@@ -32,6 +33,36 @@ pub fn insert_scan(conn: &Connection, scan: &ScanSession) -> Result<(), StorageE
     Ok(())
 }
 
+fn row_to_scan(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanSession> {
+    let config_str: String = row.get(3)?;
+    let metadata_str: String = row.get(15)?;
+    Ok(ScanSession {
+        id: row.get(0)?,
+        target_id: row.get(1)?,
+        mode: row
+            .get::<_, String>(2)?
+            .parse()
+            .map_err(|_| rusqlite::Error::InvalidColumnName(2.to_string()))?,
+        config: parse_json(&config_str, 3)?,
+        status: row
+            .get::<_, String>(4)?
+            .parse()
+            .map_err(|_| rusqlite::Error::InvalidColumnName(4.to_string()))?,
+        agent_model: row.get(5)?,
+        started_at: parse_optional_datetime(row.get::<_, Option<String>>(6)?, 6)?,
+        completed_at: parse_optional_datetime(row.get::<_, Option<String>>(7)?, 7)?,
+        duration_ms: row.get(8)?,
+        total_findings: row.get::<_, i64>(9)? as u64,
+        critical_count: row.get::<_, i64>(10)? as u64,
+        high_count: row.get::<_, i64>(11)? as u64,
+        medium_count: row.get::<_, i64>(12)? as u64,
+        low_count: row.get::<_, i64>(13)? as u64,
+        info_count: row.get::<_, i64>(14)? as u64,
+        metadata: parse_json(&metadata_str, 15)?,
+        created_at: parse_datetime(&row.get::<_, String>(16)?, 16)?,
+    })
+}
+
 pub fn get_scan(conn: &Connection, id: &str) -> Result<ScanSession, StorageError> {
     conn.query_row(
         "SELECT id, target_id, mode, config, status, agent_model, started_at, completed_at,
@@ -39,45 +70,7 @@ pub fn get_scan(conn: &Connection, id: &str) -> Result<ScanSession, StorageError
          low_count, info_count, metadata, created_at
          FROM scans WHERE id = ?1",
         rusqlite::params![id],
-        |row| {
-            let config_str: String = row.get(3)?;
-            let metadata_str: String = row.get(15)?;
-            Ok(ScanSession {
-                id: row.get(0)?,
-                target_id: row.get(1)?,
-                mode: row
-                    .get::<_, String>(2)?
-                    .parse()
-                    .map_err(|_| rusqlite::Error::InvalidColumnName(2.to_string()))?,
-                config: serde_json::from_str(&config_str).unwrap_or_default(),
-                status: row
-                    .get::<_, String>(4)?
-                    .parse()
-                    .map_err(|_| rusqlite::Error::InvalidColumnName(4.to_string()))?,
-                agent_model: row.get(5)?,
-                started_at: row.get::<_, Option<String>>(6)?.map(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc)
-                }),
-                completed_at: row.get::<_, Option<String>>(7)?.map(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc)
-                }),
-                duration_ms: row.get(8)?,
-                total_findings: row.get::<_, i64>(9)? as u64,
-                critical_count: row.get::<_, i64>(10)? as u64,
-                high_count: row.get::<_, i64>(11)? as u64,
-                medium_count: row.get::<_, i64>(12)? as u64,
-                low_count: row.get::<_, i64>(13)? as u64,
-                info_count: row.get::<_, i64>(14)? as u64,
-                metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(16)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            })
-        },
+        row_to_scan,
     )
     .map_err(|e| match e {
         rusqlite::Error::QueryReturnedNoRows => {
@@ -95,45 +88,7 @@ pub fn list_scans(conn: &Connection) -> Result<Vec<ScanSession>, StorageError> {
          FROM scans ORDER BY created_at DESC",
     )?;
     let scans = stmt
-        .query_map([], |row| {
-            let config_str: String = row.get(3)?;
-            let metadata_str: String = row.get(15)?;
-            Ok(ScanSession {
-                id: row.get(0)?,
-                target_id: row.get(1)?,
-                mode: row
-                    .get::<_, String>(2)?
-                    .parse()
-                    .map_err(|_| rusqlite::Error::InvalidColumnName(2.to_string()))?,
-                config: serde_json::from_str(&config_str).unwrap_or_default(),
-                status: row
-                    .get::<_, String>(4)?
-                    .parse()
-                    .map_err(|_| rusqlite::Error::InvalidColumnName(4.to_string()))?,
-                agent_model: row.get(5)?,
-                started_at: row.get::<_, Option<String>>(6)?.map(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc)
-                }),
-                completed_at: row.get::<_, Option<String>>(7)?.map(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc)
-                }),
-                duration_ms: row.get(8)?,
-                total_findings: row.get::<_, i64>(9)? as u64,
-                critical_count: row.get::<_, i64>(10)? as u64,
-                high_count: row.get::<_, i64>(11)? as u64,
-                medium_count: row.get::<_, i64>(12)? as u64,
-                low_count: row.get::<_, i64>(13)? as u64,
-                info_count: row.get::<_, i64>(14)? as u64,
-                metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(16)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            })
-        })?
+        .query_map([], row_to_scan)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(scans)
 }
@@ -149,45 +104,7 @@ pub fn list_scans_by_target(
          FROM scans WHERE target_id = ?1 ORDER BY created_at DESC",
     )?;
     let scans = stmt
-        .query_map(rusqlite::params![target_id], |row| {
-            let config_str: String = row.get(3)?;
-            let metadata_str: String = row.get(15)?;
-            Ok(ScanSession {
-                id: row.get(0)?,
-                target_id: row.get(1)?,
-                mode: row
-                    .get::<_, String>(2)?
-                    .parse()
-                    .map_err(|_| rusqlite::Error::InvalidColumnName(2.to_string()))?,
-                config: serde_json::from_str(&config_str).unwrap_or_default(),
-                status: row
-                    .get::<_, String>(4)?
-                    .parse()
-                    .map_err(|_| rusqlite::Error::InvalidColumnName(4.to_string()))?,
-                agent_model: row.get(5)?,
-                started_at: row.get::<_, Option<String>>(6)?.map(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc)
-                }),
-                completed_at: row.get::<_, Option<String>>(7)?.map(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc)
-                }),
-                duration_ms: row.get(8)?,
-                total_findings: row.get::<_, i64>(9)? as u64,
-                critical_count: row.get::<_, i64>(10)? as u64,
-                high_count: row.get::<_, i64>(11)? as u64,
-                medium_count: row.get::<_, i64>(12)? as u64,
-                low_count: row.get::<_, i64>(13)? as u64,
-                info_count: row.get::<_, i64>(14)? as u64,
-                metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(16)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            })
-        })?
+        .query_map(rusqlite::params![target_id], row_to_scan)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(scans)
 }
@@ -197,11 +114,11 @@ pub fn update_scan_status(
     id: &str,
     status: &ScanStatus,
 ) -> Result<(), StorageError> {
-    conn.execute(
+    let rows = conn.execute(
         "UPDATE scans SET status = ?1 WHERE id = ?2",
         rusqlite::params![status.to_string(), id],
     )?;
-    Ok(())
+    require_rows_affected(rows, "Scan", id)
 }
 
 pub fn delete_scan(conn: &Connection, id: &str) -> Result<(), StorageError> {

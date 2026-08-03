@@ -99,7 +99,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | 6 Filesystem tools | **done** (K8/K9) | bounded `read_file`; symlink follow contained under root |
 | 7 Egress | **done** (K4) | TargetContent/PSB gated; LocalContent/ProcessMemory unchanged |
 | 8 Config/.env | **done** | key allowlist + CFG-1 zero-budget reject |
-| 9–20 | partial | exits/doctor/offline/providers timeouts/NUC-1 landed; STOR/K16/WEB/HTTP still open |
+| 9–20 | partial | exits/doctor/offline/providers/NUC-1/STOR landed; K16/WEB/HTTP still open |
 
 ## Remaining limitations (standing)
 

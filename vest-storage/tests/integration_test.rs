@@ -110,7 +110,7 @@ mod integration_tests {
     fn test_get_nonexistent_target_fails() {
         let conn = setup_db();
         let err = targets::get_target(&conn, "nonexistent").unwrap_err();
-        assert!(matches!(err, StorageError::Database(_)));
+        assert!(matches!(err, StorageError::NotFound(_)));
     }
 
     #[test]
@@ -268,9 +268,10 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_update_scan_status_nonexistent_no_error() {
+    fn test_update_scan_status_nonexistent_returns_not_found() {
         let conn = setup_db();
-        assert!(scans::update_scan_status(&conn, "nonexistent", &ScanStatus::Failed).is_ok());
+        let err = scans::update_scan_status(&conn, "nonexistent", &ScanStatus::Failed).unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
     }
 
     // Finding tests

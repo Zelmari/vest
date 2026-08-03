@@ -1,7 +1,7 @@
 use chrono::Utc;
 use rusqlite::Connection;
 use vest_core::types::*;
-use vest_storage::{findings, scans, schema, targets, ConnectionPool};
+use vest_storage::{findings, scans, schema, targets, ConnectionPool, StorageError};
 
 fn setup() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
@@ -38,7 +38,7 @@ fn test_get_nonexistent_target_returns_error() {
 }
 
 #[test]
-fn test_update_nonexistent_target_no_error() {
+fn test_update_nonexistent_target_returns_not_found() {
     let conn = setup();
     let now = Utc::now();
     let target = Target {
@@ -53,7 +53,120 @@ fn test_update_nonexistent_target_no_error() {
         created_at: now,
         updated_at: now,
     };
-    assert!(targets::update_target(&conn, &target).is_ok());
+    let err = targets::update_target(&conn, &target).unwrap_err();
+    assert!(matches!(err, StorageError::NotFound(_)));
+}
+
+#[test]
+fn corrupt_datetime_does_not_panic() {
+    let conn = setup();
+    let now = Utc::now();
+    let target = Target {
+        id: "t-bad-dt".into(),
+        name: "bad-dt".into(),
+        target_type: TargetType::Web,
+        path: None,
+        url_str: None,
+        pid: None,
+        host: None,
+        metadata: serde_json::json!({}),
+        created_at: now,
+        updated_at: now,
+    };
+    targets::insert_target(&conn, &target).unwrap();
+    conn.execute(
+        "UPDATE targets SET created_at = ?1 WHERE id = ?2",
+        rusqlite::params!["not-a-timestamp", "t-bad-dt"],
+    )
+    .unwrap();
+
+    let err = targets::get_target(&conn, "t-bad-dt").unwrap_err();
+    assert!(
+        matches!(err, StorageError::Database(_)),
+        "corrupt datetime must yield StorageError, not panic: {err:?}"
+    );
+}
+
+#[test]
+fn corrupt_finding_evidence_json_does_not_panic_or_default() {
+    let conn = setup();
+    let now = Utc::now();
+    let target = Target {
+        id: "t-bad-ev".into(),
+        name: "bad-ev".into(),
+        target_type: TargetType::Web,
+        path: None,
+        url_str: None,
+        pid: None,
+        host: None,
+        metadata: serde_json::json!({}),
+        created_at: now,
+        updated_at: now,
+    };
+    targets::insert_target(&conn, &target).unwrap();
+    let scan = ScanSession {
+        id: "s-bad-ev".into(),
+        target_id: "t-bad-ev".into(),
+        mode: ScanMode::Pipeline,
+        config: serde_json::json!({}),
+        status: ScanStatus::Completed,
+        agent_model: None,
+        started_at: None,
+        completed_at: None,
+        duration_ms: None,
+        total_findings: 0,
+        critical_count: 0,
+        high_count: 0,
+        medium_count: 0,
+        low_count: 0,
+        info_count: 0,
+        metadata: serde_json::json!({}),
+        created_at: now,
+    };
+    scans::insert_scan(&conn, &scan).unwrap();
+    let finding = Finding {
+        id: "f-bad-ev".into(),
+        scan_id: "s-bad-ev".into(),
+        target_id: "t-bad-ev".into(),
+        title: "ev".into(),
+        description: "d".into(),
+        vulnerability_class: VulnerabilityClass::Unknown,
+        severity: Severity::Info,
+        confidence: 0.5,
+        status: FindingStatus::Open,
+        cvss_score: None,
+        cve_id: None,
+        cwe_id: None,
+        evidence: serde_json::json!({"ok": true}),
+        poc: None,
+        remediation: None,
+        location: serde_json::json!({}),
+        false_positive_history: None,
+        tags: vec![],
+        metadata: serde_json::json!({}),
+        discovered_at: now,
+        updated_at: now,
+    };
+    findings::insert_finding(&conn, &finding).unwrap();
+    conn.execute(
+        "UPDATE findings SET evidence = ?1 WHERE id = ?2",
+        rusqlite::params!["{not-json", "f-bad-ev"],
+    )
+    .unwrap();
+
+    let err = findings::get_finding(&conn, "f-bad-ev").unwrap_err();
+    assert!(
+        matches!(err, StorageError::Database(_)),
+        "corrupt evidence JSON must yield StorageError, not silent default/panic: {err:?}"
+    );
+}
+
+#[test]
+fn update_nonexistent_finding_status_returns_not_found() {
+    let conn = setup();
+    let err =
+        findings::update_finding_status(&conn, "missing", &FindingStatus::Confirmed).unwrap_err();
+    assert!(matches!(err, StorageError::NotFound(_)));
 }
 
 #[test]

@@ -2,6 +2,7 @@ use rusqlite::Connection;
 use vest_core::types::ScanMemoryEntry;
 
 use crate::error::StorageError;
+use crate::row::{parse_datetime, parse_json};
 
 pub fn insert_memory_entry(conn: &Connection, entry: &ScanMemoryEntry) -> Result<(), StorageError> {
     conn.execute(
@@ -24,34 +25,32 @@ pub fn insert_memory_entry(conn: &Connection, entry: &ScanMemoryEntry) -> Result
     Ok(())
 }
 
+fn row_to_memory_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanMemoryEntry> {
+    let evidence_str: String = row.get(5)?;
+    Ok(ScanMemoryEntry {
+        id: row.get(0)?,
+        pattern_hash: row.get(1)?,
+        pattern_type: row
+            .get::<_, String>(2)?
+            .parse()
+            .map_err(|_| rusqlite::Error::InvalidColumnName("pattern_type".into()))?,
+        target_hash: row.get(3)?,
+        description: row.get(4)?,
+        evidence: parse_json(&evidence_str, 5)?,
+        confidence: row.get(6)?,
+        occurrences: row.get(7)?,
+        created_at: parse_datetime(&row.get::<_, String>(8)?, 8)?,
+        updated_at: parse_datetime(&row.get::<_, String>(9)?, 9)?,
+    })
+}
+
 pub fn get_memory_entry(conn: &Connection, id: &str) -> Result<ScanMemoryEntry, StorageError> {
     conn.query_row(
         "SELECT id, pattern_hash, pattern_type, target_hash, description,
          evidence, confidence, occurrences, created_at, updated_at
          FROM scan_memory WHERE id = ?1",
         rusqlite::params![id],
-        |row| {
-            let evidence_str: String = row.get(5)?;
-            Ok(ScanMemoryEntry {
-                id: row.get(0)?,
-                pattern_hash: row.get(1)?,
-                pattern_type: row
-                    .get::<_, String>(2)?
-                    .parse()
-                    .map_err(|_| rusqlite::Error::InvalidColumnName("pattern_type".into()))?,
-                target_hash: row.get(3)?,
-                description: row.get(4)?,
-                evidence: serde_json::from_str(&evidence_str).unwrap_or_default(),
-                confidence: row.get(6)?,
-                occurrences: row.get(7)?,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(9)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            })
-        },
+        row_to_memory_entry,
     )
     .map_err(|e| match e {
         rusqlite::Error::QueryReturnedNoRows => {
@@ -71,28 +70,7 @@ pub fn find_memory_by_pattern(
          FROM scan_memory WHERE pattern_hash = ?1 ORDER BY updated_at DESC",
     )?;
     let entries = stmt
-        .query_map(rusqlite::params![pattern_hash], |row| {
-            let evidence_str: String = row.get(5)?;
-            Ok(ScanMemoryEntry {
-                id: row.get(0)?,
-                pattern_hash: row.get(1)?,
-                pattern_type: row
-                    .get::<_, String>(2)?
-                    .parse()
-                    .map_err(|_| rusqlite::Error::InvalidColumnName("pattern_type".into()))?,
-                target_hash: row.get(3)?,
-                description: row.get(4)?,
-                evidence: serde_json::from_str(&evidence_str).unwrap_or_default(),
-                confidence: row.get(6)?,
-                occurrences: row.get(7)?,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(9)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            })
-        })?
+        .query_map(rusqlite::params![pattern_hash], row_to_memory_entry)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(entries)
 }

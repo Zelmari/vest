@@ -2,6 +2,7 @@ use rusqlite::Connection;
 use vest_core::types::{Finding, FindingStatus, Severity};
 
 use crate::error::StorageError;
+use crate::row::{parse_datetime, parse_json, parse_optional_json, require_rows_affected};
 
 pub fn insert_finding(conn: &Connection, finding: &Finding) -> Result<(), StorageError> {
     conn.execute(
@@ -96,9 +97,7 @@ pub fn list_findings_by_severity(
          FROM findings WHERE severity = ?1 ORDER BY confidence DESC",
     )?;
     let findings = stmt
-        .query_map(rusqlite::params![severity.to_string()], |row| {
-            row_to_finding(row)
-        })?
+        .query_map(rusqlite::params![severity.to_string()], row_to_finding)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(findings)
 }
@@ -108,15 +107,15 @@ pub fn update_finding_status(
     id: &str,
     status: &FindingStatus,
 ) -> Result<(), StorageError> {
-    conn.execute(
+    let rows = conn.execute(
         "UPDATE findings SET status = ?1, updated_at = ?2 WHERE id = ?3",
         rusqlite::params![status.to_string(), chrono::Utc::now().to_rfc3339(), id,],
     )?;
-    Ok(())
+    require_rows_affected(rows, "Finding", id)
 }
 
 pub fn update_finding(conn: &Connection, finding: &Finding) -> Result<(), StorageError> {
-    conn.execute(
+    let rows = conn.execute(
         "UPDATE findings SET scan_id = ?1, target_id = ?2, title = ?3, description = ?4,
          vulnerability_class = ?5, severity = ?6, confidence = ?7, status = ?8, cvss_score = ?9,
          cve_id = ?10, cwe_id = ?11, evidence = ?12, poc = ?13, remediation = ?14, location = ?15,
@@ -149,7 +148,7 @@ pub fn update_finding(conn: &Connection, finding: &Finding) -> Result<(), Storag
             finding.id,
         ],
     )?;
-    Ok(())
+    require_rows_affected(rows, "Finding", &finding.id)
 }
 
 pub fn delete_finding(conn: &Connection, id: &str) -> Result<(), StorageError> {
@@ -157,7 +156,7 @@ pub fn delete_finding(conn: &Connection, id: &str) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn row_to_finding(row: &rusqlite::Row) -> rusqlite::Result<Finding> {
+fn row_to_finding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Finding> {
     let evidence_str: String = row.get(12)?;
     let location_str: String = row.get(15)?;
     let tags_str: String = row.get(17)?;
@@ -185,19 +184,14 @@ fn row_to_finding(row: &rusqlite::Row) -> rusqlite::Result<Finding> {
         cvss_score: row.get(9)?,
         cve_id: row.get(10)?,
         cwe_id: row.get(11)?,
-        evidence: serde_json::from_str(&evidence_str).unwrap_or_default(),
+        evidence: parse_json(&evidence_str, 12)?,
         poc: row.get(13)?,
         remediation: row.get(14)?,
-        location: serde_json::from_str(&location_str).unwrap_or_default(),
-        false_positive_history: fp_history_str
-            .map(|s| serde_json::from_str(&s).unwrap_or_default()),
-        tags: serde_json::from_str(&tags_str).unwrap_or_default(),
-        metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
-        discovered_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(19)?)
-            .unwrap()
-            .with_timezone(&chrono::Utc),
-        updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(20)?)
-            .unwrap()
-            .with_timezone(&chrono::Utc),
+        location: parse_json(&location_str, 15)?,
+        false_positive_history: parse_optional_json(fp_history_str, 16)?,
+        tags: parse_json(&tags_str, 17)?,
+        metadata: parse_json(&metadata_str, 18)?,
+        discovered_at: parse_datetime(&row.get::<_, String>(19)?, 19)?,
+        updated_at: parse_datetime(&row.get::<_, String>(20)?, 20)?,
     })
 }
