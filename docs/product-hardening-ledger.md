@@ -48,7 +48,7 @@ See [product-contract.md](product-contract.md): A offline local, B passive web, 
 | K6 | **Fixed** | Was `DefaultHasher` on selected keys | SHA-256 over material args | policy tests | `1951cd2` |
 | K7 | **Fixed** | Was `TOOL_FS_SCOPE` OnceLock | `ExecutionSession` Arc captured by tools | session unit test | `0f76c32` |
 | K8 | **Fixed** | Was `std::fs::read` entire file then truncate | Cap via `Read::take` + `spawn_blocking` | `agent_read_file_bounded.rs` | `b7a0744` |
-| K9 | **Fixed** | follow=true had no root containment | Resolved paths must stay under canonical root else skip OutsideRoot | `files_adversarial` follow=true + unit | (this commit) |
+| K9 | **Fixed** | follow=true had no root containment | Resolved paths must stay under canonical root else skip OutsideRoot | `files_adversarial` follow=true + unit | `5975b22` |
 | K10 | **Fixed** (web client) | `unwrap_or_default()` on Client | fail-closed + `ScopedHttpClient::try_new` | http_client tests | `0f76c32` |
 | K11 | **Fixed** | form submit always POSTed | Honour GET/POST (allowlist); GET→query; missing method→GET | web form method tests | (this commit) |
 | K12 | **Fixed** | invalid `--target-type` guessed | Reject invalid explicit type | CLI | `17d2232` |
