@@ -1,3 +1,4 @@
+use crate::approved::ApprovedToolCall;
 use crate::context::ToolDefinition;
 use crate::egress::{classify_tool_result, filter_for_model};
 use crate::policy::{AuthorisationContext, NormalisedToolCall, PolicyEngine};
@@ -43,16 +44,40 @@ impl ToolRegistry {
         self.tools.values().map(|t| t.definition.clone()).collect()
     }
 
-    /// Execute only when a prior policy decision was `Allow`.
+    /// Execute only with an opaque capability minted by [`PolicyEngine::authorise`].
+    /// A public `ApprovalDecision::Allow` value is not sufficient (K5).
     pub fn execute_authorised(
         &self,
         name: &str,
         args: serde_json::Value,
-        decision: &ApprovalDecision,
+        approval: &ApprovedToolCall,
     ) -> Result<serde_json::Value, String> {
-        if !decision.is_allow() {
+        if approval.tool_id() != name {
             return Err(format!(
-                "tool '{name}' execution denied: missing Allow decision ({decision:?})"
+                "tool '{name}' execution denied: capability is for '{}'",
+                approval.tool_id()
+            ));
+        }
+        let call = {
+            let tool = self
+                .tools
+                .get(name)
+                .ok_or_else(|| format!("Tool '{name}' not found"))?;
+            NormalisedToolCall::from_parts(
+                name,
+                tool.definition.effect,
+                tool.definition.egress_class,
+                &args,
+            )
+        };
+        if !approval.matches_call(&call, approval.session_id()) {
+            return Err(format!(
+                "tool '{name}' execution denied: capability does not match exact call"
+            ));
+        }
+        if !approval.consume() {
+            return Err(format!(
+                "tool '{name}' execution denied: one-shot capability already consumed"
             ));
         }
         self.execute_unchecked(name, args)

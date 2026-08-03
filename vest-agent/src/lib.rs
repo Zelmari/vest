@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod approved;
 pub mod context;
 pub mod egress;
 pub mod fs_scope;
@@ -14,6 +15,7 @@ pub mod tool_registry;
 pub mod validator;
 
 pub use agent::BaseAgent;
+pub use approved::ApprovedToolCall;
 pub use context::{AgentContext, RiskLevel, ToolDefinition};
 pub use egress::{
     bound_tool_result, build_provider_finding_dto, classify_tool_result, filter_for_model,

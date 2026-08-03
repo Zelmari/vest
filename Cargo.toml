@@ -46,6 +46,7 @@ capstone = "0.12"
 iced-x86 = "1"
 backon = "1"
 futures = "0.3"
+sha2 = "0.10"
 
 # Internal crate dependencies
 vest-core = { path = "vest-core" }

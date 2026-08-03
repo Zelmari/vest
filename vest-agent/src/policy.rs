@@ -8,7 +8,6 @@ use crate::fs_scope::{resolve_read_path, ApprovedFilesystemScope};
 use crate::net_scope::ApprovedNetworkScope;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use vest_core::auth::{ApprovalDecision, DataEgressClass, HttpMethodKind, ToolEffect};
@@ -86,7 +85,8 @@ pub struct NormalisedToolCall {
     pub effect: ToolEffect,
     pub egress_class: DataEgressClass,
     pub normalised_target: String,
-    pub arg_digest: u64,
+    /// SHA-256 of canonical JSON for all arguments (not a subset).
+    pub arg_digest: [u8; 32],
     pub path: Option<String>,
     pub url: Option<String>,
     pub http_method: Option<HttpMethodKind>,
@@ -138,8 +138,8 @@ impl NormalisedToolCall {
             .or_else(|| pid.map(|p| format!("pid:{p}")))
             .unwrap_or_else(|| format!("tool:{tool_id}"));
 
-        let material_args = material_args_subset(args);
-        let arg_digest = digest_value(&material_args);
+        let material_args = canonical_args(args);
+        let arg_digest = digest_sha256(&material_args);
 
         Self {
             tool_id,
@@ -156,39 +156,54 @@ impl NormalisedToolCall {
     }
 }
 
-fn material_args_subset(args: &Value) -> Value {
+/// Canonical JSON value for digesting: object keys sorted recursively.
+fn canonical_args(args: &Value) -> Value {
     match args {
         Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
             let mut out = serde_json::Map::new();
-            for key in ["path", "url", "method", "pid", "data", "content", "source"] {
-                if let Some(v) = map.get(key) {
-                    out.insert(key.to_string(), v.clone());
-                }
+            for k in keys {
+                out.insert(k.clone(), canonical_args(&map[k]));
             }
             Value::Object(out)
         }
+        Value::Array(items) => Value::Array(items.iter().map(canonical_args).collect()),
         other => other.clone(),
     }
 }
 
-fn digest_value(value: &Value) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    if let Ok(s) = serde_json::to_string(value) {
-        s.hash(&mut hasher);
-    }
-    hasher.finish()
+fn digest_sha256(value: &Value) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let bytes = serde_json::to_vec(value).unwrap_or_else(|_| b"{}".to_vec());
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    hasher.finalize().into()
 }
 
 /// Scoped approval that does not grant stronger effects or other targets.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ApprovalToken {
     pub tool_id: String,
     pub effect: ToolEffect,
     pub normalised_target: String,
-    pub arg_digest: u64,
+    pub arg_digest: [u8; 32],
     pub session_id: String,
     pub expires_at: Instant,
     pub one_shot: bool,
+}
+
+impl std::fmt::Debug for ApprovalToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApprovalToken")
+            .field("tool_id", &self.tool_id)
+            .field("effect", &self.effect)
+            .field("normalised_target", &self.normalised_target)
+            .field("arg_digest", &"[REDACTED]")
+            .field("session_id", &self.session_id)
+            .field("one_shot", &self.one_shot)
+            .finish()
+    }
 }
 
 impl ApprovalToken {
@@ -202,9 +217,10 @@ impl ApprovalToken {
     }
 
     pub fn cache_key(&self) -> String {
+        let digest_hex: String = self.arg_digest.iter().map(|b| format!("{b:02x}")).collect();
         format!(
-            "{}|{}|{}|{:x}|{}",
-            self.tool_id, self.effect, self.normalised_target, self.arg_digest, self.session_id
+            "{}|{}|{}|{}|{}",
+            self.tool_id, self.effect, self.normalised_target, digest_hex, self.session_id
         )
     }
 }
@@ -335,6 +351,22 @@ impl PolicyEngine {
 
     pub async fn clear(&self) {
         self.approvals.write().await.clear();
+    }
+
+    /// Evaluate policy and, if allowed, mint an opaque [`ApprovedToolCall`].
+    pub fn authorise(
+        &self,
+        ctx: &AuthorisationContext,
+        call: &NormalisedToolCall,
+    ) -> Result<crate::approved::ApprovedToolCall, ApprovalDecision> {
+        match self.evaluate(ctx, call) {
+            ApprovalDecision::Allow => Ok(crate::approved::ApprovedToolCall::mint(
+                &ctx.session_id,
+                call,
+                false,
+            )),
+            other => Err(other),
+        }
     }
 }
 

@@ -13,6 +13,7 @@ chrono.workspace = true
 tracing.workspace = true
 url.workspace = true
 regex = "1"
+sha2 = { workspace = true }
 
 vest-core = { workspace = true }
 vest-config = { workspace = true }
