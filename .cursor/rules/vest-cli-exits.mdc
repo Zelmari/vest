@@ -1,0 +1,9 @@
+---
+description: Exit-code contract for the vest CLI.
+globs: vest-cli/**
+---
+
+- Typed `VestError::cli_exit_code()`: `0` ok · `2` bad input · `3` config · `4` authorisation · `5` scanner · `6` persistence · `7` provider/agent soft failure with preserved findings · `8` findings gate.
+- New subcommands must use typed exits, not string matching (K14 residual).
+- JSON stdout stays machine-clean; diagnostics go to stderr.
+- `--no-approval` means do not prompt; deny approval-required (never "allow all").

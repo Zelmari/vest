@@ -1,0 +1,12 @@
+---
+description: Vest wake-up and working norms — read before any change.
+alwaysApply: true
+---
+
+# Vest working rules
+
+1. Read `AGENTS.md`, then `docs/CURRENT.md`, then `docs/standing-backlog.md` before any work.
+2. Take work only from the standing backlog — do not invent scope from historical backlog prose.
+3. Fail closed: deny by default for agent tools, unknown effects, bad config. Approval is never forged — an `Allow` decision must come from the policy engine.
+4. Docs honesty: a checkbox marked done must match shipped behaviour. Do not claim unimplemented features.
+5. Commit: `main` only, Zelmari author, no `Co-authored-by:` trailers. Commit after each meaningful change.

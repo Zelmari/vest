@@ -48,7 +48,10 @@ out/
 
 # === VSCode / Cursor ===
 .vscode/
-.cursor/
+.cursor/*
+# Keep the tracked agent rules while ignoring the rest of .cursor/
+!.cursor/rules/
+!.cursor/rules/*
 *.code-workspace
 .history/
 

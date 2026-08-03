@@ -1,0 +1,9 @@
+---
+description: Policy engine invariants for vest-agent.
+globs: vest-agent/**
+---
+
+- Every tool call must pass the policy engine (`authorise` → `execute_authorised` → `filter_for_model`); `invoke` is a thin wrapper, never a bypass.
+- Model proposals never grant authority; `ApprovedToolCall` is minted by the engine only (K5).
+- Unknown tools/effects deny. Material targets missing/non-string deny before the handler (POL-1).
+- Scoped HTTP goes through `ScopedHttpClient` (redirect re-auth, optional DNS pin); no bare `ureq` in agent tools (K3).
