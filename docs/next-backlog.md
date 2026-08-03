@@ -14,7 +14,7 @@
 | 2 | A2 | Docs sync (WEB-1 / passive web / ledger drift) | pending |
 | 3 | A3 | Reject unknown `--profile` / invalid `--mode` | done |
 | 4 | A4 | Wire or delete unused profile `safety` overrides | pending |
-| 5 | A5 | CI: `--locked` + `--all-features`; smarter flake strategy | pending |
+| 5 | A5 | CI: `--locked` + `--all-features`; smarter flake strategy | done |
 
 ### Wave B — Security residuals
 | # | ID | Item | Status |
@@ -46,7 +46,7 @@
 - [ ] A2 Docs sync
 - [x] A3 Profile/mode reject
 - [ ] A4 Profile safety wire/delete
-- [ ] A5 CI locked/all-features
+- [x] A5 CI locked/all-features
 - [ ] B1 Connect-time IP pin
 - [ ] B2 Provider redirect-none
 - [ ] B3 CDP loopback pin
